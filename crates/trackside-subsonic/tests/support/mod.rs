@@ -171,7 +171,9 @@ impl Server {
         let transcoder = Arc::new(transcoder);
         let dir = tempfile::tempdir()?;
         let test = TestDb::new()?;
-        let config = Config::defaults(dir.path());
+        let mut config = Config::defaults(dir.path());
+        // The default floor is 1 GiB, so on a fuller disk nothing would be cached.
+        config.media.cache_min_free = 0;
         let auth = Arc::new(Auth::new(
             test.db.clone(),
             &config.auth,
