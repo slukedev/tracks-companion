@@ -370,9 +370,6 @@ impl SoulseekProvider {
     }
 
     async fn health_inner(&self) -> ProviderHealth {
-        if !self.config.enabled {
-            return ProviderHealth::Disabled;
-        }
         let request = match self.request(Method::GET, "api/v0/application") {
             Ok(request) => request,
             Err(ProviderError::Unavailable(why)) => return ProviderHealth::Unavailable(why),

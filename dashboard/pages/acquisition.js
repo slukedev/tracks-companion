@@ -188,6 +188,7 @@ function providerPanel(ctx, p) {
     try {
       await call('PATCH /admin/acquire/providers/{name}', { values: { name: p.name }, body: { enabled: enabled.checked } });
       toast(`${meta.title} ${enabled.checked ? 'on' : 'off'}`);
+      if (ctx.isCurrent()) ctx.rerender();
     } catch (err) { enabled.checked = !enabled.checked; failed(err); }
   });
 

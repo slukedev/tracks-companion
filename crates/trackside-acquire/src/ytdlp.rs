@@ -354,9 +354,6 @@ impl YtdlpProvider {
     }
 
     async fn health_inner(&self) -> ProviderHealth {
-        if !self.config.enabled {
-            return ProviderHealth::Disabled;
-        }
         let program = self.executable();
         let args = vec![OsString::from("--version")];
         let output = match process::run(
@@ -1109,6 +1106,24 @@ printf 'part2'
             provider.health().await,
             ProviderHealth::Ok {
                 version: Some(String::from("2026.01.02"))
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn health_ignores_the_startup_setting_so_the_dashboard_switch_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = fake(dir.path(), "echo 2026.02.01");
+        let mut off = config(&program);
+        off.enabled = false;
+        let clock = Arc::new(trackside_core::TestClock::new(
+            version_date("2026.02.01").unwrap(),
+        ));
+        let provider = YtdlpProvider::new(&off, dir.path(), 5000).with_clock(clock);
+        assert_eq!(
+            provider.health().await,
+            ProviderHealth::Ok {
+                version: Some(String::from("2026.02.01"))
             }
         );
     }
