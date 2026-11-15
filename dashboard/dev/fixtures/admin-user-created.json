@@ -1,0 +1,18 @@
+{
+  "id": "u0f3a6b9c2d5e8f1a4b7",
+  "username": "nana",
+  "display_name": "Nana",
+  "role": "member",
+  "permissions": {
+    "can_download": true,
+    "can_upload": false,
+    "can_request": false,
+    "legacy_subsonic": true,
+    "max_bitrate_kbps": 320
+  },
+  "library_ids": [
+    "l0a8f2c9e7d1b3k5m6n4"
+  ],
+  "created_at": "2026-11-14T10:00:00.000Z",
+  "disabled": false
+}

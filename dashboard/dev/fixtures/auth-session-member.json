@@ -1,0 +1,12 @@
+{
+  "id": "u2e5f8a1b4c7d0e3f6a9",
+  "username": "mum",
+  "display_name": "Mum",
+  "role": "member",
+  "permissions": {
+    "can_download": true,
+    "can_upload": false,
+    "can_request": true,
+    "legacy_subsonic": false
+  }
+}

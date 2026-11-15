@@ -1,0 +1,39 @@
+{
+  "backups": [
+    {
+      "name": "trackside-20261114T033000Z.db",
+      "kind": "scheduled",
+      "at": "2026-11-14T03:30:00.000Z",
+      "bytes": 790000000,
+      "has_key": true
+    },
+    {
+      "name": "trackside-20261113T033000Z.db",
+      "kind": "scheduled",
+      "at": "2026-11-13T03:30:00.000Z",
+      "bytes": 786400000,
+      "has_key": true
+    },
+    {
+      "name": "trackside-20261112T214500Z.db",
+      "kind": "manual",
+      "at": "2026-11-12T21:45:00.000Z",
+      "bytes": 785100000,
+      "has_key": true
+    },
+    {
+      "name": "trackside-20261112T033000Z.db",
+      "kind": "scheduled",
+      "at": "2026-11-12T03:30:00.000Z",
+      "bytes": 784900000,
+      "has_key": true
+    },
+    {
+      "name": "trackside-20261111T080000Z-pre-migrate-2.db",
+      "kind": "pre_migrate",
+      "at": "2026-11-11T08:00:00.000Z",
+      "bytes": 781000000,
+      "has_key": false
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "server": {
+    "name": "Home",
+    "server_id": "5f0c2b9e-8a3d-4c1e-9b7a-2d6e4f8a1c3b",
+    "version": "1.0.0",
+    "uptime_s": 266400,
+    "started_at": "2026-11-11T08:00:00.000Z",
+    "data_dir": "/data",
+    "tls": "off",
+    "listen": [
+      "[::]:4747"
+    ]
+  },
+  "storage": {
+    "database_bytes": 98304,
+    "wal_bytes": 0,
+    "cache_bytes": 0,
+    "data_free_bytes": 120000000000,
+    "warnings": []
+  },
+  "libraries": [],
+  "media": {
+    "ffmpeg": {
+      "found": false
+    },
+    "transcodes": {
+      "running": 0,
+      "queued": 0
+    },
+    "transcode_cache_bytes": 0
+  },
+  "users": {
+    "count": 1,
+    "devices": 0
+  },
+  "backups": {
+    "next_at": "2026-11-15T03:30:00.000Z"
+  },
+  "problems": [
+    {
+      "severity": "info",
+      "code": "ffmpeg_missing",
+      "title": "No ffmpeg",
+      "message": "ffmpeg was not found, so songs play only in their original format.",
+      "help": "Use the standard image, or install ffmpeg and restart Trackside."
+    }
+  ]
+}

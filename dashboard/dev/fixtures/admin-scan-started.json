@@ -1,0 +1,15 @@
+{
+  "id": "n0p4o8i2u6y0t4r8e2w6",
+  "library_id": "l0a8f2c9e7d1b3k5m6n4",
+  "kind": "quick",
+  "trigger": "admin",
+  "state": "running",
+  "started_at": "2026-11-14T10:00:00.000Z",
+  "folders_seen": 0,
+  "files_seen": 0,
+  "added": 0,
+  "updated": 0,
+  "moved": 0,
+  "missing": 0,
+  "errors": 0
+}

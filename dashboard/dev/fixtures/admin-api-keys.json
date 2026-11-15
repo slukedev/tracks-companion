@@ -1,0 +1,40 @@
+{
+  "keys": [
+    {
+      "id": "k7b9d1f3h5j7l9n1p3r5",
+      "kind": "app_password",
+      "name": "Symfonium",
+      "prefix": "TRK7",
+      "scopes": [
+        "library",
+        "stream",
+        "write"
+      ],
+      "user": {
+        "id": "u5a8b1c4d7e0f3a6b9c2",
+        "username": "sam",
+        "display_name": "Sam Okafor"
+      },
+      "created_at": "2026-10-19T21:00:00.000Z",
+      "last_used_at": "2026-11-13T22:40:11.000Z",
+      "last_used_ip": "100.90.41.5"
+    },
+    {
+      "id": "k2c4e6g8i0k2m4o6q8s0",
+      "kind": "api_key",
+      "name": "Home Assistant",
+      "prefix": "tsk_Hq7",
+      "scopes": [
+        "library"
+      ],
+      "user": {
+        "id": "u8b1c4d7e0f3a6b9c2d5",
+        "username": "luke",
+        "display_name": "Luke"
+      },
+      "created_at": "2026-10-01T09:00:00.000Z",
+      "last_used_at": "2026-11-14T09:55:00.000Z",
+      "last_used_ip": "192.168.1.10"
+    }
+  ]
+}

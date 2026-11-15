@@ -1,0 +1,21 @@
+{
+  "scans": [
+    {
+      "id": "n1q5w9e3r7t1y5u9i3o7",
+      "library_id": "l7c2d9f4a1e8b6m3n5k0",
+      "kind": "quick",
+      "trigger": "schedule",
+      "state": "aborted",
+      "started_at": "2026-11-14T08:00:00.000Z",
+      "finished_at": "2026-11-14T08:00:05.000Z",
+      "folders_seen": 0,
+      "files_seen": 0,
+      "added": 0,
+      "updated": 0,
+      "moved": 0,
+      "missing": 0,
+      "errors": 0,
+      "message": "The library root is empty or not mounted. Nothing was marked missing."
+    }
+  ]
+}

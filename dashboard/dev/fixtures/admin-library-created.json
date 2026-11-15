@@ -1,0 +1,14 @@
+{
+  "id": "l6p9o2i5u8y1t4r7e0w3",
+  "name": "Audiobooks",
+  "state": "ok",
+  "song_count": 0,
+  "enabled": true,
+  "writable": false,
+  "watch": true,
+  "quick_scan_interval_s": 1800,
+  "watching": "events",
+  "uploads_target": false,
+  "acquire_target": false,
+  "root": "/srv/audiobooks"
+}

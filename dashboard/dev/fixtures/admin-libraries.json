@@ -1,0 +1,48 @@
+{
+  "libraries": [
+    {
+      "id": "l0a8f2c9e7d1b3k5m6n4",
+      "name": "Music",
+      "state": "ok",
+      "song_count": 48211,
+      "enabled": true,
+      "writable": false,
+      "watch": true,
+      "quick_scan_interval_s": 1800,
+      "watching": "polling",
+      "uploads_target": false,
+      "acquire_target": false,
+      "root": "/music"
+    },
+    {
+      "id": "l7c2d9f4a1e8b6m3n5k0",
+      "name": "NAS Archive",
+      "state": "unavailable",
+      "song_count": 12904,
+      "enabled": true,
+      "writable": false,
+      "watch": true,
+      "quick_scan_interval_s": 1800,
+      "watching": "events",
+      "uploads_target": false,
+      "acquire_target": false,
+      "root": "/mnt/nas/music",
+      "unavailable_reason": "The folder is empty or not mounted.",
+      "unavailable_since": "2026-11-14T08:00:00.000Z"
+    },
+    {
+      "id": "l3m9q2w8e5r1t7y4u6i0",
+      "name": "Acquired",
+      "state": "ok",
+      "song_count": 312,
+      "enabled": true,
+      "writable": true,
+      "watch": true,
+      "quick_scan_interval_s": 1800,
+      "watching": "events",
+      "uploads_target": true,
+      "acquire_target": true,
+      "root": "/acquired"
+    }
+  ]
+}

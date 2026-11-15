@@ -1,0 +1,61 @@
+{
+  "user": {
+    "id": "u8b1c4d7e0f3a6b9c2d5",
+    "username": "luke",
+    "display_name": "Luke",
+    "role": "admin",
+    "permissions": {
+      "can_download": true,
+      "can_upload": true,
+      "can_request": true,
+      "legacy_subsonic": true
+    }
+  },
+  "libraries": [
+    {
+      "id": "l0a8f2c9e7d1b3k5m6n4",
+      "name": "Music",
+      "state": "ok",
+      "song_count": 48211
+    },
+    {
+      "id": "l7c2d9f4a1e8b6m3n5k0",
+      "name": "NAS Archive",
+      "state": "unavailable",
+      "song_count": 12904
+    },
+    {
+      "id": "l3m9q2w8e5r1t7y4u6i0",
+      "name": "Acquired",
+      "state": "ok",
+      "song_count": 312
+    }
+  ],
+  "server": {
+    "server_id": "5f0c2b9e-8a3d-4c1e-9b7a-2d6e4f8a1c3b",
+    "name": "Home",
+    "version": "1.0.0",
+    "urls": [
+      {
+        "url": "http://192.168.1.20:4747",
+        "kind": "lan",
+        "tls": false
+      },
+      {
+        "url": "http://home.local:4747",
+        "kind": "lan",
+        "tls": false
+      },
+      {
+        "url": "https://home.tail4a2c.ts.net",
+        "kind": "tailnet",
+        "tls": true
+      }
+    ]
+  },
+  "features": {
+    "acquisition": {
+      "instant_play": true
+    }
+  }
+}

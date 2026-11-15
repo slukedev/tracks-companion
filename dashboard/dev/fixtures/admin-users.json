@@ -1,0 +1,80 @@
+{
+  "users": [
+    {
+      "id": "u8b1c4d7e0f3a6b9c2d5",
+      "username": "luke",
+      "display_name": "Luke",
+      "role": "admin",
+      "permissions": {
+        "can_download": true,
+        "can_upload": true,
+        "can_request": true,
+        "legacy_subsonic": true
+      },
+      "library_ids": [
+        "l0a8f2c9e7d1b3k5m6n4",
+        "l7c2d9f4a1e8b6m3n5k0",
+        "l3m9q2w8e5r1t7y4u6i0"
+      ],
+      "created_at": "2026-09-02T18:11:04.000Z",
+      "last_seen_at": "2026-11-14T09:58:12.000Z",
+      "disabled": false
+    },
+    {
+      "id": "u2e5f8a1b4c7d0e3f6a9",
+      "username": "mum",
+      "display_name": "Mum",
+      "role": "member",
+      "permissions": {
+        "can_download": true,
+        "can_upload": false,
+        "can_request": true,
+        "legacy_subsonic": false
+      },
+      "library_ids": [
+        "l0a8f2c9e7d1b3k5m6n4",
+        "l3m9q2w8e5r1t7y4u6i0"
+      ],
+      "created_at": "2026-09-04T10:02:51.000Z",
+      "last_seen_at": "2026-11-14T07:41:30.000Z",
+      "disabled": false
+    },
+    {
+      "id": "u5a8b1c4d7e0f3a6b9c2",
+      "username": "sam",
+      "display_name": "Sam Okafor",
+      "role": "member",
+      "permissions": {
+        "can_download": true,
+        "can_upload": false,
+        "can_request": false,
+        "legacy_subsonic": true,
+        "max_bitrate_kbps": 320
+      },
+      "library_ids": [
+        "l0a8f2c9e7d1b3k5m6n4"
+      ],
+      "created_at": "2026-10-19T20:45:00.000Z",
+      "last_seen_at": "2026-11-13T21:10:44.000Z",
+      "disabled": false
+    },
+    {
+      "id": "u9d2e5f8a1b4c7d0e3f6",
+      "username": "grandad",
+      "display_name": "Grandad",
+      "role": "member",
+      "permissions": {
+        "can_download": false,
+        "can_upload": false,
+        "can_request": false,
+        "legacy_subsonic": false
+      },
+      "library_ids": [
+        "l0a8f2c9e7d1b3k5m6n4"
+      ],
+      "created_at": "2026-09-20T13:30:00.000Z",
+      "last_seen_at": "2026-10-02T16:05:10.000Z",
+      "disabled": true
+    }
+  ]
+}

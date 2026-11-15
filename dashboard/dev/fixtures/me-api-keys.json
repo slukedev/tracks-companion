@@ -1,0 +1,16 @@
+{
+  "keys": [
+    {
+      "id": "k2c4e6g8i0k2m4o6q8s0",
+      "kind": "api_key",
+      "name": "Home Assistant",
+      "prefix": "tsk_Hq7",
+      "scopes": [
+        "library"
+      ],
+      "created_at": "2026-10-01T09:00:00.000Z",
+      "last_used_at": "2026-11-14T09:55:00.000Z",
+      "last_used_ip": "192.168.1.10"
+    }
+  ]
+}

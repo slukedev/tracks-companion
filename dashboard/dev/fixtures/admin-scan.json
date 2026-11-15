@@ -1,0 +1,25 @@
+{
+  "id": "n4r8t2y6u0i3o7p1a5s9",
+  "library_id": "l0a8f2c9e7d1b3k5m6n4",
+  "kind": "full",
+  "trigger": "admin",
+  "state": "done",
+  "started_at": "2026-11-13T18:05:02.000Z",
+  "finished_at": "2026-11-13T18:19:47.000Z",
+  "folders_seen": 4112,
+  "files_seen": 48214,
+  "added": 212,
+  "updated": 37,
+  "moved": 3,
+  "missing": 1,
+  "errors": [
+    {
+      "path": "Various Artists/Now 47/disc 2/07 Track07.mp3",
+      "error": "Tags could not be read; the title was taken from the file name."
+    },
+    {
+      "path": "Björk/Vespertine/.DS_Store",
+      "error": "Not an audio file."
+    }
+  ]
+}

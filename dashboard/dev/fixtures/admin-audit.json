@@ -1,0 +1,93 @@
+{
+  "entries": [
+    {
+      "at": "2026-11-14T09:42:10.000Z",
+      "actor": "luke",
+      "ip": "192.168.1.41",
+      "action": "pairing.approve",
+      "target": "Living Room Mac",
+      "detail": "macos"
+    },
+    {
+      "at": "2026-11-14T09:30:58.000Z",
+      "actor": "luke",
+      "ip": "192.168.1.41",
+      "action": "acquisition.request",
+      "target": "Halo",
+      "detail": "Beyoncé"
+    },
+    {
+      "at": "2026-11-14T09:15:20.000Z",
+      "actor": "luke",
+      "ip": "192.168.1.41",
+      "action": "invite.create",
+      "target": "member",
+      "detail": "For Nana"
+    },
+    {
+      "at": "2026-11-14T08:00:05.000Z",
+      "actor": "system",
+      "ip": "",
+      "action": "library.unavailable",
+      "target": "NAS Archive",
+      "detail": "The folder is empty or not mounted."
+    },
+    {
+      "at": "2026-11-13T21:10:44.000Z",
+      "actor": "sam",
+      "ip": "100.90.41.5",
+      "action": "device.create",
+      "target": "Sam's iPhone",
+      "detail": "ios"
+    },
+    {
+      "at": "2026-11-13T18:05:02.000Z",
+      "actor": "luke",
+      "ip": "192.168.1.41",
+      "action": "library.scan",
+      "target": "Music",
+      "detail": "full"
+    },
+    {
+      "at": "2026-11-13T14:00:31.000Z",
+      "actor": "luke",
+      "ip": "192.168.1.41",
+      "action": "user.update",
+      "target": "mum",
+      "detail": "can_request on"
+    },
+    {
+      "at": "2026-11-13T12:31:09.000Z",
+      "actor": "luke",
+      "ip": "192.168.1.41",
+      "action": "acquire.provider.update",
+      "target": "soulseek",
+      "detail": "enabled"
+    },
+    {
+      "at": "2026-11-12T21:45:00.000Z",
+      "actor": "luke",
+      "ip": "192.168.1.41",
+      "action": "backup.create",
+      "target": "trackside-20261112T214500Z.db",
+      "detail": "manual"
+    },
+    {
+      "at": "2026-11-12T20:02:44.000Z",
+      "actor": "luke",
+      "ip": "192.168.1.41",
+      "action": "settings.update",
+      "target": "server.public_urls",
+      "detail": ""
+    },
+    {
+      "at": "2026-11-11T08:00:00.000Z",
+      "actor": "system",
+      "ip": "",
+      "action": "server.upgrade",
+      "target": "1.0.0",
+      "detail": "schema 2"
+    }
+  ],
+  "next_cursor": "YXVkaXQ6MTE"
+}

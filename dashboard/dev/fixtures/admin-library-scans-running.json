@@ -1,0 +1,35 @@
+{
+  "scans": [
+    {
+      "id": "n5t9y3u7i1o5p9a3s7d1",
+      "library_id": "l3m9q2w8e5r1t7y4u6i0",
+      "kind": "full",
+      "trigger": "admin",
+      "state": "running",
+      "started_at": "2026-11-14T09:59:40.000Z",
+      "folders_seen": 22,
+      "files_seen": 168,
+      "added": 0,
+      "updated": 0,
+      "moved": 0,
+      "missing": 0,
+      "errors": 0
+    },
+    {
+      "id": "n8z2x6c0v4b8n2m6q0w4",
+      "library_id": "l3m9q2w8e5r1t7y4u6i0",
+      "kind": "quick",
+      "trigger": "import",
+      "state": "done",
+      "started_at": "2026-11-14T09:31:12.000Z",
+      "finished_at": "2026-11-14T09:31:13.000Z",
+      "folders_seen": 41,
+      "files_seen": 312,
+      "added": 1,
+      "updated": 0,
+      "moved": 0,
+      "missing": 0,
+      "errors": 0
+    }
+  ]
+}

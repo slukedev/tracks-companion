@@ -1,0 +1,22 @@
+{
+  "groups": [
+    {
+      "songs": [
+        {
+          "id": "s1d3f5g7h9j1k3l5z7x9",
+          "title": "Halo",
+          "artist": "Beyoncé",
+          "library_id": "l0a8f2c9e7d1b3k5m6n4",
+          "path": "Beyoncé/I Am... Sasha Fierce/02 Halo.flac"
+        },
+        {
+          "id": "s2f4g6h8j0k2l4z6x8c0",
+          "title": "Halo",
+          "artist": "Beyoncé",
+          "library_id": "l3m9q2w8e5r1t7y4u6i0",
+          "path": "Beyoncé/I Am... Sasha Fierce/Halo.flac"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "k9x1z3c5v7b9n1m3q5w7",
+  "kind": "api_key",
+  "name": "Symfonium",
+  "prefix": "tsk_p3X",
+  "scopes": [
+    "library",
+    "stream",
+    "write"
+  ],
+  "created_at": "2026-11-14T10:00:00.000Z",
+  "secret": "tsk_p3XvQ8rL2mN6tY0wB4kD9hJ1sF5gA7cE3uI8oP2zR6x"
+}

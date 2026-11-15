@@ -1,0 +1,109 @@
+{
+  "server": {
+    "name": "Home",
+    "server_id": "5f0c2b9e-8a3d-4c1e-9b7a-2d6e4f8a1c3b",
+    "version": "1.0.0",
+    "uptime_s": 266400,
+    "started_at": "2026-11-11T08:00:00.000Z",
+    "data_dir": "/data",
+    "tls": "off",
+    "listen": [
+      "[::]:4747"
+    ]
+  },
+  "storage": {
+    "database_bytes": 812000000,
+    "wal_bytes": 4100000,
+    "cache_bytes": 3200000000,
+    "data_free_bytes": 120000000000,
+    "warnings": []
+  },
+  "libraries": [
+    {
+      "id": "l0a8f2c9e7d1b3k5m6n4",
+      "name": "Music",
+      "state": "ok",
+      "song_count": 48211,
+      "last_scan": {
+        "id": "n4r8t2y6u0i3o7p1a5s9",
+        "library_id": "l0a8f2c9e7d1b3k5m6n4",
+        "kind": "full",
+        "trigger": "admin",
+        "state": "done",
+        "started_at": "2026-11-13T18:05:02.000Z",
+        "finished_at": "2026-11-13T18:19:47.000Z",
+        "folders_seen": 4112,
+        "files_seen": 48214,
+        "added": 212,
+        "updated": 37,
+        "moved": 3,
+        "missing": 1,
+        "errors": 2
+      },
+      "scanning": false
+    },
+    {
+      "id": "l7c2d9f4a1e8b6m3n5k0",
+      "name": "NAS Archive",
+      "state": "unavailable",
+      "song_count": 12904,
+      "last_scan": {
+        "id": "n1q5w9e3r7t1y5u9i3o7",
+        "library_id": "l7c2d9f4a1e8b6m3n5k0",
+        "kind": "quick",
+        "trigger": "schedule",
+        "state": "aborted",
+        "started_at": "2026-11-14T08:00:00.000Z",
+        "finished_at": "2026-11-14T08:00:05.000Z",
+        "folders_seen": 0,
+        "files_seen": 0,
+        "added": 0,
+        "updated": 0,
+        "moved": 0,
+        "missing": 0,
+        "errors": 0,
+        "message": "The library root is empty or not mounted. Nothing was marked missing."
+      },
+      "scanning": false
+    }
+  ],
+  "media": {
+    "ffmpeg": {
+      "found": true,
+      "version": "7.1"
+    },
+    "transcodes": {
+      "running": 1,
+      "queued": 0
+    },
+    "transcode_cache_bytes": 2100000000
+  },
+  "users": {
+    "count": 4,
+    "devices": 7
+  },
+  "backups": {
+    "last": {
+      "name": "trackside-20261114T033000Z.db",
+      "at": "2026-11-14T03:30:00.000Z",
+      "bytes": 790000000
+    },
+    "next_at": "2026-11-15T03:30:00.000Z"
+  },
+  "problems": [
+    {
+      "severity": "warning",
+      "code": "library_unavailable",
+      "title": "NAS Archive offline",
+      "message": "NAS Archive has been unavailable since 08:00.",
+      "help": "Check that the NAS is on and its share is mounted at /mnt/nas/music. Its songs stay in the library until it is back."
+    },
+    {
+      "severity": "warning",
+      "code": "inotify_limit",
+      "title": "Music not watched live",
+      "message": "Watching Music for changes fell back to polling.",
+      "help": "Raise fs.inotify.max_user_watches to 524288 on the host so new files appear within seconds."
+    }
+  ]
+}

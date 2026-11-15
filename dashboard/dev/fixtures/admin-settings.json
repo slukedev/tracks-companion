@@ -1,0 +1,132 @@
+{
+  "server.name": {
+    "value": "Home",
+    "source": "dashboard",
+    "editable": true
+  },
+  "server.public_urls": {
+    "value": [
+      "https://home.tail4a2c.ts.net"
+    ],
+    "source": "dashboard",
+    "editable": true
+  },
+  "scanner.watch": {
+    "value": true,
+    "source": "default",
+    "editable": true
+  },
+  "scanner.quick_interval": {
+    "value": "30m",
+    "source": "default",
+    "editable": true
+  },
+  "scanner.full_interval": {
+    "value": "off",
+    "source": "default",
+    "editable": true
+  },
+  "scanner.missing_grace": {
+    "value": "30d",
+    "source": "default",
+    "editable": true
+  },
+  "media.transcode_cache_max": {
+    "value": "10GiB",
+    "source": "config",
+    "editable": false
+  },
+  "media.art_cache_max": {
+    "value": "2GiB",
+    "source": "default",
+    "editable": true
+  },
+  "media.cellular_profile": {
+    "value": "aac-256",
+    "source": "default",
+    "editable": true
+  },
+  "auth.legacy_subsonic": {
+    "value": true,
+    "source": "default",
+    "editable": true
+  },
+  "discovery.mdns": {
+    "value": true,
+    "source": "config",
+    "editable": false
+  },
+  "backup.schedule": {
+    "value": "daily 03:30",
+    "source": "default",
+    "editable": true
+  },
+  "backup.keep": {
+    "value": 7,
+    "source": "default",
+    "editable": true
+  },
+  "uploads.enabled": {
+    "value": false,
+    "source": "default",
+    "editable": true
+  },
+  "acquire.enabled": {
+    "value": true,
+    "source": "dashboard",
+    "editable": true
+  },
+  "acquire.library": {
+    "value": "l3m9q2w8e5r1t7y4u6i0",
+    "source": "dashboard",
+    "editable": true
+  },
+  "acquire.prefer": {
+    "value": [
+      "soulseek",
+      "ytdlp"
+    ],
+    "source": "default",
+    "editable": true
+  },
+  "acquire.member_daily": {
+    "value": 50,
+    "source": "default",
+    "editable": true
+  },
+  "acquire.member_active": {
+    "value": 5,
+    "source": "default",
+    "editable": true
+  },
+  "acquire.global_daily": {
+    "value": 500,
+    "source": "default",
+    "editable": true
+  },
+  "acquire.instant_play": {
+    "value": true,
+    "source": "dashboard",
+    "editable": true
+  },
+  "acquire.ytdlp.enabled": {
+    "value": true,
+    "source": "dashboard",
+    "editable": true
+  },
+  "acquire.soulseek.enabled": {
+    "value": true,
+    "source": "dashboard",
+    "editable": true
+  },
+  "acquire.soulseek.url": {
+    "value": "http://slskd:5030",
+    "source": "config",
+    "editable": false
+  },
+  "enrichment.musicbrainz": {
+    "value": false,
+    "source": "default",
+    "editable": true
+  }
+}

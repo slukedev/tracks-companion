@@ -1,0 +1,42 @@
+{
+  "product": "trackside",
+  "server_id": "5f0c2b9e-8a3d-4c1e-9b7a-2d6e4f8a1c3b",
+  "name": "Home",
+  "version": "1.0.0",
+  "api": {
+    "versions": [
+      "v1"
+    ],
+    "current": "v1",
+    "deprecated": []
+  },
+  "setup_required": false,
+  "auth": {
+    "password_login": true,
+    "pairing": true,
+    "pair_requests": true
+  },
+  "media": {
+    "transcoding": true,
+    "profiles": [
+      "aac-256",
+      "aac-128",
+      "mp3-320",
+      "mp3-128",
+      "opus-128",
+      "flac"
+    ],
+    "hls": true,
+    "suggested_cellular_profile": "aac-256"
+  },
+  "features": {
+    "lyrics": true,
+    "uploads": false,
+    "events": true,
+    "animated_art": false
+  },
+  "subsonic": {
+    "enabled": true,
+    "path": "/rest"
+  }
+}

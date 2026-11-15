@@ -1,0 +1,116 @@
+{
+  "devices": [
+    {
+      "id": "d2c4e6g8i0k2m4o6q8s0",
+      "name": "Luke's iPhone",
+      "platform": "ios",
+      "model": "iPhone18,1",
+      "app_name": "Tracks",
+      "app_version": "3.2",
+      "user": {
+        "id": "u8b1c4d7e0f3a6b9c2d5",
+        "username": "luke",
+        "display_name": "Luke"
+      },
+      "created_at": "2026-09-02T18:20:00.000Z",
+      "last_seen_at": "2026-11-14T09:58:12.000Z",
+      "last_ip": "192.168.1.41"
+    },
+    {
+      "id": "d4e6g8i0k2m4o6q8s0u2",
+      "name": "Luke's MacBook Pro",
+      "platform": "macos",
+      "model": "Mac16,1",
+      "app_name": "Tracks",
+      "app_version": "3.2",
+      "user": {
+        "id": "u8b1c4d7e0f3a6b9c2d5",
+        "username": "luke",
+        "display_name": "Luke"
+      },
+      "created_at": "2026-09-02T18:31:00.000Z",
+      "last_seen_at": "2026-11-13T23:12:40.000Z",
+      "last_ip": "100.84.12.7"
+    },
+    {
+      "id": "d6g8i0k2m4o6q8s0u2w4",
+      "name": "Living Room Mac",
+      "platform": "macos",
+      "model": "Macmini9,1",
+      "app_name": "Tracks",
+      "app_version": "3.2",
+      "user": {
+        "id": "u8b1c4d7e0f3a6b9c2d5",
+        "username": "luke",
+        "display_name": "Luke"
+      },
+      "created_at": "2026-11-14T09:42:10.000Z",
+      "last_seen_at": "2026-11-14T09:42:10.000Z",
+      "last_ip": "192.168.1.60"
+    },
+    {
+      "id": "d8i0k2m4o6q8s0u2w4y6",
+      "name": "Mum's iPad",
+      "platform": "ipados",
+      "model": "iPad14,1",
+      "app_name": "Tracks",
+      "app_version": "3.1",
+      "user": {
+        "id": "u2e5f8a1b4c7d0e3f6a9",
+        "username": "mum",
+        "display_name": "Mum"
+      },
+      "created_at": "2026-09-04T10:10:00.000Z",
+      "last_seen_at": "2026-11-14T07:41:30.000Z",
+      "last_ip": "192.168.1.52"
+    },
+    {
+      "id": "d0k2m4o6q8s0u2w4y6a8",
+      "name": "Mum's iPhone",
+      "platform": "ios",
+      "model": "iPhone15,4",
+      "app_name": "Tracks",
+      "app_version": "3.2",
+      "user": {
+        "id": "u2e5f8a1b4c7d0e3f6a9",
+        "username": "mum",
+        "display_name": "Mum"
+      },
+      "created_at": "2026-09-04T10:12:00.000Z",
+      "last_seen_at": "2026-11-12T19:03:00.000Z",
+      "last_ip": "100.71.3.22"
+    },
+    {
+      "id": "d1m3o5q7s9u1w3y5a7c9",
+      "name": "Sam's iPhone",
+      "platform": "ios",
+      "model": "iPhone17,2",
+      "app_name": "Tracks",
+      "app_version": "3.2",
+      "user": {
+        "id": "u5a8b1c4d7e0f3a6b9c2",
+        "username": "sam",
+        "display_name": "Sam Okafor"
+      },
+      "created_at": "2026-11-13T21:10:44.000Z",
+      "last_seen_at": "2026-11-13T21:10:44.000Z",
+      "last_ip": "100.90.41.5"
+    },
+    {
+      "id": "d3o5q7s9u1w3y5a7c9e1",
+      "name": "Grandad's iPad",
+      "platform": "ipados",
+      "model": "iPad12,1",
+      "app_name": "Tracks",
+      "app_version": "3.0",
+      "user": {
+        "id": "u9d2e5f8a1b4c7d0e3f6",
+        "username": "grandad",
+        "display_name": "Grandad"
+      },
+      "created_at": "2026-09-20T13:40:00.000Z",
+      "last_seen_at": "2026-10-02T16:05:10.000Z",
+      "last_ip": "192.168.1.77"
+    }
+  ]
+}

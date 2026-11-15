@@ -1,0 +1,17 @@
+{
+  "tag_problems": [
+    {
+      "song_id": "s7m2k4q9x1v8b3n6c0de",
+      "path": "Various Artists/Now 47/disc 2/07 Track07.mp3",
+      "problem": "Tags could not be read; the title was taken from the file name."
+    }
+  ],
+  "quarantined": [
+    {
+      "path": "Aphex Twin/Drukqs/broken.flac",
+      "error": "Reading this file took longer than 30 seconds.",
+      "at": "2026-11-13T18:12:03.000Z"
+    }
+  ],
+  "unreadable_folders": []
+}
