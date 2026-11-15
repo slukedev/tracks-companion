@@ -13,8 +13,8 @@ use tokio_util::sync::CancellationToken;
 use trackside_core::config::AcquireConfig;
 use trackside_core::control::{
     AcquireControl, AcquireError, AcquireFailure, AcquireRequest, AcquisitionFilter,
-    AcquisitionState, AcquisitionView, ExternalQuery, GrowState, GrowingFile, HlsJobId,
-    ImportOutcome, ProviderChange, ProviderHealthState, ScanControl,
+    AcquisitionState, AcquisitionView, ExternalPlayRequest, ExternalQuery, GrowState, GrowingFile,
+    HlsJobId, ImportOutcome, ProviderChange, ProviderHealthState, ScanControl,
 };
 use trackside_core::db::{DbOptions, FilesystemCheck};
 use trackside_core::ids::PublicId;
@@ -1578,4 +1578,294 @@ async fn instant_play_serves_hls_before_download_completes_with_real_media() {
         imported[0].rel_path,
         PathBuf::from("Beyoncé/Singles/Halo.m4a")
     );
+}
+
+fn streaming_provider(ids: &[&str]) -> Arc<FakeProvider> {
+    let mut video = FakeProvider::new(
+        ProviderName::Ytdlp,
+        ids.iter()
+            .map(|id| candidate(ProviderName::Ytdlp, id, false))
+            .collect(),
+    );
+    Arc::get_mut(&mut video).unwrap().streams = true;
+    video
+}
+
+async fn count(db: &Db, table: &'static str) -> i64 {
+    db.read(move |c| Ok(c.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))?))
+        .await
+        .unwrap()
+}
+
+async fn wait_complete(acquirer: &Acquirer, token: &trackside_core::CandidateToken) {
+    let stream = acquirer.external_stream(&Access::system(), token).unwrap();
+    let mut state = stream.progressive.state.clone();
+    state
+        .wait_for(|s| matches!(s, GrowState::Complete { .. }))
+        .await
+        .unwrap();
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn playing_without_keeping_keeps_nothing_and_replays_from_the_cache() {
+    let world = World::new().await;
+    let video = streaming_provider(&["bnVUHWCynig"]);
+    let (release, gate) = tokio::sync::oneshot::channel();
+    *video.release.lock().unwrap() = Some(gate);
+    let acquirer = world.start(vec![video.clone()]);
+    let search = acquirer
+        .search(
+            &world.member,
+            ExternalQuery::Text(String::from("beyonce halo")),
+        )
+        .await
+        .unwrap();
+    let token = search.candidates[0].token.clone();
+    let changes = count(&world.db, "change_log").await;
+
+    let play = acquirer
+        .play_external(&world.member, ExternalPlayRequest::Candidate(token.clone()))
+        .await
+        .unwrap();
+    assert_eq!(play.token.as_ref(), Some(&token));
+    assert_eq!(play.song, None);
+    let stream = acquirer.external_stream(&world.member, &token).unwrap();
+    assert_eq!(
+        *stream.progressive.state.borrow(),
+        GrowState::Growing { bytes: 4 }
+    );
+    assert!(
+        stream
+            .progressive
+            .path
+            .starts_with(world.dir.path().join("cache").join("external"))
+    );
+    release.send(()).unwrap();
+    wait_complete(&acquirer, &token).await;
+    assert!(stream.progressive.path.exists());
+
+    let again = acquirer
+        .play_external(&world.member, ExternalPlayRequest::Candidate(token.clone()))
+        .await
+        .unwrap();
+    assert_eq!(again.token.as_ref(), Some(&token));
+    let by_name = acquirer
+        .play_external(
+            &world.other,
+            ExternalPlayRequest::Song {
+                title: String::from("Halo"),
+                artist: String::from("Beyoncé"),
+                album: None,
+                duration_ms: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(by_name.token.as_ref(), Some(&token));
+    assert_eq!(
+        video.fetches.load(Ordering::SeqCst),
+        1,
+        "replays come from the cache"
+    );
+
+    assert_eq!(count(&world.db, "acquisitions").await, 0);
+    assert_eq!(count(&world.db, "songs").await, 0);
+    assert_eq!(count(&world.db, "change_log").await, changes);
+    assert_eq!(world.scan.requested_imports().len(), 0);
+    assert_eq!(world.audit_actions().await, Vec::<String>::new());
+
+    // A Get afterwards still downloads and keeps it.
+    let song = world.song_added();
+    let mut events = world.events.subscribe();
+    let mut get = halo();
+    get.candidate = Some(token.clone());
+    let view = acquirer.request(&world.member, get).await.unwrap();
+    let done = wait_for(&mut events, &view.id, is(AcquisitionState::Done)).await;
+    assert_eq!(done.song, Some(song));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_cached_play_goes_once_it_is_old() {
+    let world = World::new().await;
+    let video = streaming_provider(&["bnVUHWCynig"]);
+    let acquirer = world.start(vec![video.clone()]);
+    let halo = || ExternalPlayRequest::Song {
+        title: String::from("Halo"),
+        artist: String::from("Beyoncé"),
+        album: None,
+        duration_ms: Some(200_000),
+    };
+    let play = acquirer.play_external(&world.member, halo()).await.unwrap();
+    let token = play.token.unwrap();
+    wait_complete(&acquirer, &token).await;
+    let path = acquirer
+        .external_stream(&world.member, &token)
+        .unwrap()
+        .progressive
+        .path;
+    tokio::time::advance(Timing::default().external_ttl + Duration::from_secs(1)).await;
+    acquirer.play_external(&world.member, halo()).await.unwrap();
+    assert_eq!(video.fetches.load(Ordering::SeqCst), 2);
+    assert!(path.exists(), "fetched again into the same place");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_play_cache_stays_under_its_size() {
+    let world = World::new().await;
+    let video = streaming_provider(&["aaaaaaaaaaa", "bbbbbbbbbbb"]);
+    let timing = Timing {
+        external_max_bytes: GOOD_FLAC.len() as u64,
+        ..World::timing()
+    };
+    let acquirer = world.start_timed(vec![video.clone()], timing);
+    let search = acquirer
+        .search(
+            &world.member,
+            ExternalQuery::Text(String::from("beyonce halo")),
+        )
+        .await
+        .unwrap();
+    let (first, second) = (
+        search.candidates[0].token.clone(),
+        search.candidates[1].token.clone(),
+    );
+    for token in [&first, &second] {
+        acquirer
+            .play_external(&world.member, ExternalPlayRequest::Candidate(token.clone()))
+            .await
+            .unwrap();
+        wait_complete(&acquirer, token).await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+    }
+    assert!(acquirer.external_stream(&world.member, &first).is_err());
+    assert!(acquirer.external_stream(&world.member, &second).is_ok());
+}
+
+#[tokio::test(start_paused = true)]
+async fn playing_without_keeping_respects_limits_and_cooldowns() {
+    let world = World::new().await;
+    let video = streaming_provider(&["aaaaaaaaaaa", "bbbbbbbbbbb"]);
+    let (_release, gate) = tokio::sync::oneshot::channel::<()>();
+    *video.release.lock().unwrap() = Some(gate);
+    let timing = Timing {
+        external_per_user: 1,
+        ..World::timing()
+    };
+    let acquirer = world.start_timed(vec![video.clone()], timing);
+    let search = acquirer
+        .search(
+            &world.member,
+            ExternalQuery::Text(String::from("beyonce halo")),
+        )
+        .await
+        .unwrap();
+    let tokens: Vec<_> = search.candidates.iter().map(|c| c.token.clone()).collect();
+    acquirer
+        .play_external(
+            &world.member,
+            ExternalPlayRequest::Candidate(tokens[0].clone()),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        acquirer
+            .play_external(
+                &world.member,
+                ExternalPlayRequest::Candidate(tokens[1].clone())
+            )
+            .await,
+        Err(AcquireError::RateLimited { .. })
+    ));
+    assert!(matches!(
+        acquirer
+            .play_external(&world.member, ExternalPlayRequest::Candidate(random_id()))
+            .await,
+        Err(AcquireError::CandidateExpired)
+    ));
+
+    *video.search_error.lock().unwrap() = Some(|| ProviderError::BotCheck);
+    let song = |title: &str| ExternalPlayRequest::Song {
+        title: title.to_owned(),
+        artist: String::from("Beyoncé"),
+        album: None,
+        duration_ms: None,
+    };
+    assert!(matches!(
+        acquirer
+            .play_external(&world.other, song("Single Ladies"))
+            .await,
+        Err(AcquireError::NotFound)
+    ));
+    assert!(matches!(
+        acquirer.play_external(&world.other, song("Irreplaceable")).await,
+        Err(AcquireError::Unavailable { retry_after }) if retry_after > Duration::ZERO
+    ));
+    assert_eq!(count(&world.db, "acquisitions").await, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn playing_without_keeping_needs_a_source_that_streams() {
+    let mut world = World::new().await;
+    let peer = FakeProvider::new(
+        ProviderName::Soulseek,
+        vec![candidate(ProviderName::Soulseek, "f", true)],
+    );
+    let permissions = Permissions {
+        can_download: true,
+        can_upload: false,
+        can_request: true,
+        legacy_subsonic: false,
+        max_bitrate_kbps: None,
+    };
+    let acquirer = world.start(vec![peer]);
+    let search = acquirer
+        .search(
+            &world.member,
+            ExternalQuery::Text(String::from("beyonce halo")),
+        )
+        .await
+        .unwrap();
+    let feature = acquirer
+        .feature_for(&world.member, &permissions, true)
+        .unwrap();
+    assert!(!feature.external_play);
+    assert!(matches!(
+        acquirer
+            .play_external(
+                &world.member,
+                ExternalPlayRequest::Candidate(search.candidates[0].token.clone())
+            )
+            .await,
+        Err(AcquireError::Unavailable { .. })
+    ));
+
+    let owned = world.insert_song("Halo", "Beyoncé", 200_000).await;
+    let video = streaming_provider(&["bnVUHWCynig"]);
+    let acquirer = world.start(vec![video.clone()]);
+    let play = acquirer
+        .play_external(
+            &world.member,
+            ExternalPlayRequest::Song {
+                title: String::from("Halo"),
+                artist: String::from("Beyoncé"),
+                album: None,
+                duration_ms: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(play.song, Some(owned));
+    assert_eq!(play.token, None);
+    assert_eq!(video.fetches.load(Ordering::SeqCst), 0);
+
+    world.config.enabled = false;
+    let off = world.start(vec![streaming_provider(&["bnVUHWCynig"])]);
+    assert!(matches!(
+        off.play_external(&world.member, ExternalPlayRequest::Candidate(random_id()))
+            .await,
+        Err(AcquireError::Disabled)
+    ));
 }

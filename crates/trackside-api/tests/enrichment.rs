@@ -53,6 +53,7 @@ impl AcquireControl for OpenAcquisition {
     fn feature_for(&self, a: &Access, p: &Permissions, request: bool) -> Option<AcquireFeature> {
         (request && (a.is_admin() || p.can_request)).then_some(AcquireFeature {
             instant_play: false,
+            external_play: false,
         })
     }
     fn search<'a>(

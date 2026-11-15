@@ -46,7 +46,9 @@ starts at schema 3; there is nothing to upgrade from.
   Images are signed by the workflow that built them (`ci.yml` for edge, `images.yml` for
   releases) and carry SBOM and provenance attestations; release binaries and packages carry
   build provenance.
-- Optional acquisition through yt-dlp and slskd, off unless an admin turns it on.
+- Optional acquisition through yt-dlp and slskd, off unless an admin turns it on. Playing a
+  song the server doesn't have streams it through yt-dlp without keeping it; only Get adds a
+  song to the library.
 - Suggestions from Last.fm with one server-wide API key, set in the dashboard under Settings,
   Last.fm (with a Test button) or in the config: similar songs and artists, top songs and artist
   bios for every user, ranked by each user's own listens and stars, with no Last.fm account

@@ -556,7 +556,10 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
     )?;
 
     let libraries = vec![(s.library.clone(), true), (s.acquired.clone(), true)];
-    let feature = Some(AcquireFeature { instant_play: true });
+    let feature = Some(AcquireFeature {
+        instant_play: true,
+        external_play: true,
+    });
     put(
         "me.json",
         &build::me_body(
@@ -1162,6 +1165,19 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
         candidates: vec![candidate()],
     };
     put("acquisition-search.json", &build::search_body(&search))?;
+    put(
+        "external-play.json",
+        &build::external_play_body(
+            &trackside_core::control::ExternalPlay {
+                token: Some(CandidateToken::derive("ytdlp", "{\"id\":\"halo\"}")),
+                title: String::from("Halo"),
+                artist: String::from("Beyoncé"),
+                duration_ms: Some(261_000),
+                song: None,
+            },
+            "",
+        ),
+    )?;
     put(
         "acquisition-downloading.json",
         &map::acquisition(&view(&s, AcquisitionState::Downloading), ""),

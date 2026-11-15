@@ -1,0 +1,9 @@
+{
+  "artist": "Beyoncé",
+  "duration_ms": 261000,
+  "stream": {
+    "hls": "/api/v1/external/plays/xzkhbcr08sk1ny8kg5mvy/stream.m3u8",
+    "progressive": "/api/v1/external/plays/xzkhbcr08sk1ny8kg5mvy/stream"
+  },
+  "title": "Halo"
+}

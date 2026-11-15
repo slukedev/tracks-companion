@@ -5,6 +5,7 @@
   },
   "features": {
     "acquisition": {
+      "external_play": true,
       "instant_play": true
     }
   },

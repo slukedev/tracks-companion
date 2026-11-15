@@ -265,6 +265,12 @@ impl From<AcquireError> for ApiError {
             .with_retry_after(retry_after),
             AcquireError::Invalid(message) => Self::bad_request(message),
             AcquireError::Busy => Self::conflict("running", "One is already running."),
+            AcquireError::Unavailable { retry_after } => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "unavailable",
+                "Nothing can play this right now.",
+            )
+            .with_retry_after(retry_after),
             AcquireError::Db(db) => db.into(),
             other => Self::internal(&other),
         }

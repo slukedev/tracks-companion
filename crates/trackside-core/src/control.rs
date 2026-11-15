@@ -223,6 +223,8 @@ pub struct AcquisitionView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AcquireFeature {
     pub instant_play: bool,
+    /// Songs the server does not have can be played without being kept.
+    pub external_play: bool,
 }
 
 /// What to search sources for.
@@ -283,6 +285,29 @@ pub struct AcquireRequest {
     pub candidate: Option<CandidateToken>,
     pub allow_versions: bool,
     pub instant: bool,
+}
+
+/// `POST /api/v1/external/play`: a candidate from a search, or a song by name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExternalPlayRequest {
+    Candidate(CandidateToken),
+    Song {
+        title: String,
+        artist: String,
+        album: Option<String>,
+        duration_ms: Option<u32>,
+    },
+}
+
+/// A song played from a source without being kept. With `song`, the library has it and there
+/// is nothing to stream.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternalPlay {
+    pub token: Option<CandidateToken>,
+    pub title: String,
+    pub artist: String,
+    pub duration_ms: Option<u32>,
+    pub song: Option<SongId>,
 }
 
 /// Which requests to list.
@@ -417,6 +442,9 @@ pub enum AcquireError {
     Invalid(String),
     #[error("busy")]
     Busy,
+    /// No source can serve this now (cooling down, failing or at its limit).
+    #[error("unavailable")]
+    Unavailable { retry_after: Duration },
     #[error(transparent)]
     Db(#[from] DbError),
     #[error("not implemented yet: {0}")]
@@ -509,6 +537,25 @@ pub trait AcquireControl: Send + Sync + 'static {
         caller: &Access,
         id: &AcquisitionId,
     ) -> Result<InstantStream, AcquireError>;
+
+    /// Streams a song the library does not have without keeping it: no acquisition, no
+    /// library song, no change log.
+    fn play_external<'a>(
+        &'a self,
+        _caller: &'a Access,
+        _request: ExternalPlayRequest,
+    ) -> BoxFuture<'a, Result<ExternalPlay, AcquireError>> {
+        Box::pin(async { Err(AcquireError::NotFound) })
+    }
+
+    /// The stream of a song [`AcquireControl::play_external`] started.
+    fn external_stream(
+        &self,
+        _caller: &Access,
+        _token: &CandidateToken,
+    ) -> Result<InstantStream, AcquireError> {
+        Err(AcquireError::NotFound)
+    }
 
     fn providers(&self) -> BoxFuture<'_, Vec<ProviderStatus>>;
 

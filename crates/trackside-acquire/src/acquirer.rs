@@ -14,9 +14,9 @@ use trackside_core::config::{AcquireConfig, Rate};
 use trackside_core::control::{
     AcquireControl, AcquireError, AcquireFeature, AcquireRequest, AcquisitionFilter,
     AcquisitionState, AcquisitionView, AdminAcquisitionView, AdminCandidate, CandidateFormat,
-    CandidateView, ExternalQuery, ExternalSearch, GrowingFile, HlsJobId, InstantStream,
-    InstantStreamUrls, ProviderChange, ProviderHealthState, ProviderStats, ProviderStatus,
-    ProviderTest, Quality, ScanControl,
+    CandidateView, ExternalPlay, ExternalPlayRequest, ExternalQuery, ExternalSearch, GrowingFile,
+    HlsJobId, InstantStream, InstantStreamUrls, ProviderChange, ProviderHealthState, ProviderStats,
+    ProviderStatus, ProviderTest, Quality, ScanControl,
 };
 use trackside_core::ids::PublicId;
 use trackside_core::records::Page;
@@ -111,6 +111,11 @@ pub struct Timing {
     pub candidate_ttl: Duration,
     pub user_search_rate: Rate,
     pub ytdlp_release_base: String,
+    /// Songs played without being kept: the most their files may take together, how long
+    /// one stays after its last play, and how many one user may be fetching at once.
+    pub external_max_bytes: u64,
+    pub external_ttl: Duration,
+    pub external_per_user: usize,
 }
 
 impl Default for Timing {
@@ -140,6 +145,9 @@ impl Default for Timing {
                 per: Duration::from_secs(60),
             },
             ytdlp_release_base: String::from(update::DEFAULT_RELEASE_BASE),
+            external_max_bytes: 1 << 30,
+            external_ttl: Duration::from_secs(6 * 60 * 60),
+            external_per_user: 2,
         }
     }
 }
@@ -248,8 +256,8 @@ struct SearchSession {
 }
 
 #[derive(Debug, Default)]
-struct SessionState {
-    candidates: Vec<Candidate>,
+pub(crate) struct SessionState {
+    pub candidates: Vec<Candidate>,
     pending: usize,
     answered: usize,
 }
@@ -284,6 +292,10 @@ pub(crate) struct Inner {
     pub tracker: TaskTracker,
     pub disk_paused: AtomicBool,
     pub update: Mutex<UpdateStatus>,
+    pub external: Mutex<crate::external::ExternalCache>,
+    /// Held while a play without keeping starts, so two plays of one song start one fetch.
+    pub external_start: tokio::sync::Mutex<()>,
+    pub external_dir: PathBuf,
 }
 
 impl std::fmt::Debug for Inner {
@@ -376,6 +388,10 @@ impl Acquirer {
                 }
             })
             .collect();
+        let external_dir = deps.data_dir.as_deref().map_or_else(
+            || config.staging_dir.with_file_name("external"),
+            crate::external::dir_in,
+        );
         let inner = Arc::new(Inner {
             db: deps.db,
             scan: deps.scan,
@@ -405,6 +421,9 @@ impl Acquirer {
             tracker: TaskTracker::new(),
             disk_paused: AtomicBool::new(false),
             update: Mutex::new(UpdateStatus::default()),
+            external: Mutex::default(),
+            external_start: tokio::sync::Mutex::new(()),
+            external_dir,
         });
         let runner = Arc::clone(&inner);
         inner.tracker.spawn(crate::runner::run(runner));
@@ -490,6 +509,7 @@ impl Inner {
                 let stored = self.db.read(settings::all).await?;
                 self.apply_stored(&stored);
                 self.refresh_target().await?;
+                self.clear_external().await;
                 Ok::<(), DbError>(())
             })
             .await?;
@@ -690,7 +710,7 @@ impl Inner {
         }
     }
 
-    fn user_limiter(&self, user: UserKey) -> Arc<TokenBucket> {
+    pub(crate) fn user_limiter(&self, user: UserKey) -> Arc<TokenBucket> {
         Arc::clone(
             lock(&self.user_searches)
                 .entry(user)
@@ -802,16 +822,17 @@ pub(crate) fn token_of(c: &Candidate) -> CandidateToken {
 /// Searches every usable provider in parallel. Each result is added to `state` as it comes;
 /// the returned future ends when all are done or `wait` passes, while the tasks themselves
 /// may run on until `cap`.
-async fn search_providers(
+pub(crate) async fn search_providers(
     inner: &Arc<Inner>,
     query: &SearchQuery,
     wait: Duration,
     cap: Duration,
     state: Arc<Mutex<SessionState>>,
+    only_streaming: bool,
 ) -> bool {
     let mut usable = Vec::new();
     for (i, slot) in inner.slots.iter().enumerate() {
-        if inner.usable(slot).await {
+        if (!only_streaming || slot.provider.streams()) && inner.usable(slot).await {
             usable.push(i);
         }
     }
@@ -896,6 +917,7 @@ impl Inner {
             self.config.search_timeout,
             self.config.search_timeout,
             Arc::clone(&state),
+            false,
         )
         .await;
         let mut state = lock(&state);
@@ -1024,12 +1046,15 @@ impl AcquireControl for Acquirer {
             && allowed
             && provider_on
             && caller.can_see(target.key))
-        .then(|| AcquireFeature {
-            instant_play: live.instant_play
-                && inner
-                    .slots
-                    .iter()
-                    .any(|s| s.enabled.load(Ordering::Relaxed) && s.provider.streams()),
+        .then(|| {
+            let streaming = inner
+                .slots
+                .iter()
+                .any(|s| s.enabled.load(Ordering::Relaxed) && s.provider.streams());
+            AcquireFeature {
+                instant_play: live.instant_play && streaming,
+                external_play: streaming,
+            }
         })
     }
 
@@ -1055,6 +1080,7 @@ impl AcquireControl for Acquirer {
                 inner.config.search_timeout,
                 inner.timing.search_cap,
                 Arc::clone(&state),
+                false,
             )
             .await;
             let search_id = random_id::<AcquisitionId>().as_str()[1..].to_owned();
@@ -1347,6 +1373,24 @@ impl AcquireControl for Acquirer {
         jobs.get(id)
             .filter(|r| caller.is_admin() || r.user == Some(caller.user))
             .and_then(|r| r.stream.clone())
+            .ok_or(AcquireError::NotFound)
+    }
+
+    fn play_external<'a>(
+        &'a self,
+        caller: &'a Access,
+        request: ExternalPlayRequest,
+    ) -> BoxFuture<'a, Result<ExternalPlay, AcquireError>> {
+        Box::pin(self.inner.play_external(caller, request))
+    }
+
+    fn external_stream(
+        &self,
+        _caller: &Access,
+        token: &CandidateToken,
+    ) -> Result<InstantStream, AcquireError> {
+        self.inner
+            .external_stream(token)
             .ok_or(AcquireError::NotFound)
     }
 

@@ -240,6 +240,18 @@ pub trait Provider: Send + Sync + std::fmt::Debug + 'static {
         None
     }
 
+    /// [`Provider::fetch_streaming`] for a song that is played and not kept, so nothing is
+    /// fetched for tagging.
+    fn play_streaming<'a>(
+        &'a self,
+        candidate: &'a Candidate,
+        dir: &'a Path,
+        progress: ProgressSink,
+        cancel: CancellationToken,
+    ) -> Option<BoxFuture<'a, Result<StreamingFetch, ProviderError>>> {
+        self.fetch_streaming(candidate, dir, progress, cancel)
+    }
+
     /// Whether [`Provider::fetch_streaming`] is implemented, so candidates can offer instant
     /// play.
     fn streams(&self) -> bool {

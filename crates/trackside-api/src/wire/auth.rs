@@ -265,6 +265,8 @@ pub struct NewPassword {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AcquisitionFeature {
     pub instant_play: bool,
+    #[serde(default)]
+    pub external_play: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

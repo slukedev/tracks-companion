@@ -359,6 +359,7 @@ pub fn me_body(
         features: MeFeatures {
             acquisition: feature.map(|f| crate::wire::auth::AcquisitionFeature {
                 instant_play: f.instant_play,
+                external_play: f.external_play,
             }),
         },
     }

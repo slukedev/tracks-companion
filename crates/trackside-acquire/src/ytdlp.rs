@@ -305,6 +305,7 @@ impl YtdlpProvider {
         staging: &Path,
         progress: ProgressSink,
         cancel: CancellationToken,
+        with_cover: bool,
     ) -> Result<StreamingFetch, ProviderError> {
         let url = candidate_url(candidate)?;
         tokio::fs::create_dir_all(staging).await?;
@@ -386,7 +387,11 @@ impl YtdlpProvider {
             file.sync_all().await?;
             state_tx.send_replace(GrowState::Complete { bytes: written });
             progress.report(written, Some(written));
-            let cover = fetch_cover(&program, &thumbnail, &staging, &tmp_dir).await;
+            let cover = if with_cover {
+                fetch_cover(&program, &thumbnail, &staging, &tmp_dir).await
+            } else {
+                None
+            };
             Ok(FetchedFile {
                 path,
                 bytes: written,
@@ -499,7 +504,19 @@ impl Provider for YtdlpProvider {
         cancel: CancellationToken,
     ) -> Option<BoxFuture<'a, Result<StreamingFetch, ProviderError>>> {
         Some(Box::pin(
-            self.stream_inner(candidate, staging, progress, cancel),
+            self.stream_inner(candidate, staging, progress, cancel, true),
+        ))
+    }
+
+    fn play_streaming<'a>(
+        &'a self,
+        candidate: &'a Candidate,
+        dir: &'a Path,
+        progress: ProgressSink,
+        cancel: CancellationToken,
+    ) -> Option<BoxFuture<'a, Result<StreamingFetch, ProviderError>>> {
+        Some(Box::pin(
+            self.stream_inner(candidate, dir, progress, cancel, false),
         ))
     }
 

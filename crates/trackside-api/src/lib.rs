@@ -31,7 +31,7 @@ pub mod build {
     pub use crate::routes::account::{
         listen_line, me_body, pair_result_body, qr_link, spaced_code,
     };
-    pub use crate::routes::acquisition::search_body;
+    pub use crate::routes::acquisition::{external_play_body, search_body};
     pub use crate::routes::admin::{
         admin_library, admin_user, audit_summary, invite_state, library_problems_for,
         overview_library, scan_detail_body,
@@ -254,6 +254,10 @@ pub struct LocalState {
     instant_hls: tokio::sync::Mutex<
         HashMap<trackside_core::AcquisitionId, trackside_core::control::HlsJobId>,
     >,
+    /// The same for songs played without being kept, per user.
+    external_hls: tokio::sync::Mutex<
+        HashMap<(UserKey, trackside_core::CandidateToken), trackside_core::control::HlsJobId>,
+    >,
     latest_seq: AtomicI64,
     now_playing: NowPlayingRegistry,
     playback: Arc<PlaybackLoad>,
@@ -304,6 +308,14 @@ impl LocalState {
         HashMap<trackside_core::AcquisitionId, trackside_core::control::HlsJobId>,
     > {
         &self.instant_hls
+    }
+
+    pub(crate) fn external_hls(
+        &self,
+    ) -> &tokio::sync::Mutex<
+        HashMap<(UserKey, trackside_core::CandidateToken), trackside_core::control::HlsJobId>,
+    > {
+        &self.external_hls
     }
 
     pub fn shutdown(&self) -> &CancellationToken {

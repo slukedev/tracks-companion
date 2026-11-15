@@ -1642,7 +1642,28 @@ For a ytdlp candidate the client may ask to play before the download finishes
 
 When the import finishes, the SSE event carries the song id. Tracks keeps playing the instant
 stream to the end and uses the song id from then on. Instant play counts toward quotas like any
-request and requires `acquire.instant_play = true`.
+request and requires `acquire.instant_play = true`. It happens only as part of a request.
+
+### 9.7 Playing without keeping
+
+Playing a song the server does not have (a search's candidates, Last.fm's `external`
+suggestions, Get More) never keeps it. `POST /api/v1/external/play` takes a candidate token or
+a title and artist, resolves it through the providers that stream (ytdlp), and streams it with
+the same tee and HLS machinery as instant play, into `<data>/cache/external/<token>/` instead of
+staging. It writes no acquisition row, no library song and no change log, and is not audited;
+only a request (section 9, lifecycle) fetches a song to keep.
+
+- A song asked by name that the caller's libraries have answers with that song's id.
+- The cache is in memory and on disk: at most 1 GiB, an entry goes 6 hours after its last play,
+  and the least recently played go first when it is full. It is emptied at start. A replay
+  within that window is served from the cached file without asking the provider again.
+- Limits: the provider's fetch concurrency and cooldown, the user's search rate limit for
+  title-and-artist plays, at most 2 songs being fetched per user, and the user's usual stream
+  and transcode slots when the stream is served.
+- It needs acquisition enabled, the caller allowed to request (`features.acquisition`) and an
+  enabled provider that streams (`features.acquisition.external_play`); it does not need
+  `acquire.instant_play`.
+- A later request for the same song downloads and keeps it as usual.
 
 ### 9.6 What Tracks sees
 
@@ -2213,8 +2234,9 @@ wire format has no provider names to show. When present:
   searching, getting, adding, added, couldn't get with the reason in plain words). On `done` the
   song id is final and the song is already in the mirror through the same SSE `changed` event.
   This replaces `ServerKeeps` polling for Trackside entirely.
-- Where Tracks today stars an external song on play (Automatic Downloads), it instead requests it,
-  and plays instantly only if the server offered an instant stream.
+- Playing a song the server does not have uses `POST /api/v1/external/play` and keeps nothing.
+  Only Get requests a song; neither the queue, preparing the next song, Automatic Downloads nor
+  Tracks Radio ever does.
 
 ADR 0006 notes the App Review consideration of a feature that appears only with some servers.
 

@@ -11,8 +11,8 @@ use serde::Deserialize;
 use trackside_auth::extract::{Authed, MediaAuthed};
 use trackside_auth::{Principal, Scopes};
 use trackside_core::control::{
-    AcquireRequest, AcquisitionFilter, AcquisitionState, AcquisitionStateFilter, ExternalQuery,
-    ExternalSearch, GrowState,
+    AcquireRequest, AcquisitionFilter, AcquisitionState, AcquisitionStateFilter, ExternalPlay,
+    ExternalPlayRequest, ExternalQuery, ExternalSearch, GrowState, InstantStream,
 };
 use trackside_core::{AcquisitionId, CandidateToken};
 use trackside_media::{HlsPart, Priority};
@@ -21,6 +21,7 @@ use super::account::acquisition_feature;
 use super::{api_url, idempotency};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::{Json, Query, body_id, json_with, parse_json, path_id};
+use crate::wire::acquisition as wire_acq;
 use crate::wire::acquisition::{Acquisitions, Search, SearchRequest};
 use crate::{ApiState, map};
 
@@ -35,6 +36,10 @@ pub(super) fn routes() -> Router<ApiState> {
         .route("/acquisitions/{id}/stream", get(progressive))
         .route("/acquisitions/{id}/stream.m3u8", get(hls_playlist))
         .route("/acquisitions/{id}/{part}", get(hls_part))
+        .route("/external/play", post(play_external))
+        .route("/external/plays/{id}/stream", get(external_progressive))
+        .route("/external/plays/{id}/stream.m3u8", get(external_playlist))
+        .route("/external/plays/{id}/{part}", get(external_part))
 }
 
 fn available(state: &ApiState, principal: &Principal) -> ApiResult<()> {
@@ -289,8 +294,7 @@ async fn hls_job(
         return Ok(job.clone());
     }
     let duration_ms = instant.duration_ms.ok_or_else(ApiError::not_found)?;
-    let profile = trackside_media::Profile::parse(&state.config.media.cellular_profile)
-        .unwrap_or(trackside_media::Profile::Aac256);
+    let profile = cellular_profile(state);
     let job = state
         .media
         .start_hls(
@@ -316,6 +320,14 @@ async fn hls_playlist(
     media_available(&state, &principal)?;
     let id: AcquisitionId = path_id(&id)?;
     let job = hls_job(&state, &principal, &id).await?;
+    playlist_response(&state, &job, request).await
+}
+
+async fn playlist_response(
+    state: &ApiState,
+    job: &trackside_media::HlsJobId,
+    request: Request,
+) -> ApiResult<Response> {
     let (parts, _) = request.into_parts();
     let suffix = parts
         .uri
@@ -325,7 +337,7 @@ async fn hls_playlist(
         .find(|pair| pair.starts_with("mt="))
         .map(|pair| format!("?{pair}"))
         .unwrap_or_default();
-    let text = state.media.hls_playlist(&job, &suffix).await?;
+    let text = state.media.hls_playlist(job, &suffix).await?;
     let mut response = text.into_response();
     response.headers_mut().insert(
         http::header::CONTENT_TYPE,
@@ -344,6 +356,141 @@ async fn hls_part(
     let id: AcquisitionId = path_id(&id)?;
     let part: HlsPart = super::media::hls_part_name(&part).ok_or_else(ApiError::not_found)?;
     let job = hls_job(&state, &principal, &id).await?;
+    let (parts, _) = request.into_parts();
+    Ok(state.media.hls_part(&job, part, &parts).await?)
+}
+
+/// The wire shape of a play without keeping. Stream URLs get the base path in front.
+pub fn external_play_body(play: &ExternalPlay, base_path: &str) -> wire_acq::ExternalPlay {
+    wire_acq::ExternalPlay {
+        title: play.title.clone(),
+        artist: play.artist.clone(),
+        duration_ms: play.duration_ms,
+        song_id: play.song.as_ref().map(ToString::to_string),
+        stream: play.token.as_ref().map(|token| wire_acq::Stream {
+            hls: format!("{base_path}/api/v1/external/plays/{token}/stream.m3u8"),
+            progressive: format!("{base_path}/api/v1/external/plays/{token}/stream"),
+        }),
+    }
+}
+
+async fn play_external(
+    Authed(principal): Authed<REQUEST>,
+    State(state): State<ApiState>,
+    Json(body): Json<wire_acq::ExternalPlayRequest>,
+) -> ApiResult<Response> {
+    available(&state, &principal)?;
+    let trimmed = |v: Option<String>| v.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty());
+    let request = if let Some(token) = trimmed(body.candidate) {
+        ExternalPlayRequest::Candidate(body_id::<CandidateToken>(&token, "candidate")?)
+    } else {
+        match (trimmed(body.title), trimmed(body.artist)) {
+            (Some(title), Some(artist)) => ExternalPlayRequest::Song {
+                title,
+                artist,
+                album: trimmed(body.album),
+                duration_ms: body.duration_ms,
+            },
+            _ => {
+                return Err(ApiError::bad_field(
+                    "candidate",
+                    "Send candidate, or title and artist.",
+                ));
+            }
+        }
+    };
+    let play = state
+        .acquire
+        .play_external(&principal.access, request)
+        .await?;
+    Ok(json_with(
+        StatusCode::OK,
+        &external_play_body(&play, &state.server.base_path),
+    ))
+}
+
+fn external_stream(
+    state: &ApiState,
+    principal: &Principal,
+    id: &str,
+) -> ApiResult<(CandidateToken, InstantStream)> {
+    media_available(state, principal)?;
+    let token: CandidateToken = path_id(id)?;
+    let stream = state.acquire.external_stream(&principal.access, &token)?;
+    Ok((token, stream))
+}
+
+async fn external_progressive(
+    MediaAuthed(principal): MediaAuthed,
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+    request: Request,
+) -> ApiResult<Response> {
+    let (_, stream) = external_stream(&state, &principal, &id)?;
+    let (parts, _) = request.into_parts();
+    if matches!(*stream.progressive.state.borrow(), GrowState::Failed) {
+        return Err(ApiError::not_found());
+    }
+    let slot = state.auth.stream_slot(&principal)?;
+    let response = state
+        .media
+        .serve_growing(&stream.progressive, &parts, stream.content_type)
+        .await?;
+    Ok(trackside_media::hold(response, slot))
+}
+
+async fn external_hls_job(
+    state: &ApiState,
+    principal: &Principal,
+    id: &str,
+) -> ApiResult<trackside_media::HlsJobId> {
+    let (token, stream) = external_stream(state, principal, id)?;
+    let key = (principal.access.user, token);
+    let mut started = state.local.external_hls().lock().await;
+    started.retain(|_, job| state.media.hls_job(job).is_some());
+    if let Some(job) = started.get(&key) {
+        return Ok(job.clone());
+    }
+    let duration_ms = stream.duration_ms.ok_or_else(ApiError::not_found)?;
+    let job = state
+        .media
+        .start_hls(
+            trackside_media::HlsInput::Growing {
+                file: stream.progressive,
+                duration_ms,
+            },
+            cellular_profile(state),
+            Priority::Interactive,
+            super::media::hls_owner(state, principal)?,
+        )
+        .await?;
+    started.insert(key, job.clone());
+    Ok(job)
+}
+
+fn cellular_profile(state: &ApiState) -> trackside_media::Profile {
+    trackside_media::Profile::parse(&state.config.media.cellular_profile)
+        .unwrap_or(trackside_media::Profile::Aac256)
+}
+
+async fn external_playlist(
+    MediaAuthed(principal): MediaAuthed,
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+    request: Request,
+) -> ApiResult<Response> {
+    let job = external_hls_job(&state, &principal, &id).await?;
+    playlist_response(&state, &job, request).await
+}
+
+async fn external_part(
+    MediaAuthed(principal): MediaAuthed,
+    State(state): State<ApiState>,
+    Path((id, part)): Path<(String, String)>,
+    request: Request,
+) -> ApiResult<Response> {
+    let part: HlsPart = super::media::hls_part_name(&part).ok_or_else(ApiError::not_found)?;
+    let job = external_hls_job(&state, &principal, &id).await?;
     let (parts, _) = request.into_parts();
     Ok(state.media.hls_part(&job, part, &parts).await?)
 }

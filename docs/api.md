@@ -591,14 +591,16 @@ Five wrong codes per session per 10 minutes, then `429`.
   "device": {"id": "d2c4...", "name": "Luke's iPhone"},
   "server": {"server_id": "5f0c...", "name": "Home", "version": "1.0.0",
              "urls": [{"url": "http://192.168.1.20:4747", "kind": "lan", "tls": false}]},
-  "features": {"acquisition": {"instant_play": true}}
+  "features": {"acquisition": {"instant_play": true, "external_play": true}}
 }
 ```
 
 `features.acquisition` is present only when acquisition is enabled on the server, at least one
 provider is healthy or configured, the user has `can_request` (admins always), the caller's
 credential has the `request` scope, and the user can see the acquired library. When any of these
-is false the key is absent, not `false`. `max_bitrate_kbps` is left out when unlimited. `device`
+is false the key is absent, not `false`. `instant_play` says a Get can play while it downloads
+(section 15.5); `external_play` says a song the server does not have can be played without
+keeping it (section 15.6). `max_bitrate_kbps` is left out when unlimited. `device`
 is left out for a session or an API key.
 
 `PATCH /api/v1/me` (scope: write) `{"display_name"}` returns the user. `POST /api/v1/me/password`
@@ -1165,6 +1167,40 @@ object has no `stream` and an SSE event delivers it.
   `/api/v1/songs/{song_id}/stream`.
 
 Media token rules apply (scope: stream).
+
+### 15.6 Playing without keeping (scope: request)
+
+`POST /api/v1/external/play` plays a song the server does not have without keeping it: no
+acquisition, no library song, no sync change, nothing in the caller's requests. Only a request
+(section 15.3) keeps a song. Present only with `features.acquisition.external_play`.
+
+```json
+{"candidate": "x3n8b2v6c1m9q4w7e0r5t8y2"}
+```
+
+or `{"title": "Halo", "artist": "Beyoncé", "album"?: "...", "duration_ms"?: 261640}`, for a
+suggestion that came without a candidate (`external` in section 8). A candidate that cannot
+stream is played from one that can. `200`:
+
+```json
+{
+  "title": "Halo",
+  "artist": "Beyoncé",
+  "duration_ms": 261000,
+  "stream": {"hls": "/api/v1/external/plays/x3n8.../stream.m3u8",
+             "progressive": "/api/v1/external/plays/x3n8.../stream"}
+}
+```
+
+`stream` works as in section 15.5 (append `mt`; scope: stream). When the caller's library has
+the song after all, the answer has `song_id` and no `stream`; play that song instead. The same
+song asked again within a few hours plays from what the server already fetched.
+
+- `400 bad_request` without a candidate or title and artist.
+- `404 not_found` when nothing matched.
+- `410 candidate_expired`.
+- `429 rate_limited`: two songs of the caller's are still being fetched, or too many searches.
+- `503 unavailable` with `Retry-After`: the source is paused or busy.
 
 ---
 

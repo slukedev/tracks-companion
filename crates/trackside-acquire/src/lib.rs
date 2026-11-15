@@ -5,6 +5,7 @@
 //! except through the admin views.
 
 mod acquirer;
+mod external;
 mod limits;
 mod process;
 mod provider;

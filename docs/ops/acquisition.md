@@ -161,6 +161,13 @@ services:
 Admins aren't limited per person. Asking for a song that's already in the library, or that
 someone else already asked for, doesn't count.
 
+## Playing songs you don't have
+
+Playing a song the server doesn't have, such as a suggestion or a search result you haven't
+got, streams it through yt-dlp without keeping it: nothing is added to a library and it doesn't
+count as a request. The bytes stay in `<data>/cache/external/` for a few hours, so a replay
+starts at once, and that folder never grows past 1 GiB. Only Get keeps a song.
+
 ## What gets checked
 
 Every file is checked before it reaches a library: it must be a regular file inside the

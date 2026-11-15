@@ -14,8 +14,8 @@ use trackside_api::{ApiState, LocalState, NoOps, ServerInfo, wire};
 use trackside_auth::{Auth, SecretKey};
 use trackside_core::control::{
     AcquireControl, AcquireError, AcquireFeature, AcquireRequest, AcquisitionFilter,
-    AcquisitionState, AcquisitionView, AdminAcquisitionView, ExternalQuery, ExternalSearch,
-    InstantStream, ProviderChange, ProviderStatus, ProviderTest,
+    AcquisitionState, AcquisitionView, AdminAcquisitionView, ExternalPlay, ExternalPlayRequest,
+    ExternalQuery, ExternalSearch, InstantStream, ProviderChange, ProviderStatus, ProviderTest,
 };
 use trackside_core::testing::{FakeAcquireControl, FakeScanControl, TestDb};
 use trackside_core::{Access, AcquisitionId, BoxFuture, Config, Page, Permissions, random_id};
@@ -66,6 +66,7 @@ impl AcquireControl for OpenAcquisition {
     ) -> Option<AcquireFeature> {
         (request && (caller.is_admin() || permissions.can_request)).then_some(AcquireFeature {
             instant_play: false,
+            external_play: false,
         })
     }
     fn search<'a>(
@@ -119,6 +120,30 @@ impl AcquireControl for OpenAcquisition {
     }
     fn instant_stream(&self, _: &Access, _: &AcquisitionId) -> Result<InstantStream, AcquireError> {
         Err(AcquireError::NotFound)
+    }
+    fn play_external<'a>(
+        &'a self,
+        _: &'a Access,
+        request: ExternalPlayRequest,
+    ) -> BoxFuture<'a, Result<ExternalPlay, AcquireError>> {
+        Box::pin(async move {
+            match request {
+                ExternalPlayRequest::Candidate(token) => Ok(ExternalPlay {
+                    token: Some(token),
+                    title: String::from("Halo"),
+                    artist: String::from("Beyoncé"),
+                    duration_ms: Some(261_000),
+                    song: None,
+                }),
+                ExternalPlayRequest::Song { title, artist, .. } => Ok(ExternalPlay {
+                    token: None,
+                    title,
+                    artist,
+                    duration_ms: Some(261_000),
+                    song: Some(random_id()),
+                }),
+            }
+        })
     }
     fn providers(&self) -> BoxFuture<'_, Vec<ProviderStatus>> {
         Box::pin(async { Vec::new() })
@@ -582,6 +607,74 @@ async fn features_acquisition_follows_the_acquirer_and_endpoints_404_without_it(
         .json()
         .await?;
     assert!(library.get("external").is_none(), "{library}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn playing_without_keeping_is_there_only_with_the_feature() -> TestResult {
+    let token = trackside_core::CandidateToken::derive("ytdlp", "{\"id\":\"abc\"}").to_string();
+    let closed = start().await?;
+    closed.setup_admin().await?;
+    let key = closed.device_key().await?;
+    let play = closed
+        .http
+        .post(closed.url("/external/play"))
+        .bearer_auth(&key)
+        .json(&json!({"candidate": token}))
+        .send()
+        .await?;
+    assert_eq!(play.status(), 404);
+    let stream = closed
+        .http
+        .get(closed.url(&format!("/external/plays/{token}/stream")))
+        .bearer_auth(&key)
+        .send()
+        .await?;
+    assert_eq!(stream.status(), 404);
+
+    let open = start_with(Arc::new(OpenAcquisition)).await?;
+    open.setup_admin().await?;
+    let key = open.device_key().await?;
+    let played: Value = open
+        .http
+        .post(open.url("/external/play"))
+        .bearer_auth(&key)
+        .json(&json!({"candidate": token}))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(
+        played["stream"]["hls"],
+        format!("/api/v1/external/plays/{token}/stream.m3u8")
+    );
+    assert!(played.get("song_id").is_none());
+    let owned: Value = open
+        .http
+        .post(open.url("/external/play"))
+        .bearer_auth(&key)
+        .json(&json!({"title": "Halo", "artist": "Beyoncé"}))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert!(owned["song_id"].is_string(), "{owned}");
+    assert!(owned.get("stream").is_none());
+    let empty = open
+        .http
+        .post(open.url("/external/play"))
+        .bearer_auth(&key)
+        .json(&json!({"title": "Halo"}))
+        .send()
+        .await?;
+    assert_eq!(empty.status(), 400);
+    let gone = open
+        .http
+        .get(open.url(&format!("/external/plays/{token}/stream")))
+        .bearer_auth(&key)
+        .send()
+        .await?;
+    assert_eq!(gone.status(), 404);
     Ok(())
 }
 
