@@ -108,6 +108,12 @@ duration of the original, not a few milliseconds more. To check playback on a de
 Tracks gets changes through `/api/v1/events`. A proxy that buffers responses delays them until
 the buffer fills. Turn buffering off for that path ([reverse-proxy.md](reverse-proxy.md)).
 
+## A download source says "Not set up"
+
+yt-dlp needs the `acquire` image; Soulseek needs the slskd address, API key and downloads
+folder. Use `compose.acquire.yaml`, which sets all of these
+([acquisition.md](acquisition.md#not-set-up)).
+
 ## Disk full
 
 When the data disk fills, writes fail but playing keeps working. Caches shrink first. Free

@@ -16,6 +16,22 @@
         "searches_today": 18
       },
       "version": "0.22.5"
+    },
+    {
+      "configured": true,
+      "detail": "Needs the acquire image",
+      "enabled": true,
+      "health": "setup",
+      "name": "ytdlp",
+      "settings": {
+        "concurrency": 2,
+        "path": "yt-dlp"
+      },
+      "stats": {
+        "failures_today": 0,
+        "fetches_today": 0,
+        "searches_today": 0
+      }
     }
   ]
 }

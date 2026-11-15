@@ -455,6 +455,7 @@ pub fn provider_health(state: ProviderHealthState) -> &'static str {
         ProviderHealthState::Cooldown => "cooldown",
         ProviderHealthState::Outdated => "outdated",
         ProviderHealthState::Unavailable => "unavailable",
+        ProviderHealthState::NotSetUp => "setup",
         ProviderHealthState::Disabled => "disabled",
     }
 }

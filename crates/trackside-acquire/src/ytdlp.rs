@@ -2,8 +2,8 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, SystemTime};
 
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -30,6 +30,11 @@ const MAX_JSON: usize = 4 * 1024 * 1024;
 pub const OUTPUT_STEM: &str = "audio";
 /// Where a stream-through fetch writes, since the format is known only from the bytes.
 pub const STREAM_FILE: &str = "audio.stream";
+/// The health detail when no yt-dlp can run on this install.
+pub const NEEDS_ACQUIRE_IMAGE: &str = "Needs the acquire image";
+
+/// A file's modification time and size, to notice when it is replaced.
+type FileStamp = (Option<SystemTime>, u64);
 
 /// yt-dlp as a subprocess.
 #[derive(Clone, Debug)]
@@ -39,6 +44,7 @@ pub struct YtdlpProvider {
     max_file_bytes: u64,
     stall_timeout: Duration,
     clock: Arc<dyn Clock>,
+    updated_runs: Arc<Mutex<Option<(FileStamp, bool)>>>,
 }
 
 impl YtdlpProvider {
@@ -49,6 +55,7 @@ impl YtdlpProvider {
             max_file_bytes,
             stall_timeout: STALL_TIMEOUT,
             clock: Arc::new(SystemClock),
+            updated_runs: Arc::default(),
         }
     }
 
@@ -67,22 +74,60 @@ impl YtdlpProvider {
     }
 
     /// The executable: the configured path, else `<data>/bin/yt-dlp` when the updater put one
-    /// there, else `yt-dlp` on `PATH`.
+    /// there that runs, else `yt-dlp` on `PATH`.
     pub fn executable(&self) -> PathBuf {
         if let Some(path) = &self.config.path {
             return path.clone();
         }
         let updated = updated_binary(&self.data_dir);
-        if updated.is_file() {
+        if self.updated_runs(&updated) {
             return updated;
         }
         PathBuf::from("yt-dlp")
     }
 
+    fn updated_runs(&self, path: &Path) -> bool {
+        let Ok(meta) = std::fs::metadata(path) else {
+            return false;
+        };
+        if !meta.is_file() {
+            return false;
+        }
+        let stamp = (meta.modified().ok(), meta.len());
+        let mut cached = self
+            .updated_runs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match *cached {
+            Some((seen, runs)) if seen == stamp => runs,
+            _ => {
+                let runs = process::can_exec(path);
+                *cached = Some((stamp, runs));
+                runs
+            }
+        }
+    }
+
+    /// What a failed spawn means. With no configured path, nothing on this install can run
+    /// yt-dlp, which is a setup problem rather than an outage.
+    fn spawn_failure(&self, e: std::io::Error, program: &Path) -> ProviderError {
+        let missing = e.kind() == std::io::ErrorKind::NotFound;
+        let cannot_run = process::cannot_exec(&e);
+        if self.config.path.is_none() && (missing || cannot_run) {
+            ProviderError::NotSetUp(String::from(NEEDS_ACQUIRE_IMAGE))
+        } else if missing {
+            ProviderError::Unavailable(format!("yt-dlp not found at {}", program.display()))
+        } else if cannot_run {
+            ProviderError::Unavailable(format!("{} cannot run on this system", program.display()))
+        } else {
+            ProviderError::Io(e)
+        }
+    }
+
     /// `<data>/tmp`, passed as `TMPDIR`: the container's root filesystem is read-only, and a
     /// one-file yt-dlp from the updater unpacks itself into the temporary directory.
     pub fn tmp_dir(&self) -> PathBuf {
-        self.data_dir.join("tmp")
+        tmp_dir(&self.data_dir)
     }
 
     fn common_args(&self) -> Vec<OsString> {
@@ -189,9 +234,10 @@ impl YtdlpProvider {
         let url = candidate_url(candidate)?;
         tokio::fs::create_dir_all(staging).await?;
         let args = self.fetch_args(&url, staging, resume);
-        let mut child = process::spawn(&self.executable(), &args, true, Some(&self.tmp_dir()))
+        let program = self.executable();
+        let mut child = process::spawn(&program, &args, true, Some(&self.tmp_dir()))
             .await
-            .map_err(|e| missing_or_io(e, &self.executable()))?;
+            .map_err(|e| self.spawn_failure(e, &program))?;
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         let stderr_task = tokio::spawn(process::keep_tail(stderr));
@@ -268,7 +314,7 @@ impl YtdlpProvider {
         let program = self.executable();
         let mut child = process::spawn(&program, &args, true, Some(&self.tmp_dir()))
             .await
-            .map_err(|e| missing_or_io(e, &program))?;
+            .map_err(|e| self.spawn_failure(e, &program))?;
         let (state_tx, state_rx) = watch::channel(GrowState::Growing { bytes: 0 });
         let growing = GrowingFile {
             path: path.clone(),
@@ -367,11 +413,12 @@ impl YtdlpProvider {
         .await
         {
             Ok(output) => output,
-            Err(RunError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                return ProviderHealth::Unavailable(format!(
-                    "yt-dlp not found at {}",
-                    program.display()
-                ));
+            Err(RunError::Io(e)) => {
+                return match self.spawn_failure(e, &program) {
+                    ProviderError::NotSetUp(why) => ProviderHealth::NotSetUp(why),
+                    ProviderError::Unavailable(why) => ProviderHealth::Unavailable(why),
+                    e => ProviderHealth::Unavailable(format!("yt-dlp --version failed: {e}")),
+                };
             }
             Err(e) => return ProviderHealth::Unavailable(format!("yt-dlp --version failed: {e}")),
         };
@@ -423,7 +470,7 @@ impl Provider for YtdlpProvider {
             )
             .await
             .map_err(|e| match e {
-                RunError::Io(e) => missing_or_io(e, &program),
+                RunError::Io(e) => self.spawn_failure(e, &program),
                 RunError::TimedOut => ProviderError::Stalled,
                 RunError::Cancelled => ProviderError::Cancelled,
             })?;
@@ -484,6 +531,11 @@ impl Provider for YtdlpProvider {
     }
 }
 
+/// The `TMPDIR` for every yt-dlp run under `data_dir`.
+pub fn tmp_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("tmp")
+}
+
 /// Where the updater installs yt-dlp.
 pub fn updated_binary(data_dir: &Path) -> PathBuf {
     data_dir.join("bin").join("yt-dlp")
@@ -498,14 +550,6 @@ fn runtime_kind(path: &Path) -> &'static str {
         .into_iter()
         .find(|kind| name.contains(kind))
         .unwrap_or("deno")
-}
-
-fn missing_or_io(e: std::io::Error, program: &Path) -> ProviderError {
-    if e.kind() == std::io::ErrorKind::NotFound {
-        ProviderError::Unavailable(format!("yt-dlp not found at {}", program.display()))
-    } else {
-        ProviderError::Io(e)
-    }
 }
 
 /// Whether `id` is a video id: 11 characters of `[A-Za-z0-9_-]`.
@@ -1136,6 +1180,69 @@ printf 'part2'
             provider.health().await,
             ProviderHealth::Unavailable(_)
         ));
+    }
+
+    fn write_script(path: &Path, body: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    fn unconfigured() -> YtdlpConfig {
+        let mut config = config(Path::new("unused"));
+        config.path = None;
+        config
+    }
+
+    #[test]
+    fn executable_prefers_an_updated_binary_that_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let updated = updated_binary(dir.path());
+        write_script(&updated, "#!/bin/sh\necho 2026.11.03\n");
+        let provider = YtdlpProvider::new(&unconfigured(), dir.path(), 5000);
+        assert_eq!(provider.executable(), updated);
+    }
+
+    #[test]
+    fn executable_falls_back_past_an_updated_binary_that_cannot_run() {
+        let dir = tempfile::tempdir().unwrap();
+        write_script(&updated_binary(dir.path()), "#!/nonexistent/sh\n");
+        let provider = YtdlpProvider::new(&unconfigured(), dir.path(), 5000);
+        assert_eq!(provider.executable(), PathBuf::from("yt-dlp"));
+    }
+
+    #[test]
+    fn executable_notices_a_replaced_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let updated = updated_binary(dir.path());
+        write_script(&updated, "#!/nonexistent/sh\n");
+        let provider = YtdlpProvider::new(&unconfigured(), dir.path(), 5000);
+        assert_eq!(provider.executable(), PathBuf::from("yt-dlp"));
+        write_script(&updated, "#!/bin/sh\necho 2026.11.03\n");
+        assert_eq!(provider.executable(), updated);
+    }
+
+    #[test]
+    fn no_runnable_yt_dlp_is_not_set_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = YtdlpProvider::new(&unconfigured(), dir.path(), 5000);
+        let e = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert!(matches!(
+            provider.spawn_failure(e, Path::new("yt-dlp")),
+            ProviderError::NotSetUp(why) if why == NEEDS_ACQUIRE_IMAGE
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_configured_path_that_cannot_run_is_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("yt-dlp");
+        write_script(&program, "#!/nonexistent/sh\n");
+        let provider = YtdlpProvider::new(&config(&program), dir.path(), 5000);
+        assert_eq!(
+            provider.health().await,
+            ProviderHealth::Unavailable(format!("{} cannot run on this system", program.display()))
+        );
     }
 
     #[test]

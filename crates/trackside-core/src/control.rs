@@ -310,6 +310,7 @@ pub enum ProviderHealthState {
     Cooldown,
     Outdated,
     Unavailable,
+    NotSetUp,
     Disabled,
 }
 

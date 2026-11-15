@@ -150,6 +150,10 @@ impl std::fmt::Debug for StreamingFetch {
 pub enum ProviderError {
     #[error("unavailable: {0}")]
     Unavailable(String),
+    /// Missing configuration or tooling on this install, as opposed to a configured source
+    /// that fails.
+    #[error("not set up: {0}")]
+    NotSetUp(String),
     #[error("rate limited")]
     RateLimited { retry_after: Option<Duration> },
     #[error("bot check")]
@@ -185,6 +189,7 @@ pub enum ProviderHealth {
     Cooldown { until: Millis },
     Outdated { version: String },
     Unavailable(String),
+    NotSetUp(String),
     Disabled,
 }
 

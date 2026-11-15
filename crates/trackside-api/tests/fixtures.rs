@@ -458,6 +458,21 @@ fn provider() -> ProviderStatus {
     }
 }
 
+fn not_set_up() -> ProviderStatus {
+    ProviderStatus {
+        name: String::from("ytdlp"),
+        enabled: true,
+        configured: true,
+        health: ProviderHealthState::NotSetUp,
+        detail: Some(String::from("Needs the acquire image")),
+        cooldown_until: None,
+        version: None,
+        latest_known: None,
+        settings: serde_json::json!({"concurrency": 2, "path": "yt-dlp"}),
+        stats: ProviderStats::default(),
+    }
+}
+
 /// Every fixture: path under `tests/fixtures` and its JSON.
 #[expect(clippy::too_many_lines, reason = "one list of every response shape")]
 fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::Error> {
@@ -1283,7 +1298,7 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
     put(
         "admin/providers.json",
         &wire::admin::Providers {
-            providers: vec![map::provider(&provider())],
+            providers: vec![map::provider(&provider()), map::provider(&not_set_up())],
         },
     )?;
     let admin_view = AdminAcquisitionView {
@@ -1799,6 +1814,32 @@ fn provider_names_appear_only_in_admin_fixtures() -> TestResult {
         for word in ["soulseek", "slskd", "ytdlp", "yt-dlp", "youtube"] {
             assert!(!text.contains(word), "{name} names {word}");
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn dashboard_labels_every_provider_health() -> TestResult {
+    let page = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../dashboard/pages/acquisition.js");
+    if !page.exists() {
+        return Ok(());
+    }
+    let text = std::fs::read_to_string(page)?;
+    let states = [
+        ProviderHealthState::Ok,
+        ProviderHealthState::Degraded,
+        ProviderHealthState::Cooldown,
+        ProviderHealthState::Outdated,
+        ProviderHealthState::Unavailable,
+        ProviderHealthState::NotSetUp,
+        ProviderHealthState::Disabled,
+    ];
+    for state in states {
+        let wire = map::provider_health(state);
+        assert!(
+            text.contains(&format!("\n  {wire}: [")),
+            "the dashboard's HEALTH map has no label for {wire}"
+        );
     }
     Ok(())
 }

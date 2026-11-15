@@ -77,6 +77,18 @@ slskd's own web page is at `http://localhost:5030` on the server (sign in as `sl
 `SLSKD_WEB_PASSWORD`). It's published on localhost only. Use it to check that slskd is
 connected to Soulseek and what it's sharing.
 
+## "Not set up"
+
+The **Requests** page shows a source as **Not set up** when this install is missing what it
+needs, and **Not reachable** when it is set up but failing.
+
+- **yt-dlp**, "Needs the acquire image": the default `standard` image can't run yt-dlp, and
+  **Check for Update** can't fix that. Switch to the `acquire` image with
+  `compose.acquire.yaml` as above.
+- **Soulseek**, "Missing: ...": set the slskd address and API key on the **Requests** page,
+  and `acquire.soulseek.downloads_dir` in the config file (it's slskd's downloads folder as
+  Trackside sees it). `compose.acquire.yaml` sets all three.
+
 ## What slskd shares
 
 slskd shares the folders it's told to, and Soulseek works on the understanding that people
@@ -105,8 +117,8 @@ YouTube changes often, and yt-dlp releases follow. The image pins a version that
 with it. When the copy in use is more than 60 days old (`acquire.ytdlp.max_age_days`), the
 **Requests** page marks it outdated and offers **Update to <version>**. That downloads the newest official
 release from yt-dlp's GitHub releases into `<data>/bin/yt-dlp`, checks it against the release's
-`SHA2-256SUMS`, and uses it instead of the image's copy from then on. The server needs to reach
-github.com for this.
+`SHA2-256SUMS`, and uses it instead of the image's copy from then on, as long as it runs here.
+The server needs to reach github.com for this.
 
 To go back to the image's copy, delete `<data>/bin/yt-dlp`.
 

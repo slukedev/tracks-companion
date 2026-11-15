@@ -848,9 +848,17 @@ async fn search_providers(
                         };
                         inner.trip_cooldown(slot, retry);
                     }
-                    if let crate::ProviderError::Unavailable(why) = &e {
-                        *lock(&slot.health) =
-                            (ProviderHealth::Unavailable(why.clone()), Some(inner.now()));
+                    let health = match &e {
+                        crate::ProviderError::Unavailable(why) => {
+                            Some(ProviderHealth::Unavailable(why.clone()))
+                        }
+                        crate::ProviderError::NotSetUp(why) => {
+                            Some(ProviderHealth::NotSetUp(why.clone()))
+                        }
+                        _ => None,
+                    };
+                    if let Some(health) = health {
+                        *lock(&slot.health) = (health, Some(inner.now()));
                     }
                     tracing::info!(provider = slot.name().as_str(), error = %e, "search failed");
                 }
@@ -1384,6 +1392,7 @@ impl AcquireControl for Acquirer {
                                 Some(version),
                             ),
                             ProviderHealth::Unavailable(why) => (ProviderHealthState::Unavailable, Some(why), None),
+                            ProviderHealth::NotSetUp(why) => (ProviderHealthState::NotSetUp, Some(why), None),
                             ProviderHealth::Disabled => (ProviderHealthState::Disabled, None, None),
                         }
                     };
@@ -1634,6 +1643,7 @@ impl AcquireControl for Acquirer {
                         &task.timing.ytdlp_release_base,
                         update::asset_name(),
                         &target,
+                        &ytdlp::tmp_dir(&data_dir),
                     )
                     .await
                     .map_err(|e| e.to_string()),

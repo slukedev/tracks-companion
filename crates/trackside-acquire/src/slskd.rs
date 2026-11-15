@@ -92,15 +92,37 @@ impl SoulseekProvider {
             .clone()
     }
 
+    /// The settings slskd needs that are not set, as the dashboard names them.
+    fn missing(&self) -> Vec<&'static str> {
+        let endpoint = self.endpoint();
+        [
+            (endpoint.url.is_none(), "address"),
+            (endpoint.api_key.is_none(), "API key"),
+            (self.config.downloads_dir.is_none(), "downloads folder"),
+        ]
+        .into_iter()
+        .filter_map(|(missing, name)| missing.then_some(name))
+        .collect()
+    }
+
+    fn not_set_up(&self) -> Option<ProviderError> {
+        let missing = self.missing();
+        (!missing.is_empty())
+            .then(|| ProviderError::NotSetUp(format!("Missing: {}", missing.join(", "))))
+    }
+
     fn request(
         &self,
         method: Method,
         path: &str,
     ) -> Result<reqwest::RequestBuilder, ProviderError> {
+        if let Some(e) = self.not_set_up() {
+            return Err(e);
+        }
         let endpoint = self.endpoint();
         let base = endpoint
             .url
-            .ok_or_else(|| ProviderError::Unavailable(String::from("slskd is not configured")))?;
+            .ok_or_else(|| ProviderError::NotSetUp(String::from("Missing: address")))?;
         let url = base
             .join(path.trim_start_matches('/'))
             .map_err(|e| ProviderError::Other(format!("bad slskd path: {e}")))?;
@@ -328,9 +350,10 @@ impl SoulseekProvider {
     }
 
     async fn collect(&self, file: &PeerFile, staging: &Path) -> Result<FetchedFile, ProviderError> {
-        let downloads = self.config.downloads_dir.clone().ok_or_else(|| {
-            ProviderError::Unavailable(String::from("acquire.soulseek.downloads_dir is not set"))
-        })?;
+        let downloads =
+            self.config.downloads_dir.clone().ok_or_else(|| {
+                ProviderError::NotSetUp(String::from("Missing: downloads folder"))
+            })?;
         let remote = file.filename.clone();
         let size = file.size;
         let staging = staging.to_path_buf();
@@ -372,6 +395,7 @@ impl SoulseekProvider {
     async fn health_inner(&self) -> ProviderHealth {
         let request = match self.request(Method::GET, "api/v0/application") {
             Ok(request) => request,
+            Err(ProviderError::NotSetUp(why)) => return ProviderHealth::NotSetUp(why),
             Err(ProviderError::Unavailable(why)) => return ProviderHealth::Unavailable(why),
             Err(e) => return ProviderHealth::Unavailable(e.to_string()),
         };
@@ -454,7 +478,7 @@ impl Provider for SoulseekProvider {
     }
 
     fn configured(&self) -> bool {
-        self.endpoint().url.is_some() && self.config.downloads_dir.is_some()
+        self.missing().is_empty()
     }
 }
 
@@ -1271,16 +1295,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn not_configured_is_unavailable() {
+    async fn missing_settings_are_named_and_not_set_up() {
         let dir = tempfile::tempdir().unwrap();
         let mut cfg = config("http://127.0.0.1:1", dir.path());
         cfg.url = None;
+        cfg.api_key = None;
+        cfg.downloads_dir = None;
         let provider = provider(&cfg);
         assert!(!provider.configured());
-        assert!(matches!(
+        assert_eq!(
             provider.health().await,
-            ProviderHealth::Unavailable(_)
-        ));
+            ProviderHealth::NotSetUp(String::from("Missing: address, API key, downloads folder"))
+        );
+    }
+
+    #[tokio::test]
+    async fn only_the_missing_settings_are_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config("http://127.0.0.1:1", dir.path());
+        cfg.downloads_dir = None;
+        let provider = provider(&cfg);
+        assert_eq!(
+            provider.health().await,
+            ProviderHealth::NotSetUp(String::from("Missing: downloads folder"))
+        );
+        let result = provider.search(&query(), CancellationToken::new()).await;
+        assert!(matches!(result, Err(ProviderError::NotSetUp(_))));
     }
 
     #[test]

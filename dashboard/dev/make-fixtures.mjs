@@ -33,7 +33,7 @@ const scanAcq = { id: 'n8z2x6c0v4b8n2m6q0w4', library_id: LIB.acquired.id, kind:
 
 const providers = [
   { name: 'ytdlp', enabled: true, configured: true, health: 'ok', detail: 'yt-dlp 2026.10.22', version: '2026.10.22', latest_known: '2026.11.03', settings: { concurrency: 2, search_rate: '10/1m', cookies_file: '/data/cookies.txt' }, stats: { searches_today: 31, fetches_today: 12, failures_today: 1 } },
-  { name: 'soulseek', enabled: true, configured: true, health: 'cooldown', detail: 'slskd answered 429 Too Many Requests', cooldown_until: '2026-11-14T10:40:00.000Z', settings: { concurrency: 3, search_rate: '6/1m', url: 'http://slskd:5030' }, stats: { searches_today: 18, fetches_today: 2, failures_today: 3 } },
+  { name: 'soulseek', enabled: true, configured: false, health: 'setup', detail: 'Missing: API key, downloads folder', settings: { concurrency: 3, search_rate: '1/3s', url: 'http://slskd:5030', api_key_set: false }, stats: { searches_today: 0, fetches_today: 0, failures_today: 0 } },
 ];
 
 const overview = {

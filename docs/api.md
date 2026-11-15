@@ -1409,7 +1409,10 @@ a measured zero. Responses are `Cache-Control: no-store`. Out-of-range parameter
    "stats": {"searches_today": 31, "fetches_today": 12, "failures_today": 1}}
   ```
 
-  `health` is `ok`, `degraded`, `cooldown`, `outdated`, `unavailable` or `disabled`.
+  `health` is `ok`, `degraded`, `cooldown`, `outdated`, `unavailable`, `setup` or `disabled`.
+  `setup` means the source lacks configuration or tooling on this install (no yt-dlp that runs
+  here; slskd address, API key or downloads folder unset) and `detail` says what; `unavailable`
+  means it is set up but failing.
   `cooldown_until` is present during a cooldown; `version`, `latest_known` and `detail` when
   known.
 
@@ -1419,7 +1422,8 @@ a measured zero. Responses are `Cache-Control: no-store`. Out-of-range parameter
 - `POST /admin/acquire/providers/{name}/test`: runs a health check and a sample search
   (`{"query"?}`); `200 {"ok", "elapsed_ms", "candidates", "detail"?}`.
 - `POST /admin/acquire/providers/ytdlp/update`: downloads and verifies the latest release into
-  `<data>/bin/yt-dlp`; `202`, progress through `GET /admin/acquire/providers`.
+  `<data>/bin/yt-dlp`, installing it only if it runs here; `202`, progress through
+  `GET /admin/acquire/providers`.
 - `PATCH /admin/acquire`: `{"enabled", "instant_play", "member_daily", "member_active",
   "global_daily", "prefer"}`.
 - `GET /admin/acquisitions?state&user&limit&cursor`: `{"acquisitions": [...], "next_cursor"?}`.

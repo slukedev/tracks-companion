@@ -13,6 +13,7 @@ const PROVIDERS = {
   soulseek: { title: 'Soulseek', about: 'Finds files shared by other people, through slskd.' },
 };
 const providerTitle = (name) => PROVIDERS[name]?.title || name;
+const SETUP_DOCS = 'https://github.com/slukedev/tracks-companion/blob/main/docs/ops/acquisition.md';
 
 const HEALTH = {
   ok: ['Working', 'good'],
@@ -20,6 +21,7 @@ const HEALTH = {
   cooldown: ['Paused', 'warn'],
   outdated: ['Out of date', 'warn'],
   unavailable: ['Not reachable', 'bad'],
+  setup: ['Not set up', ''],
   disabled: ['Off', ''],
 };
 
@@ -196,6 +198,8 @@ function providerPanel(ctx, p) {
   const status = [];
   if (p.health === 'cooldown' && p.cooldown_until) status.push(`Resumes ${when(p.cooldown_until)}`);
   else if (p.health !== 'ok' && p.detail) status.push(p.detail);
+  const setup = p.health === 'setup';
+  const guide = [status.length ? '. ' : '', h('a', { href: SETUP_DOCS, rel: 'noreferrer' }, 'Setup guide')];
 
   const concurrency = select([1, 2, 3, 4, 6, 8].map((n) => [String(n), String(n)]), String(p.settings?.concurrency ?? 2), { id: nextId('c') });
   const fields = [field('Downloads at once', concurrency)];
@@ -241,7 +245,7 @@ function providerPanel(ctx, p) {
   }));
 
   let update = null;
-  if (p.name === 'ytdlp') {
+  if (p.name === 'ytdlp' && !setup) {
     update = button(newer ? `Update to ${p.latest_known}` : 'Check for Update', { kind: newer ? 'primary' : '' });
     update.addEventListener('click', () => busy(update, async () => {
       try {
@@ -257,7 +261,7 @@ function providerPanel(ctx, p) {
     h('div.setting-row.flush',
       h('div.row-main',
         h('div.row-title', h('span', { id, title: meta.about }, meta.title), badge(label, kind)),
-        status.length ? h('div.row-sub', status.join('. ')) : null),
+        status.length || setup ? h('div.row-sub', status.join('. '), setup ? guide : null) : null),
       h('div.control', enabled)),
     update ? h('div.btn-row', update) : null,
     form,

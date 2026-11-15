@@ -22,19 +22,19 @@
     {
       "name": "soulseek",
       "enabled": true,
-      "configured": true,
-      "health": "cooldown",
-      "detail": "slskd answered 429 Too Many Requests",
-      "cooldown_until": "2026-11-14T10:40:00.000Z",
+      "configured": false,
+      "health": "setup",
+      "detail": "Missing: API key, downloads folder",
       "settings": {
         "concurrency": 3,
-        "search_rate": "6/1m",
-        "url": "http://slskd:5030"
+        "search_rate": "1/3s",
+        "url": "http://slskd:5030",
+        "api_key_set": false
       },
       "stats": {
-        "searches_today": 18,
-        "fetches_today": 2,
-        "failures_today": 3
+        "searches_today": 0,
+        "fetches_today": 0,
+        "failures_today": 0
       }
     }
   ]
