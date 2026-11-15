@@ -3447,6 +3447,7 @@ dependencies = [
 [[package]]
 name = "tracks-model"
 version = "0.1.0"
+source = "git+https://github.com/slukedev/tracks?rev=f8f07456fdf118823bccbfbbed49cdd88413ea61#f8f07456fdf118823bccbfbbed49cdd88413ea61"
 dependencies = [
  "caseless",
  "thiserror",

@@ -6,7 +6,7 @@
 #   3. Container Manager > Project > Create, path docker/trackside, source "Create
 #      docker-compose.yml", paste this file.
 #
-# Server/docs/ops/install.md covers each step in more detail.
+# docs/ops/install.md covers each step in more detail.
 
 services:
   trackside:

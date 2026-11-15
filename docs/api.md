@@ -1158,8 +1158,8 @@ Media token rules apply (scope: stream).
 All under `/api/v1/admin`, admin session only, CSRF header on changes. Every change is written to
 the audit log. Changes marked "recent password" need a password check within the last 10 minutes
 (section 6, `POST /auth/reauth`) and otherwise answer `403 reauth_required`. Fixtures for every
-shape here are in `Server/crates/trackside-api/tests/fixtures/admin/`, and the dashboard's preview
-fixtures in `Server/dashboard/dev/fixtures/` use the same shapes.
+shape here are in `crates/trackside-api/tests/fixtures/admin/`, and the dashboard's preview
+fixtures in `dashboard/dev/fixtures/` use the same shapes.
 
 ### Overview
 
@@ -1547,6 +1547,6 @@ The previous Subsonic proxy Tracks used fetched songs on demand from services el
   (RFC 9745, RFC 8594).
 - The Subsonic layer keeps Subsonic's own versioning (`1.16.1`) and adds OpenSubsonic extension
   versions only upward.
-- Wire fixtures for every response shape live in `Server/crates/trackside-api/tests/fixtures/`.
+- Wire fixtures for every response shape live in `crates/trackside-api/tests/fixtures/`.
   The server's tests serialise the real types and compare against them; Tracks' tests decode the
   same files. A fixture change is an API change and is reviewed as one.

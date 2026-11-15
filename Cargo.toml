@@ -7,6 +7,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
 license = "GPL-3.0-only"
+repository = "https://github.com/slukedev/tracks-companion"
+homepage = "https://github.com/slukedev/tracks-companion"
 publish = false
 
 [workspace.dependencies]
@@ -20,7 +22,7 @@ trackside-subsonic = { path = "crates/trackside-subsonic" }
 trackside-api = { path = "crates/trackside-api" }
 
 # Shared with Tracks
-tracks-model = { path = "../Engine/crates/tracks-model" }
+tracks-model = { git = "https://github.com/slukedev/tracks", rev = "f8f07456fdf118823bccbfbbed49cdd88413ea61" }
 
 # Runtime and HTTP
 tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "fs", "io-util", "net", "process", "signal", "sync", "time"] }

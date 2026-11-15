@@ -126,6 +126,6 @@ is stopped.
 
 ## Asking for help
 
-Open a [discussion](https://github.com/slukedev/tracks/discussions) or an issue with the
+Open a [discussion](https://github.com/slukedev/tracks-companion/discussions) or an issue with the
 version (`trackside version`), how you installed it, `trackside config show`, and the log around
 the problem.

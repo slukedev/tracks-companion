@@ -6,7 +6,7 @@
 # Needs in .env: TS_AUTHKEY (an auth key from the Tailscale admin console) and
 # TRACKSIDE_TAILNET_URL (https://trackside.<your-tailnet>.ts.net once the machine shows up).
 # Turn on MagicDNS and HTTPS certificates for the tailnet first.
-# Server/docs/ops/remote-access.md walks through it.
+# docs/ops/remote-access.md walks through it.
 
 services:
   tailscale:

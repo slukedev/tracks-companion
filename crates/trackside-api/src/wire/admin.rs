@@ -1,5 +1,5 @@
 //! Admin wire types (api.md section 16). Where api.md leaves a shape open, these follow the
-//! dashboard's fixtures in `Server/dashboard/dev/fixtures/`.
+//! dashboard's fixtures in `dashboard/dev/fixtures/`.
 
 use std::collections::BTreeMap;
 

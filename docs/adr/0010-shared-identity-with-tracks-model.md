@@ -12,7 +12,7 @@ on the server would not match, and Tracks would fall back to fuzzy matching as i
 
 ## Decision
 
-The server depends on `Engine/crates/tracks-model` by path and uses it for `songs.song_key`,
+The server depends on `tracks-model` from the Tracks repository and uses it for `songs.song_key`,
 `albums.album_key`, `artists.identity`, artist credits, and the text indexed for search. The
 native API returns `song_key` and `album_key` so the client can compare directly. A folding change
 in `tracks-model` requires a server migration that recomputes stored keys and bumps sync epochs,
@@ -63,7 +63,14 @@ The coupling is the point: both sides must change together.
 - Harder: server CI must run on Engine changes.
 - Revisit: if the server ever moves to its own repository, publish tracks-model.
 
+## Update: own repository
+
+The server moved to its own repository. Instead of publishing `tracks-model`, the workspace pins
+it as a git dependency on `slukedev/tracks` at an exact revision, which keeps Option A's
+byte-identical keys without a release process. The revision moves with app releases, and the wire
+fixture tests catch drift between the two.
+
 ## Action Items
 
 1. [ ] WP1 records the folding version in `settings` and adds the golden test.
-2. [ ] WP8 adds `Engine/crates/tracks-model/**` to the server CI path filter.
+2. [ ] Move the pinned `tracks-model` revision when the app's folding changes.

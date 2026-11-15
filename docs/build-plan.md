@@ -1,6 +1,6 @@
 # Trackside build plan
 
-> Historical: the plan the first build followed, kept as written. For what was built, read [architecture.md](architecture.md) and [api.md](api.md).
+> Historical: the plan the first build followed, kept as written. For what was built, read [architecture.md](architecture.md) and [api.md](api.md). Paths are as they were then, when the server lived in `Server/` of the Tracks repository and `tracks-model` was a path dependency on `Engine/`.
 
 How the work in [architecture.md](architecture.md) and [api.md](api.md) is split among
 implementation agents. Each work package (WP) owns an exact set of files; no two packages edit the

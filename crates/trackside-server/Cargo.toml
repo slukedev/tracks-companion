@@ -5,6 +5,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 publish.workspace = true
 
 [[bin]]
@@ -63,12 +65,12 @@ tempfile.workspace = true
 [lints]
 workspace = true
 
-# Copied from Server/packaging/deb/metadata.toml; keep the two the same.
+# Copied from packaging/deb/metadata.toml; keep the two the same.
 [package.metadata.deb]
 name = "trackside"
-maintainer = "Trackside maintainers <https://github.com/slukedev/tracks/issues>"
+maintainer = "Trackside maintainers <https://github.com/slukedev/tracks-companion/issues>"
 copyright = "Trackside contributors"
-license-file = ["../../../LICENSE", "0"]
+license-file = ["../../LICENSE", "0"]
 extended-description = """\
 Trackside indexes the music you own and serves it to the Tracks app over a native API, and to \
 other music apps over Subsonic and OpenSubsonic. It keeps per-user listens, favourites and \
@@ -87,19 +89,19 @@ conf-files = ["/etc/trackside/trackside.env"]
 maintainer-scripts = "../../packaging/deb/scripts"
 systemd-units = { unit-name = "trackside", unit-scripts = "../../packaging/systemd", enable = true, start = false, restart-after-upgrade = true }
 
-# Copied from Server/packaging/rpm/metadata.toml; keep the two the same.
+# Copied from packaging/rpm/metadata.toml; keep the two the same.
 [package.metadata.generate-rpm]
 name = "trackside"
 summary = "Self-hosted music server for the Tracks app"
 license = "GPL-3.0-only"
-url = "https://github.com/slukedev/tracks/tree/main/Server"
+url = "https://github.com/slukedev/tracks-companion"
 assets = [
     { source = "target/release/trackside", dest = "/usr/bin/trackside", mode = "755" },
     { source = "../../packaging/systemd/trackside.service", dest = "/usr/lib/systemd/system/trackside.service", mode = "644" },
     { source = "../../packaging/linux/trackside.env", dest = "/etc/trackside/trackside.env", mode = "644", config = "noreplace" },
     { source = "../../README.md", dest = "/usr/share/doc/trackside/README.md", mode = "644", doc = true },
     { source = "../../CHANGELOG.md", dest = "/usr/share/doc/trackside/CHANGELOG.md", mode = "644", doc = true },
-    { source = "../../../LICENSE", dest = "/usr/share/licenses/trackside/LICENSE", mode = "644", doc = true },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/trackside/LICENSE", mode = "644", doc = true },
 ]
 post_install_script = "systemctl daemon-reload >/dev/null 2>&1 || :"
 pre_uninstall_script = "if [ \"$1\" -eq 0 ]; then systemctl disable --now trackside.service >/dev/null 2>&1 || :; fi"

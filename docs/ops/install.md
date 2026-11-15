@@ -59,7 +59,7 @@ To check a signature:
 
 ```sh
 cosign verify ghcr.io/slukedev/trackside:latest \
-  --certificate-identity-regexp '^https://github.com/slukedev/tracks/\.github/workflows/server\.yml@' \
+  --certificate-identity-regexp '^https://github.com/slukedev/tracks-companion/\.github/workflows/ci\.yml@' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
@@ -114,13 +114,13 @@ reach your LAN. Add the address in the dashboard instead.
 ## Binary
 
 Each release has static Linux binaries (musl, amd64 and arm64) and macOS binaries on the
-[releases page](https://github.com/slukedev/tracks/releases), with a `SHA256SUMS` file.
+[releases page](https://github.com/slukedev/tracks-companion/releases), with a `SHA256SUMS` file.
 
 ```sh
 version=1.2.3
 arch=x86_64-unknown-linux-musl   # or aarch64-unknown-linux-musl
-curl -fsSLO "https://github.com/slukedev/tracks/releases/download/trackside-v$version/trackside-$version-$arch.tar.gz"
-curl -fsSLO "https://github.com/slukedev/tracks/releases/download/trackside-v$version/SHA256SUMS"
+curl -fsSLO "https://github.com/slukedev/tracks-companion/releases/download/trackside-v$version/trackside-$version-$arch.tar.gz"
+curl -fsSLO "https://github.com/slukedev/tracks-companion/releases/download/trackside-v$version/SHA256SUMS"
 sha256sum --check --ignore-missing SHA256SUMS
 tar xzf "trackside-$version-$arch.tar.gz"
 sudo install -m 0755 "trackside-$version-$arch/trackside" /usr/local/bin/trackside
@@ -233,7 +233,7 @@ In the Docker tab choose **Add Container**, then under Template paste the URL of
 [`unraid/trackside.xml`](../../packaging/nas/unraid/trackside.xml):
 
 ```
-https://raw.githubusercontent.com/slukedev/tracks/main/Server/packaging/nas/unraid/trackside.xml
+https://raw.githubusercontent.com/slukedev/tracks-companion/main/packaging/nas/unraid/trackside.xml
 ```
 
 The template runs the container as `99:100` (Unraid's `nobody:users`, which owns

@@ -1,4 +1,4 @@
-// CI check for the dashboard. Node only, no dependencies: node Server/dashboard/dev/check-coverage.mjs
+// CI check for the dashboard. Node only, no dependencies: node dashboard/dev/check-coverage.mjs
 //
 // 1. Every admin endpoint in api.md section 16 is called by some page (route strings like
 //    'GET /admin/users/{id}' in the dashboard's modules).

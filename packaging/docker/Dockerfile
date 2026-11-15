@@ -1,9 +1,8 @@
 # syntax=docker/dockerfile:1.28.0@sha256:bb22d9815c728170f72750f4e5b0d672e06176142e1d602c7e66c050100b7e5b
 
-# Trackside container images. Build from the repository root, because the server links
-# Engine/crates/tracks-model:
+# Trackside container images. Build from the repository root:
 #
-#   docker buildx build -f Server/packaging/docker/Dockerfile --target standard .
+#   docker buildx build -f packaging/docker/Dockerfile --target standard .
 #
 # Targets:
 #   slim      static binary on distroless static, no ffmpeg (direct play only)
@@ -11,7 +10,7 @@
 #   acquire   distroless cc (glibc) plus ffmpeg, yt-dlp and Deno; the `-acquire` tags
 #
 # Every base image and download is pinned by version and digest or checksum. To update one,
-# change the tag and the digest together; Server/docs/ops/releasing.md has the commands.
+# change the tag and the digest together; docs/ops/releasing.md has the commands.
 
 ARG RUST_VERSION=1.99.0
 ARG ZIGBUILD_IMAGE=ghcr.io/rust-cross/cargo-zigbuild:0.24.1@sha256:3abe26afb5537ea225c223c6790c1bf056271ef51ea52d2c4e343c569c8f129a
@@ -44,12 +43,10 @@ ENV RUSTUP_TOOLCHAIN=${RUST_VERSION} \
 RUN rustup toolchain install "${RUST_VERSION}" --profile minimal \
       --target x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
 WORKDIR /src
-COPY Engine/Cargo.toml Engine/Cargo.lock Engine/
-COPY Engine/crates Engine/crates
-COPY Server Server
-WORKDIR /src/Server
+COPY . .
 RUN --mount=type=cache,id=trackside-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=trackside-target-${TARGETARCH},target=/src/Server/target \
+    --mount=type=cache,id=trackside-cargo-git,target=/usr/local/cargo/git \
+    --mount=type=cache,id=trackside-target-${TARGETARCH},target=/src/target \
     set -eu; \
     case "${TARGETARCH}" in \
       amd64) target=x86_64-unknown-linux-musl ;; \
@@ -120,9 +117,9 @@ ENTRYPOINT ["/usr/local/bin/trackside"]
 CMD ["serve"]
 LABEL org.opencontainers.image.title="Trackside" \
       org.opencontainers.image.description="Self-hosted music server for the Tracks app (slim: no ffmpeg)" \
-      org.opencontainers.image.source="https://github.com/slukedev/tracks" \
-      org.opencontainers.image.url="https://github.com/slukedev/tracks/tree/main/Server" \
-      org.opencontainers.image.documentation="https://github.com/slukedev/tracks/blob/main/Server/README.md" \
+      org.opencontainers.image.source="https://github.com/slukedev/tracks-companion" \
+      org.opencontainers.image.url="https://github.com/slukedev/tracks-companion" \
+      org.opencontainers.image.documentation="https://github.com/slukedev/tracks-companion/blob/main/README.md" \
       org.opencontainers.image.licenses="GPL-3.0-only" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}"
@@ -151,9 +148,9 @@ ENTRYPOINT ["/usr/local/bin/trackside"]
 CMD ["serve"]
 LABEL org.opencontainers.image.title="Trackside" \
       org.opencontainers.image.description="Self-hosted music server for the Tracks app (with ffmpeg, yt-dlp and Deno)" \
-      org.opencontainers.image.source="https://github.com/slukedev/tracks" \
-      org.opencontainers.image.url="https://github.com/slukedev/tracks/tree/main/Server" \
-      org.opencontainers.image.documentation="https://github.com/slukedev/tracks/blob/main/Server/README.md" \
+      org.opencontainers.image.source="https://github.com/slukedev/tracks-companion" \
+      org.opencontainers.image.url="https://github.com/slukedev/tracks-companion" \
+      org.opencontainers.image.documentation="https://github.com/slukedev/tracks-companion/blob/main/README.md" \
       org.opencontainers.image.licenses="GPL-3.0-only" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}"
@@ -177,9 +174,9 @@ ENTRYPOINT ["/usr/local/bin/trackside"]
 CMD ["serve"]
 LABEL org.opencontainers.image.title="Trackside" \
       org.opencontainers.image.description="Self-hosted music server for the Tracks app" \
-      org.opencontainers.image.source="https://github.com/slukedev/tracks" \
-      org.opencontainers.image.url="https://github.com/slukedev/tracks/tree/main/Server" \
-      org.opencontainers.image.documentation="https://github.com/slukedev/tracks/blob/main/Server/README.md" \
+      org.opencontainers.image.source="https://github.com/slukedev/tracks-companion" \
+      org.opencontainers.image.url="https://github.com/slukedev/tracks-companion" \
+      org.opencontainers.image.documentation="https://github.com/slukedev/tracks-companion/blob/main/README.md" \
       org.opencontainers.image.licenses="GPL-3.0-only" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}"

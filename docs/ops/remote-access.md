@@ -47,8 +47,8 @@ that the server shares a network with, and serves it over HTTPS on your tailnet:
 2. Get the serve configuration next to your compose file:
 
    ```sh
-   curl -fsSLO https://raw.githubusercontent.com/slukedev/tracks/main/Server/packaging/compose.tailscale.yaml
-   curl -fsSLO https://raw.githubusercontent.com/slukedev/tracks/main/Server/packaging/tailscale-serve.json
+   curl -fsSLO https://raw.githubusercontent.com/slukedev/tracks-companion/main/packaging/compose.tailscale.yaml
+   curl -fsSLO https://raw.githubusercontent.com/slukedev/tracks-companion/main/packaging/tailscale-serve.json
    ```
 
 3. Add to `.env`:

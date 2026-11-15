@@ -2,18 +2,18 @@
 <Container version="2">
   <Name>Trackside</Name>
   <Repository>ghcr.io/slukedev/trackside:latest</Repository>
-  <Registry>https://github.com/slukedev/tracks/pkgs/container/trackside</Registry>
+  <Registry>https://github.com/slukedev/tracks-companion/pkgs/container/trackside</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/slukedev/tracks/discussions</Support>
-  <Project>https://github.com/slukedev/tracks/tree/main/Server</Project>
-  <ReadMe>https://github.com/slukedev/tracks/blob/main/Server/README.md</ReadMe>
+  <Support>https://github.com/slukedev/tracks-companion/discussions</Support>
+  <Project>https://github.com/slukedev/tracks-companion</Project>
+  <ReadMe>https://github.com/slukedev/tracks-companion/blob/main/README.md</ReadMe>
   <Overview>Trackside is a self-hosted music server for the Tracks app. It indexes the music you own and serves it to Tracks and to any Subsonic or OpenSubsonic app (Amperfy, Symfonium, Feishin and others), with accounts for everyone in the house, listens, favourites and playlists. After the first start, open the container log for the setup token, then go to the web UI to create the admin account. The music share is mounted read-only.</Overview>
   <Category>MediaServer:Music</Category>
   <WebUI>http://[IP]:[PORT:4747]/</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/slukedev/tracks/main/Server/packaging/nas/unraid/trackside.xml</TemplateURL>
+  <TemplateURL>https://raw.githubusercontent.com/slukedev/tracks-companion/main/packaging/nas/unraid/trackside.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/slukedev/tracks/main/images/icon.png</Icon>
   <ExtraParams>--user 99:100 --read-only --tmpfs /tmp --security-opt no-new-privileges --cap-drop ALL</ExtraParams>
   <PostArgs/>

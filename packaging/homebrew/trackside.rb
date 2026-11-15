@@ -7,11 +7,11 @@
 
 class Trackside < Formula
   desc "Self-hosted music server for the Tracks app"
-  homepage "https://github.com/slukedev/tracks/tree/main/Server"
-  url "https://github.com/slukedev/tracks/archive/refs/tags/trackside-v@VERSION@.tar.gz"
+  homepage "https://github.com/slukedev/tracks-companion"
+  url "https://github.com/slukedev/tracks-companion/archive/refs/tags/trackside-v@VERSION@.tar.gz"
   sha256 "@SHA256@"
   license "GPL-3.0-only"
-  head "https://github.com/slukedev/tracks.git", branch: "main"
+  head "https://github.com/slukedev/tracks-companion.git", branch: "main"
 
   livecheck do
     url :stable
@@ -22,9 +22,7 @@ class Trackside < Formula
   depends_on "ffmpeg"
 
   def install
-    cd "Server" do
-      system "cargo", "install", *std_cargo_args(path: "crates/trackside-server")
-    end
+    system "cargo", "install", *std_cargo_args(path: "crates/trackside-server")
   end
 
   def post_install

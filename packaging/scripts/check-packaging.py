@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Consistency checks for Server/packaging, run by CI from the repository root.
+"""Consistency checks for packaging/, run by CI from the repository root.
 
 - The .deb and .rpm metadata in packaging/ matches what the server crate's manifest carries
   (cargo-deb and cargo-generate-rpm only read the crate manifest).
-- The Rust version the Dockerfile installs matches Server/rust-toolchain.toml.
+- The Rust version the Dockerfile installs matches rust-toolchain.toml.
 - Every image reference in the Dockerfile and compose files is pinned by digest.
 
 Exit status 1 lists every problem. With --allow-missing-metadata, a manifest without the
@@ -15,9 +15,9 @@ import sys
 import tomllib
 from pathlib import Path
 
-SERVER = Path(__file__).resolve().parents[2]
-PACKAGING = SERVER / "packaging"
-CRATE_MANIFEST = SERVER / "crates" / "trackside-server" / "Cargo.toml"
+ROOT = Path(__file__).resolve().parents[2]
+PACKAGING = ROOT / "packaging"
+CRATE_MANIFEST = ROOT / "crates" / "trackside-server" / "Cargo.toml"
 
 
 def load(path):
@@ -31,14 +31,14 @@ def check_metadata(problems, warnings, allow_missing):
         expected = load(PACKAGING / source)["package"]["metadata"][tool]
         actual = manifest.get(tool)
         if actual is None:
-            message = f"{CRATE_MANIFEST.relative_to(SERVER)} has no [package.metadata.{tool}]; copy it from packaging/{source}"
+            message = f"{CRATE_MANIFEST.relative_to(ROOT)} has no [package.metadata.{tool}]; copy it from packaging/{source}"
             (warnings if allow_missing else problems).append(message)
         elif actual != expected:
             problems.append(f"[package.metadata.{tool}] in the crate manifest differs from packaging/{source}")
 
 
 def check_rust_version(problems):
-    channel = load(SERVER / "rust-toolchain.toml")["toolchain"]["channel"]
+    channel = load(ROOT / "rust-toolchain.toml")["toolchain"]["channel"]
     dockerfile = (PACKAGING / "docker" / "Dockerfile").read_text()
     match = re.search(r"^ARG RUST_VERSION=(\S+)$", dockerfile, re.MULTILINE)
     if not match:
@@ -57,7 +57,7 @@ def check_pins(problems):
             if ref.startswith("ghcr.io/slukedev/trackside:"):
                 continue
             if not re.search(r"@sha256:[0-9a-f]{64}$", ref):
-                problems.append(f"{path.relative_to(SERVER)}: {ref} is not pinned by digest")
+                problems.append(f"{path.relative_to(ROOT)}: {ref} is not pinned by digest")
 
 
 def main():

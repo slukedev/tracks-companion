@@ -11,7 +11,7 @@
 # Use them with `docker compose -f compose.yaml -f compose.acquire.yaml up -d`, or list them
 # in COMPOSE_FILE in .env so plain `docker compose` picks them up.
 #
-# Docs: https://github.com/slukedev/tracks/blob/main/Server/README.md
+# Docs: https://github.com/slukedev/tracks-companion/blob/main/README.md
 
 name: trackside
 

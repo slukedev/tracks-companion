@@ -3,7 +3,7 @@
 # self-hoster would see: the setup token in the log, a passing healthcheck, and the tools
 # that variant promises.
 #
-#   Server/packaging/docker/smoke-test.sh <image> <slim|standard|acquire>
+#   packaging/docker/smoke-test.sh <image> <slim|standard|acquire>
 
 set -eu
 

@@ -48,8 +48,8 @@ Contents:
   transcodeOffset, indexBasedQueue, topSongsByArtistId, playbackReport) so Amperfy, Symfonium,
   Feishin, Supersonic and others work unchanged.
 - **Same identities as Tracks.** Name folding, song keys, album keys and artist credits come from
-  `Engine/crates/tracks-model`, the same code the Tracks apps use, so a song in the user's Tracks
-  history and the same song on the server have byte-identical keys.
+  `tracks-model` in the Tracks repository, the same code the Tracks apps use, so a song in the
+  user's Tracks history and the same song on the server have byte-identical keys.
 - **Stable song ids.** A song keeps its id across rescans, tag edits, file moves and renames, and
   even across a database rebuild, so `server:<entry>:<songID>` values stored by Tracks never go
   stale (section 6).
@@ -80,13 +80,13 @@ Contents:
 
 ## 2. Crate layout and boundaries
 
-The server is a new Cargo workspace at `Server/`, separate from `Engine/` because it targets
+The server is its own Cargo workspace, separate from the Tracks engine because it targets
 Linux and macOS servers rather than Apple device static libraries, and has its own toolchain file.
-It reuses `tracks-model` by path.
+It reuses `tracks-model` as a git dependency pinned to an exact revision of the Tracks repository.
 
 ```
-Server/
-  Cargo.toml                  workspace, shared dependency versions, lints (same lint set as Engine)
+./
+  Cargo.toml                  workspace, shared dependency versions, lints (same lint set as the Tracks engine)
   rust-toolchain.toml         channel 1.99.0; targets x86_64/aarch64 linux musl and gnu, apple darwin
   crates/
     trackside-core/           domain types, ids, config, Db (writer + readers), migrations,
@@ -157,11 +157,10 @@ Rules:
 
 `tracks-model` provides `folded`, `song_key`, `album_key`, `search_folded`, `is_near` and
 `credits_by_name`. The server calls them at ingest and stores the results (`songs.song_key`,
-`albums.album_key`, `artists.identity`, `*.search_text`). A path dependency across workspaces works
-with `workspace = true` inheritance in tracks-model's manifest; this was checked with a scratch
-crate before this document was written. CI for the server must build when `Engine/` changes, and a
-change to `tracks-model` that alters folding output must come with a server migration that
-recomputes stored keys (section 13).
+`albums.album_key`, `artists.identity`, `*.search_text`). The workspace pins `tracks-model` as a
+git dependency on an exact revision of the Tracks repository, and the revision moves with app
+releases. A change to `tracks-model` that alters folding output must come with a server migration
+that recomputes stored keys (section 13).
 
 ---
 

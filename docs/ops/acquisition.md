@@ -40,7 +40,7 @@ library, and runs slskd with that folder as its only share.
    run as:
 
    ```sh
-   curl -fsSLO https://raw.githubusercontent.com/slukedev/tracks/main/Server/packaging/compose.acquire.yaml
+   curl -fsSLO https://raw.githubusercontent.com/slukedev/tracks-companion/main/packaging/compose.acquire.yaml
    mkdir -p acquired slskd/app slskd/downloads
    sudo chown -R 65532:65532 acquired slskd
    ```

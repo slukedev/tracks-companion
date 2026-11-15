@@ -1,4 +1,4 @@
-# cargo-deny policy for the Trackside workspace: run `cargo deny check` in Server/.
+# cargo-deny policy for the Trackside workspace: run `cargo deny check` from the repository root.
 # Trackside is GPL-3.0-only, so every dependency's license must be one GPL-3.0 code may use.
 
 [graph]
@@ -67,4 +67,4 @@ deny = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+allow-git = ["https://github.com/slukedev/tracks"]

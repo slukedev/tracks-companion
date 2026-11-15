@@ -14,7 +14,7 @@
 
 [Unit]
 Description=Trackside music server
-Documentation=https://github.com/slukedev/tracks/blob/main/Server/README.md
+Documentation=https://github.com/slukedev/tracks-companion/blob/main/README.md
 After=network-online.target local-fs.target remote-fs.target
 Wants=network-online.target
 

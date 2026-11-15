@@ -1,10 +1,10 @@
 # Trackside
 
-Trackside is a music server you run yourself, made for the [Tracks](../README.md) app. It
-indexes the music you own and serves it to Tracks on your iPhone and Mac, at home and away,
-and to any app that speaks Subsonic or OpenSubsonic (Amperfy, Symfonium, Feishin, Supersonic
-and others). Everyone in the house gets their own account, with their own listens,
-favourites and playlists.
+Trackside is a music server you run yourself, made for the
+[Tracks](https://github.com/slukedev/tracks) app. It indexes the music you own and serves it to
+Tracks on your iPhone and Mac, at home and away, and to any app that speaks Subsonic or
+OpenSubsonic (Amperfy, Symfonium, Feishin, Supersonic and others). Everyone in the house gets
+their own account, with their own listens, favourites and playlists.
 
 It's one program with a web dashboard built in. It starts with no configuration at all,
 keeps everything in one data folder, backs itself up every night, and never touches your
@@ -22,7 +22,7 @@ and a folder of music. These steps take about five minutes.
 
 ```sh
 mkdir trackside && cd trackside
-curl -fsSLO https://raw.githubusercontent.com/slukedev/tracks/main/Server/packaging/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/slukedev/tracks-companion/main/packaging/compose.yaml
 ```
 
 **2. Tell it where your music is**
@@ -112,13 +112,11 @@ has to allow for that account. Your login password never works in a Subsonic app
 
 ## Building from source
 
-Trackside is Rust, in the Cargo workspace in this folder. It shares its name-folding code with
-the Tracks apps through `Engine/crates/tracks-model`, so build it from a full clone of the
-repository.
+Trackside is a Rust Cargo workspace.
 
 ```sh
-git clone https://github.com/slukedev/tracks.git
-cd tracks/Server
+git clone https://github.com/slukedev/tracks-companion.git
+cd tracks-companion
 cargo build --release
 ./target/release/trackside serve
 ```
@@ -127,15 +125,19 @@ cargo build --release
 build. ffmpeg on your `PATH` is optional. Building the container images:
 
 ```sh
-cd tracks
-docker buildx build -f Server/packaging/docker/Dockerfile --target standard -t trackside .
+docker buildx build -f packaging/docker/Dockerfile --target standard -t trackside .
 ```
+
+Trackside takes its name folding and song keys from `tracks-model`, the same crate the
+[Tracks](https://github.com/slukedev/tracks) apps use, as a git dependency pinned to an exact
+revision in `Cargo.toml`. Song keys must match the app byte for byte, so the revision moves with
+app releases, and the wire fixture tests catch drift.
 
 ## Contributing
 
-The repository's [CONTRIBUTING.md](../CONTRIBUTING.md) applies here too. What's different for
-the server is in [docs/ops/contributing.md](docs/ops/contributing.md): the checks to run
-before a pull request, how the design documents in [docs/](docs/) are used, and how to test
+The Tracks app's [CONTRIBUTING.md](https://github.com/slukedev/tracks/blob/main/CONTRIBUTING.md)
+applies here too. What's different for the server is in
+[docs/ops/contributing.md](docs/ops/contributing.md): the checks to run before a pull request, how the design documents in [docs/](docs/) are used, and how to test
 packaging changes.
 
 How the server is built and why: [architecture.md](docs/architecture.md),
@@ -143,15 +145,16 @@ How the server is built and why: [architecture.md](docs/architecture.md),
 
 ## Security
 
-Please report security problems privately, as described in [SECURITY.md](../SECURITY.md),
+Please report security problems privately, through GitHub's
+[private vulnerability reporting](https://github.com/slukedev/tracks-companion/security/advisories/new),
 not in a public issue. The server's own threat model is in
 [architecture.md, section 14](docs/architecture.md#14-security-model-and-threat-model).
 
 ## License
 
-Trackside is licensed under the [GNU General Public License v3.0 only](../LICENSE)
-(`GPL-3.0-only`), the same license as the rest of the repository and the shared Rust engine in
-`Engine/`. Every crate in this workspace declares it through `license.workspace`, and the
+Trackside is licensed under the [GNU General Public License v3.0 only](LICENSE)
+(`GPL-3.0-only`), the same license as the Tracks apps and the `tracks-model` crate it shares
+with them. Every crate in this workspace declares it through `license.workspace`, and the
 dashboard in `dashboard/` is covered by the same license.
 
 The `latest` and `acquire` images include ffmpeg, built by

@@ -1,27 +1,26 @@
 # Contributing to the server
 
-The repository's [CONTRIBUTING.md](../../../CONTRIBUTING.md) covers how to propose changes,
-commit messages, pull requests and conduct. This page is what's different in `Server/`.
+The Tracks app's [CONTRIBUTING.md](https://github.com/slukedev/tracks/blob/main/CONTRIBUTING.md)
+covers how to propose changes, commit messages, pull requests and conduct, and applies here too.
+This page is what's different for the server.
 
 ## Setting up
 
-You need [rustup](https://rustup.rs). `Server/rust-toolchain.toml` pins the compiler, and the
+You need [rustup](https://rustup.rs). `rust-toolchain.toml` pins the compiler, and the
 first `cargo` command installs it. ffmpeg on your `PATH` is needed only for the tests that use
 it. Node is needed only to run the dashboard check.
 
 ```sh
-cd Server
 cargo build
 cargo run -- serve      # data in ~/.local/share/trackside, or set TRACKSIDE_DATA_DIR
 ```
 
-The dashboard in `Server/dashboard/` is plain HTML, CSS and JavaScript with no build step; its
+The dashboard in `dashboard/` is plain HTML, CSS and JavaScript with no build step; its
 [README](../../dashboard/README.md) shows how to preview it without a server.
 
 ## Before a pull request
 
 ```sh
-cd Server
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
@@ -68,18 +67,19 @@ change with a note in the changelog:
 - the database schema: migrations are forward-only and never rewrite public ids;
 - `/api/v1`: additive only;
 - config key names: a rename keeps the old name as an alias for a major version;
-- the folding in `Engine/crates/tracks-model`: a change there needs a server migration.
+- the folding in `tracks-model`, pinned from the Tracks repository: a change there needs a server
+  migration.
 
 ## Packaging changes
 
-Everything in `Server/packaging/` is pinned; [releasing.md](releasing.md#updating-pinned-versions)
+Everything in `packaging/` is pinned; [releasing.md](releasing.md#updating-pinned-versions)
 says how to move a pin. To try an image change locally (from the repository root):
 
 ```sh
-docker buildx build -f Server/packaging/docker/Dockerfile --target standard -t trackside:dev --load .
-Server/packaging/docker/smoke-test.sh trackside:dev standard
-python3 Server/packaging/scripts/check-packaging.py --allow-missing-metadata
-docker compose -f Server/packaging/compose.yaml config -q
+docker buildx build -f packaging/docker/Dockerfile --target standard -t trackside:dev --load .
+packaging/docker/smoke-test.sh trackside:dev standard
+python3 packaging/scripts/check-packaging.py --allow-missing-metadata
+docker compose -f packaging/compose.yaml config -q
 ```
 
 The smoke test starts the image with no configuration on a read-only filesystem and checks the
@@ -87,7 +87,7 @@ setup token, the healthcheck and the tools that variant ships.
 
 ## Docs
 
-Self-hosters read `Server/README.md` and `Server/docs/ops/`. Keep them in step with what the
+Self-hosters read `README.md` and `docs/ops/`. Keep them in step with what the
 server does: a new config key goes in [configuration.md](configuration.md), a new failure
 someone can hit goes in [troubleshooting.md](troubleshooting.md). Write plainly, for someone
 who runs a home server but doesn't read Rust. Provider names (yt-dlp, Soulseek, slskd) appear

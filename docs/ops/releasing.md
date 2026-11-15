@@ -2,10 +2,10 @@
 
 For maintainers. A release is a tag named `trackside-vX.Y.Z` on `main`
 (`trackside-vX.Y.Z-rc.N` for a pre-release). Pushing it runs
-[`.github/workflows/server.yml`](../../../.github/workflows/server.yml), which tests everything,
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), which tests everything,
 builds the binaries, packages and images, signs and pushes the images, and creates the GitHub
 release from the changelog. The performance and scenario checks that need a person are in
-`Server/tests-e2e/RELEASE.md`.
+`tests-e2e/RELEASE.md`.
 
 ## Checklist
 
@@ -26,8 +26,8 @@ release from the changelog. The performance and scenario checks that need a pers
 - [ ] Pinned tools are current enough: yt-dlp in the `acquire` image is under 30 days old (see
       [Updating pinned versions](#updating-pinned-versions)), ffmpeg and the base images have no
       open security advisories.
-- [ ] `version` in `Server/Cargo.toml` is X.Y.Z and `Cargo.lock` is updated.
-- [ ] `Server/CHANGELOG.md` has a `## X.Y.Z` section saying what changed for people running
+- [ ] `version` in `Cargo.toml` is X.Y.Z and `Cargo.lock` is updated.
+- [ ] `CHANGELOG.md` has a `## X.Y.Z` section saying what changed for people running
       the server, any action they must take, and whether the database changes.
 - [ ] Tried on a real install: the `latest` image upgraded in place over the previous release,
       Tracks connected, played, downloaded and synced.

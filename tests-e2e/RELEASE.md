@@ -1,6 +1,6 @@
 # Release checklist
 
-Run from `Server/` before tagging `trackside-vX.Y.Z`. `Server/docs/ops/releasing.md` covers
+Run from the repository root before tagging `trackside-vX.Y.Z`. `docs/ops/releasing.md` covers
 the tag, the changelog and the published artifacts; this list covers what has to be true of
 the code first.
 

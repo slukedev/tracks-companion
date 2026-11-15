@@ -3,7 +3,7 @@
 #
 #   docker compose -f compose.yaml -f compose.acquire.yaml up -d
 #
-# Before the first start (Server/docs/ops/acquisition.md explains each step):
+# Before the first start (docs/ops/acquisition.md explains each step):
 #
 #   mkdir -p acquired slskd/app slskd/downloads
 #   sudo chown -R 65532:65532 acquired slskd

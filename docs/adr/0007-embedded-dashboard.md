@@ -13,7 +13,7 @@ toolchain that rots is a maintenance risk.
 
 ## Decision
 
-Static HTML, CSS and JavaScript modules in `Server/dashboard/`, with no build step and no runtime
+Static HTML, CSS and JavaScript modules in `dashboard/`, with no build step and no runtime
 dependencies, embedded into the binary with `rust-embed` and served from `/`. System font stack,
 no external URLs of any kind, strict CSP (`default-src 'self'`). QR codes are SVGs rendered by the
 server. The dashboard talks only to the documented JSON endpoints in api.md.

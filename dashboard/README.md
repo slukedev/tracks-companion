@@ -89,7 +89,7 @@ Open any page with `?preview` and it answers from `dev/fixtures/` instead of the
 the clock fixed at 2026-11-14 10:00 UTC so dates read the same on any day.
 
 ```sh
-cd Server/dashboard && python3 -m http.server 8000
+cd dashboard && python3 -m http.server 8000
 # http://localhost:8000/?preview
 ```
 
@@ -106,7 +106,7 @@ across files.
 
 ## Checks
 
-`node Server/dashboard/dev/check-coverage.mjs` (Node at CI time only) fails when:
+`node dashboard/dev/check-coverage.mjs` (Node at CI time only) fails when:
 
 1. an admin endpoint in api.md section 16 is not called by any page,
 2. a page calls a GET route that has no preview fixture,
@@ -181,5 +181,5 @@ one pass.
 ## License
 
 The dashboard is part of Trackside and is licensed like the rest of the repository, under the
-[GNU General Public License v3.0 only](../../LICENSE) (`GPL-3.0-only`). It has no dependencies
+[GNU General Public License v3.0 only](../LICENSE) (`GPL-3.0-only`). It has no dependencies
 to license separately.

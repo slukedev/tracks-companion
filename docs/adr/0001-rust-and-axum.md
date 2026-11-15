@@ -8,15 +8,17 @@
 
 Trackside must be very fast on small hardware (a Raspberry Pi or a NAS), ship as one static
 binary, and share identity code with the Tracks apps. That code, name folding, song and album
-keys and artist credits, already lives in Rust in `Engine/crates/tracks-model` and is checked
-byte for byte against Foundation. The newer half of the previous Subsonic proxy Tracks used is
-also Rust on axum, and the maintainer already works in Rust in `Engine/`.
+keys and artist credits, already lives in Rust in the Tracks repository's
+`Engine/crates/tracks-model` and is checked byte for byte against Foundation. The newer half of
+the previous Subsonic proxy Tracks used is also Rust on axum, and the maintainer already works in
+Rust in the Tracks engine.
 
 ## Decision
 
-Rust (edition 2024, toolchain 1.99.0 like Engine), tokio 1.54, axum 0.8, tower-http 0.7,
-axum-server 0.9 with rustls 0.23 (ring provider) for TLS. A separate `Server/` workspace that
-depends on `tracks-model` by path.
+Rust (edition 2024, toolchain 1.99.0 like the Tracks engine), tokio 1.54, axum 0.8, tower-http 0.7,
+axum-server 0.9 with rustls 0.23 (ring provider) for TLS. A separate workspace that
+depends on `tracks-model` (by path while the server lived in the Tracks repository, now by a
+pinned git revision; see ADR 0010).
 
 ## Options Considered
 
@@ -71,4 +73,4 @@ async discipline, both manageable.
 ## Action Items
 
 1. [ ] WP1 lands the workspace, toolchain file and lint set matching Engine.
-2. [ ] CI builds the server when `Engine/crates/tracks-model` changes.
+2. [ ] CI builds the server against the pinned `tracks-model` revision.
