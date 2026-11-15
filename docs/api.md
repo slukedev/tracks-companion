@@ -446,7 +446,7 @@ These need a recent password check when the caller is a session (keys always pas
 - `POST /admin/users` and `POST /admin/invites` with `role: admin`;
 - `PATCH /admin/users/{id}` changing `role` or `disabled`;
 - `POST /admin/users/{id}/password-reset`, `DELETE /admin/users/{id}`;
-- `PATCH /admin/settings` with any `auth.*` key;
+- `PATCH /admin/settings` with any `auth.*` key or `enrichment.lastfm_api_key`;
 - `GET /admin/backups/{name}` (download) and `DELETE /admin/backups/{name}`;
 - `PATCH /admin/acquire/providers/{name}` with `api_key`.
 
@@ -651,10 +651,10 @@ one library.
 | `GET /albums/{id}` | `{"album": Album, "songs": [Song]}` ordered by disc and track |
 | `GET /albums?sort=<s>&limit&cursor&genre&year_from&year_to` | `{"albums": [Album], "next_cursor"}` |
 | `GET /artists?limit&cursor` | `{"artists": [Artist], "next_cursor"}` by sort name |
-| `GET /artists/{id}` | `{"artist": Artist, "albums": [Album], "appears_on": [Album], "top_songs": [Song]}` |
-| `GET /artists/{id}/top-songs?count=20` | `{"songs": [Song]}` by plays on this server, then rating, then album order |
+| `GET /artists/{id}` | `{"artist": Artist, "albums": [Album], "appears_on": [Album], "top_songs": [Song], "bio"?}` |
+| `GET /artists/{id}/top-songs?count=20` | `{"songs": [Song], "external"?: [Suggestion]}`, ranked below |
 | `GET /artists/{id}/similar?count=15` | `{"artists": [{"artist": Artist?, "name", "identity", "score", "in_library": bool}]}` |
-| `GET /songs/{id}/similar?count=20` | `{"songs": [Song]}`, library songs only |
+| `GET /songs/{id}/similar?count=20` | `{"songs": [Song], "external"?: [Suggestion]}`, ranked below |
 | `GET /songs/random?count=40&genre&year_from&year_to` | `{"songs": [Song]}` |
 | `GET /genres` | `{"genres": [{"name", "song_count", "album_count"}]}` |
 | `GET /songs/{id}/lyrics` | section 11 |
@@ -664,9 +664,24 @@ Album `sort` values: `newest` (added), `recent` (caller's last played), `frequen
 plays), `random`, `alphabetical`, `alphabetical_by_artist`, `starred`, `year`, `highest`
 (caller's rating). `random` ignores `cursor` and takes `seed` for repeatable pages.
 
-Similar songs and artists come from local signals (shared credits, genres, decade, co-listening in
-this server's listens, co-occurrence in playlists) and, when enrichment is configured, Last.fm data
-fetched in the background. They never call out during the request.
+Suggestions (similar songs, similar artists, top songs, the artist's `bio`) come from local
+signals (shared credits, genres, decade, co-listening in this server's listens, co-occurrence in
+playlists) and, when the admin sets a Last.fm API key (section 16, Suggestions), from Last.fm. The
+key is one for the whole server: nobody needs a Last.fm account, and the server only calls Last.fm's
+public read methods with artist and track names. Last.fm data is fetched in the background,
+most played artists and songs first, and kept for 30 days. A request for something not looked up
+yet starts the lookup and waits at most 1.5 s for it before answering from what is stored.
+
+Ranking is per user: the caller's own stars and plays raise a song or artist. Top songs are
+ordered by a score of plays on this server, the caller's own plays counted twice, the caller's
+star and the song's rank on Last.fm; then the caller's rating, then album order. `songs` only
+ever holds songs the caller can see. `bio` is a short plain-text summary, left out when there is
+none.
+
+`external` lists songs Last.fm suggests that the caller cannot play here, as `Suggestion`
+objects `{"title", "artist"}`, best first, at most 20. It is present only when `/me` has
+`features.acquisition` and the credential has the `request` scope, and then may be empty. A
+client offers to request one with `POST /acquisitions` (section 15.3). Nothing names the source.
 
 ---
 
@@ -1312,11 +1327,35 @@ files were left for later because they were still being written (`scanner.settle
 - `GET /admin/settings`: every key marked **D** in architecture section 11, with
   `{"value", "source": "default" | "dashboard" | "config", "editable": bool}`.
 - `PATCH /admin/settings`: `{"key": value, ...}`; keys set by config are `409` with
-  `details.reason = "set_by_config"`. Any `auth.*` key needs a recent password.
+  `details.reason = "set_by_config"`. Any `auth.*` key needs a recent password. `null` returns a
+  key to its default.
+- Secret keys (`enrichment.lastfm_api_key`) are write-only: `PATCH` takes the text, which is
+  sealed with the server's secret key before it is stored, and needs a recent password; `GET`
+  and every response show only whether one is set, as `"value": true` or `false`.
 - `GET /admin/server/urls`: detected LAN URLs and configured public URLs, with a reachability test
   result from the server's side: `{"urls": [{"url", "kind", "tls", "source": "detected" |
   "configured", "reachable", "checked_at"}]}`.
 - `POST /admin/pairing/approve` is the same as `/pair/requests/approve`.
+
+### Suggestions
+
+The Last.fm API key is the setting `enrichment.lastfm_api_key` above, also settable as
+`TRACKSIDE_ENRICHMENT__LASTFM_API_KEY` (then shown with `"source": "config"`, not editable).
+
+- `GET /admin/enrichment`:
+
+  ```json
+  {"configured": true, "artists": 1840, "songs": 5210,
+   "last_fetch_at": "2026-11-14T09:28:00.000Z",
+   "last_error": {"at": "2026-11-14T08:30:00.000Z",
+                  "message": "Last.fm error 29: Rate Limit Exceeded"}}
+  ```
+
+  `artists` and `songs` count lookups Last.fm had an answer for. `last_fetch_at` and
+  `last_error` are left out when there is none; `last_error` clears after the next success.
+- `POST /admin/enrichment/test`: `{"api_key"?}` makes one Last.fm call with that key, or the
+  saved one: `200 {"ok", "elapsed_ms", "detail"?}`, `detail` saying what went wrong. The key is
+  never echoed.
 
 ### Backups
 
@@ -1467,7 +1506,7 @@ a measured zero. Responses are `Cache-Control: no-store`. Out-of-range parameter
 | `getMusicDirectory` | yes | real folders (folder ids `f...`), plus artist and album ids for clients that pass those |
 | `getGenres` | yes | |
 | `getArtists`, `getArtist`, `getAlbum`, `getSong` | yes | `musicFolderId` honoured |
-| `getArtistInfo`, `getArtistInfo2` | yes | similar artists from local signals and optional enrichment; biography and images only from enrichment |
+| `getArtistInfo`, `getArtistInfo2` | yes | similar artists from local signals and Last.fm; `biography` from Last.fm; no images |
 | `getAlbumInfo`, `getAlbumInfo2` | yes | notes empty unless enrichment |
 | `getSimilarSongs`, `getSimilarSongs2` | yes | `id` may be a song, album or artist id (Tracks passes a song id) |
 | `getTopSongs` | yes | by artist name, as the spec says |
@@ -1528,7 +1567,7 @@ The previous Subsonic proxy Tracks used fetched songs on demand from services el
 | `getCoverArt` returns a stand-in image with HTTP 200 for missing covers; Tracks probes and hashes it | `404` with a Subsonic error 70 body. Tracks' probe finds no stand-in and stores nothing to compare against, so it treats every 404 as "no cover". |
 | `search3` mixes up to 60 external songs (`isExternal: true`) into the first page when `songCount > 12`, slowly | Library songs only, fast, standard paging for every offset. Not-yet-owned results exist only in the native acquisition search, for users allowed to request. |
 | `star` on an external song means "fetch it"; it reappears minutes later under a new id | `star` marks a favourite and nothing else. Acquisition is a native request with a status and the final id. |
-| Similar songs and artists from Last.fm; empty without the proxy's Last.fm key | Local signals always; Last.fm when the admin sets `enrichment.lastfm_api_key`. |
+| Similar songs and artists from Last.fm; empty without the proxy's Last.fm key | Local signals always; Last.fm too when the admin sets one server-wide key (`enrichment.lastfm_api_key`), for every user. |
 | Song names follow Last.fm | Names are the file's tags. |
 | `getAnimatedArt` | Not implemented (error 70). |
 | Navidrome-shaped ids, numeric or string | Strings with kind prefixes; Tracks' lenient decoding is unaffected. |

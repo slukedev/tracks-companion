@@ -35,6 +35,11 @@ mod weight {
     pub const PLAYLIST: f64 = 1.5;
     pub const LISTENED_NEAR: f64 = 1.0;
     pub const SAME_ALBUM: f64 = -1.5;
+    /// The caller starred the candidate.
+    pub const STARRED: f64 = 1.5;
+    /// Per play of the candidate by the caller, up to [`OWN_PLAYS_MAX`] plays.
+    pub const OWN_PLAY: f64 = 0.3;
+    pub const OWN_PLAYS_MAX: i64 = 5;
 }
 
 /// How many candidates each signal may contribute, so a huge genre or a prolific artist costs a
@@ -208,7 +213,8 @@ fn song_signals(c: &Connection, seed: &Seed) -> Result<HashMap<i64, f64>, DbErro
 
 /// Library songs only, best first: songs by the same and related artists, songs other users
 /// listened to around it or put in the same playlists, songs sharing its genres and decade, and
-/// stored enrichment data. `NotFound` when the seed is not visible.
+/// stored enrichment data, each candidate raised by the caller's own stars and plays.
+/// `NotFound` when the seed is not visible.
 pub fn similar_songs(
     c: &Connection,
     a: &Access,
@@ -235,12 +241,31 @@ pub fn similar_songs(
         let rows = statement.query_map([&list], |row| Ok((row.get(0)?, row.get(1)?)))?;
         rows.collect::<Result<_, _>>()?
     };
+    let personal: HashMap<i64, f64> = scored(
+        c,
+        "SELECT s.id,
+                ?2 * EXISTS (SELECT 1 FROM stars st WHERE st.user_id = ?4
+                             AND st.item_kind = 'song' AND st.item_pid = s.pid)
+                + ?3 * min(coalesce((SELECT ps.play_count FROM play_stats ps
+                                     WHERE ps.user_id = ?4 AND ps.song_pid = s.pid), 0), ?5)
+         FROM songs s WHERE s.id IN (SELECT value FROM json_each(?1))",
+        &[
+            &list,
+            &weight::STARRED,
+            &weight::OWN_PLAY,
+            &a.user,
+            &weight::OWN_PLAYS_MAX,
+        ],
+    )?
+    .into_iter()
+    .collect();
     let decade = seed.year.map(|y| y / 10);
     let mut ranked: Vec<(f64, i64, Song)> = candidates
         .into_iter()
         .filter(|(_, song)| song.song_key != seed.song_key)
         .map(|(id, song)| {
-            let mut score = scores.get(&id).copied().unwrap_or_default();
+            let mut score = scores.get(&id).copied().unwrap_or_default()
+                + personal.get(&id).copied().unwrap_or_default();
             if decade.is_some() && song.year.map(|y| y / 10) == decade {
                 score += weight::DECADE;
             }
@@ -334,10 +359,35 @@ fn artist_signals(
     Ok(found)
 }
 
+/// How much the caller likes each in-library artist: a star, and plays of their songs.
+fn artist_affinity(
+    c: &Connection,
+    a: &Access,
+    artists: &HashMap<String, Artist>,
+) -> Result<HashMap<String, f64>, DbError> {
+    if artists.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let list = crate::repo::sql::json_strings(artists.keys().map(String::as_str));
+    let mut statement = c.prepare_cached(
+        "SELECT r.identity,
+                0.1 * EXISTS (SELECT 1 FROM stars st WHERE st.user_id = ?2
+                              AND st.item_kind = 'artist' AND st.item_pid = r.pid)
+                + 0.02 * min(coalesce((SELECT sum(ps.play_count) FROM songs s
+                                       JOIN play_stats ps ON ps.song_pid = s.pid
+                                       WHERE s.artist_id = r.id AND ps.user_id = ?2), 0), 5)
+         FROM artists r WHERE r.identity IN (SELECT value FROM json_each(?1))",
+    )?;
+    let rows = statement.query_map(rusqlite::params![list, a.user], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
 /// Similar artists from stored data (enrichment and earlier local results) and from local
-/// signals: artists credited together, and artists sharing the seed's main genres. Artists not
-/// in the caller's libraries are included with `in_library: false`. `NotFound` when the seed is
-/// not visible.
+/// signals: artists credited together, and artists sharing the seed's main genres, raised a
+/// little by the caller's stars and plays. Artists not in the caller's libraries are included
+/// with `in_library: false`. `NotFound` when the seed is not visible.
 pub fn similar_artists(
     c: &Connection,
     a: &Access,
@@ -366,10 +416,12 @@ pub fn similar_artists(
     .into_iter()
     .map(|(_, artist)| (artist.identity.clone(), artist))
     .collect();
+    let affinity = artist_affinity(c, a, &in_library)?;
     let mut out: Vec<SimilarArtist> = found
         .into_iter()
         .map(|(identity, (name, score))| {
             let artist = in_library.get(&identity).cloned();
+            let score = (score + affinity.get(&identity).copied().unwrap_or_default()).min(1.0);
             SimilarArtist {
                 in_library: artist.is_some(),
                 name: artist.as_ref().map_or(name, |a| a.name.clone()),

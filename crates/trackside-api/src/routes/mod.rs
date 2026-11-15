@@ -3,6 +3,7 @@
 pub(crate) mod account;
 pub(crate) mod acquisition;
 pub(crate) mod admin;
+pub(crate) mod enrichment;
 mod events;
 mod idempotency;
 pub(crate) mod library;
@@ -47,7 +48,12 @@ pub(crate) fn router(state: ApiState) -> Router {
         .merge(events::routes())
         .merge(uploads::routes(&state))
         .merge(acquisition::routes())
-        .nest("/admin", admin::routes().merge(stats::routes()))
+        .nest(
+            "/admin",
+            admin::routes()
+                .merge(stats::routes())
+                .merge(enrichment::routes()),
+        )
         .fallback(|| async { ApiError::not_found() })
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(from_fn(request_context))

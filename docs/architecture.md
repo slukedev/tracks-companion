@@ -91,7 +91,7 @@ It reuses `tracks-model` as a git dependency pinned to an exact revision of the 
   crates/
     trackside-core/           domain types, ids, config, Db (writer + readers), migrations,
                               repositories, change log, sync, search, similarity, event bus,
-                              the ScanControl and AcquireControl traits
+                              the ScanControl, AcquireControl and EnrichControl traits
     trackside-scan/           library walking, tag reading (lofty), audio digests, watching
                               (notify), availability monitor, the importer (uploads, inbox)
     trackside-media/          range serving, ffmpeg transcoding, transcode cache, HLS,
@@ -100,6 +100,7 @@ It reuses `tracks-model` as a git dependency pinned to an exact revision of the 
                               pairing, setup token, rate limits, axum extractors
     trackside-acquire/        Provider trait, ytdlp and soulseek providers, ranking,
                               verification, the durable acquisition queue
+    trackside-enrich/         read-only Last.fm client and the background enrichment worker
     trackside-subsonic/       /rest router, XML and JSON encoding, Subsonic semantics
     trackside-api/            /api/v1 router (native and admin), wire types, SSE
     trackside-server/         the `trackside` binary: CLI, wiring, TLS, mDNS, scheduler,
@@ -110,7 +111,7 @@ It reuses `tracks-model` as a git dependency pinned to an exact revision of the 
   docs/
 ```
 
-Eight shipped crates. Acquisition is its own crate rather than part of `trackside-scan` so that
+Nine shipped crates. Acquisition is its own crate rather than part of `trackside-scan` so that
 its code can be owned by one work package, reviewed on its own, and compiled out with the
 `acquire` cargo feature of `trackside-server` (on by default) by anyone who builds without it.
 
@@ -123,6 +124,7 @@ its code can be owned by one work package, reviewed on its own, and compiled out
 | trackside-auth | core |
 | trackside-scan | core, media (for `ArtworkStore`) |
 | trackside-acquire | core, media (probes, decode check, stream-through HLS) |
+| trackside-enrich | core |
 | trackside-subsonic | core, auth, media |
 | trackside-api | core, auth, media |
 | trackside-server | all of the above |
@@ -130,8 +132,9 @@ its code can be owned by one work package, reviewed on its own, and compiled out
 Rules:
 
 - `trackside-core` depends on nothing else in the workspace. Every other crate depends on it.
-- `trackside-subsonic` and `trackside-api` do **not** depend on `scan` or `acquire`; they reach
-  those through the `ScanControl` and `AcquireControl` traits declared in `core`, which `server`
+- `trackside-subsonic` and `trackside-api` do **not** depend on `scan`, `acquire` or `enrich`;
+  they reach those through the `ScanControl`, `AcquireControl` and `EnrichControl` traits
+  declared in `core`, which `server`
   wires to the real implementations. This keeps the HTTP crates testable with fakes and the graph
   acyclic.
 - `trackside-acquire` imports files through `ScanControl` from core, not by depending on `scan`.
@@ -149,6 +152,7 @@ Rules:
 | media | HTTP range responses for files, transcode jobs and cache, HLS playlists and segments, playback decision, artwork extraction from files, resized artwork cache | auth decisions (it receives an already authorised request), database writes other than artwork rows |
 | auth | Argon2id, session tokens, API keys, app password sealing, media tokens, pairing codes, setup token, invites validation, rate limiters, `Principal`, axum extractors | user CRUD SQL (calls core repositories) |
 | acquire | providers, ranking, verification, tagging staged files, the job runner, staging cleanup, provider health | the scanner (calls `ScanControl::import_file`) |
+| enrich | Last.fm requests and parsing, pacing and backoff, what to look up next, the on-demand queue | SQL (calls `core::repo::enrichment`), ranking (in `core::similar`) |
 | subsonic | `/rest/*` parsing (GET and formPost), XML and JSON envelopes, error codes, mapping records to Subsonic shapes | domain logic beyond mapping |
 | api | `/api/v1/*` handlers, wire types (serde), admin endpoints, SSE, fixtures for Tracks | domain logic beyond mapping |
 | server | CLI, wiring, listeners, TLS, mDNS, scheduler, backups, health endpoints, dashboard asset serving, metrics text | domain logic |
@@ -269,7 +273,7 @@ Connection pragmas (set per connection, not in migrations): `journal_mode = WAL`
 `mmap_size = 268435456`, `temp_store = MEMORY`, `journal_size_limit = 67108864`.
 
 Migrations use `rusqlite_migration` on `user_version`, as Engine does. Migration 1 follows in full;
-migration 2 is after it. The files themselves are in `crates/trackside-core/migrations/`.
+migrations 2 and 3 are after it. The files themselves are in `crates/trackside-core/migrations/`.
 
 ```sql
 -- Trackside migration 1.
@@ -996,6 +1000,51 @@ ALTER TABLE invites ADD COLUMN legacy_subsonic INTEGER NOT NULL DEFAULT 0 CHECK 
 ALTER TABLE invites ADD COLUMN max_bitrate_kbps INTEGER;
 ```
 
+Migration 3 adds what Last.fm enrichment stores beside the similarity tables (Suggestions and
+enrichment, below):
+
+```sql
+-- Last.fm enrichment (architecture section 5, Suggestions and enrichment): what was fetched
+-- and when, so a restart does not fetch again, and what the similarity tables have no room
+-- for. Similar artists and songs themselves go to similar_artists and similar_songs with
+-- source 'lastfm'.
+
+-- One row per artist identity or song key looked up. found = 0 caches "Last.fm does not know
+-- it" until expires_at.
+CREATE TABLE enrichment_fetches (
+    kind        TEXT NOT NULL CHECK (kind IN ('artist', 'song')),
+    key         TEXT NOT NULL,
+    found       INTEGER NOT NULL CHECK (found IN (0, 1)),
+    fetched_at  INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL,
+    PRIMARY KEY (kind, key)
+) STRICT, WITHOUT ROWID;
+
+-- The plain-text biography summary of an artist.
+CREATE TABLE enrichment_artists (
+    identity  TEXT PRIMARY KEY,
+    bio       TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+
+-- An artist's most played songs on Last.fm, rank 0 first.
+CREATE TABLE enrichment_top_songs (
+    artist_identity  TEXT NOT NULL,
+    rank             INTEGER NOT NULL,
+    song_key         TEXT NOT NULL,
+    title            TEXT NOT NULL,
+    PRIMARY KEY (artist_identity, rank)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX enrichment_top_songs_key ON enrichment_top_songs(artist_identity, song_key);
+
+-- Title and artist of every song key a Last.fm similar_songs row points at, for suggesting
+-- songs the server does not have.
+CREATE TABLE enrichment_song_names (
+    song_key  TEXT PRIMARY KEY,
+    title     TEXT NOT NULL,
+    artist    TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+```
+
 Notes on the schema:
 
 - `change_log.seq` is not `AUTOINCREMENT`. The writer keeps `next_seq` in memory, loaded as
@@ -1028,6 +1077,44 @@ Notes on the schema:
   ids or keys.
 
 ---
+
+### Suggestions and enrichment
+
+Similar songs, similar artists, top songs and artist biographies come from local signals and,
+when the admin sets a Last.fm API key, from Last.fm. The key is one for the whole server, set in
+the dashboard (sealed at rest with the secret key, like app passwords) or by
+`enrichment.lastfm_api_key`; nobody needs a Last.fm account. `trackside-enrich` calls only four
+unauthenticated read methods, `artist.getSimilar`, `artist.getTopTracks`, `artist.getInfo` and
+`track.getSimilar`, with the key, artist and track names, `autocorrect=1` and a
+`Trackside/<version>` User-Agent. It never signs a request, holds a session, or writes to
+Last.fm, and sends nothing about users.
+
+- **Worker.** One task makes one call at a time, at least 400 ms apart (Last.fm allows 5 a
+  second). An artist takes three calls, a song one. It works through, in order: lookups a
+  request is waiting for; then artists by plays on this server and songs anyone has played, by
+  plays, whose lookup is missing or expired. With nothing due it looks again hourly.
+- **Storage.** Similar artists go to `similar_artists` and similar songs to `similar_songs`
+  with `source = 'lastfm'` and Last.fm's match as `score`. Top songs, biographies and the names
+  of suggested songs go to the migration 3 tables. `enrichment_fetches` records every lookup
+  with `expires_at`: 30 days after an answer, 7 days after "not found" (Last.fm error 6), so a
+  restart fetches nothing that has not expired.
+- **Failures.** Error 29, 8, 11 and 16, HTTP 429 and 5xx, and transport errors keep the target
+  at the front and wait 30 s, doubling to an hour, before the next call. Errors 4, 10 and 26
+  (the key) stop all calls until the key changes. Anything else is stored as not found. The
+  latest error is shown in the dashboard until the next success.
+- **On demand.** Similar songs, top songs, similar artists and the Subsonic equivalents ask for
+  their seed song and artist first in line and wait at most 1.5 s (`ON_DEMAND_WAIT`), then
+  answer from what is stored. The artist page never waits.
+- **Ranking.** `core::similar` adds Last.fm rows to the local signals: a similar song is worth
+  4 times its match, a song by a similar artist 2 times. The caller's own star (1.5) and plays
+  (0.3 each, up to 5) raise a candidate, so the same seed gives each user their own order.
+  Similar artists get up to 0.2 from the caller's star and plays. Top songs score plays on the
+  server, the caller's plays again, 5 for the caller's star and `20 / (1 + rank)` for Last.fm's
+  rank.
+- **Access.** Library results come from repository reads filtered by `Principal.libraries`, as
+  everywhere. Songs Last.fm suggests that the caller cannot see are returned only by name, in
+  the native API's `external` list, and only to callers with `features.acquisition` and the
+  `request` scope. Nothing on the wire names Last.fm.
 
 ## 6. Id strategy
 
@@ -1790,7 +1877,7 @@ The server starts with no file at all: data in the platform default directory, l
 | `acquire.soulseek.stall_timeout` | `TRACKSIDE_ACQUIRE__SOULSEEK__STALL_TIMEOUT` | `"120s"` | |
 | `acquire.soulseek.min_bitrate` | `TRACKSIDE_ACQUIRE__SOULSEEK__MIN_BITRATE` | `256` | kbps for lossy candidates |
 | `enrichment.musicbrainz` **D** | `TRACKSIDE_ENRICHMENT__MUSICBRAINZ` | `false` | tag lookups for acquired files |
-| `enrichment.lastfm_api_key` | `TRACKSIDE_ENRICHMENT__LASTFM_API_KEY` / `_FILE` | unset | similar artists and songs, background only |
+| `enrichment.lastfm_api_key` **D** | `TRACKSIDE_ENRICHMENT__LASTFM_API_KEY` / `_FILE` | unset | one server-wide Last.fm key for suggestions (section 5, Suggestions and enrichment); secret, write-only in the dashboard |
 
 `trackside config show` prints one `key = value  # source` line per key in this table's order,
 values as TOML with durations and sizes in their largest whole unit and secrets as `<redacted>`,

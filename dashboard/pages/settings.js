@@ -1,11 +1,12 @@
 import { call, describe } from '../api.js';
-import { h, icon, pageHead, section, list, row, button, busy, input, select, toggle, nextId, toast, formError } from '../ui.js';
+import { h, icon, pageHead, section, list, row, button, busy, input, select, toggle, nextId, toast, formError, num } from '../ui.js';
 
 const DURATIONS = (extra) => [['off', 'Off'], ['15m', '15 minutes'], ['30m', '30 minutes'], ['1h', '1 hour'], ['6h', '6 hours'], ['1d', '1 day'], ['7d', '7 days'], ...extra];
 const PROFILES = [['aac-256', 'AAC 256 kbps'], ['aac-128', 'AAC 128 kbps'], ['mp3-320', 'MP3 320 kbps'], ['mp3-128', 'MP3 128 kbps'], ['opus-128', 'Opus 128 kbps'], ['flac', 'Original quality (FLAC)']];
 const GRACE = [['7d', '7 days'], ['30d', '30 days'], ['90d', '90 days'], ['365d', '1 year']];
+const LASTFM_KEYS = 'https://www.last.fm/api/account/create';
 
-/** Each entry: key, title, help, kind. Keys under acquire. and enrichment. live on the Requests page. */
+/** Each entry: key, title, help, kind. Keys under acquire. and enrichment.musicbrainz live on the Requests page. */
 const GROUPS = [
   ['Server', [
     ['server.name', 'Server name', null, 'text'],
@@ -31,12 +32,16 @@ const GROUPS = [
     ['backup.schedule', 'Schedule', 'daily 03:30', 'text'],
     ['backup.keep', 'Keep', null, 'number'],
   ]],
+  ['Last.fm', [
+    ['enrichment.lastfm_api_key', 'API key', null, 'secret'],
+  ]],
 ];
 
 export async function render(ctx) {
-  const [settings, urls] = await Promise.all([
+  const [settings, urls, enrichment] = await Promise.all([
     call('GET /admin/settings'),
     call('GET /admin/server/urls').catch(() => ({ urls: [] })),
+    call('GET /admin/enrichment').catch(() => null),
   ]);
   const controls = new Map();
   const error = formError();
@@ -74,7 +79,11 @@ export async function render(ctx) {
     const locked = !entry.editable;
     let control;
     let read;
-    if (kind === 'bool') {
+    let extra = null;
+    let sub = null;
+    if (kind === 'secret') {
+      ({ control, read, extra, sub } = secretControl(entry, id, locked, enrichment, refresh));
+    } else if (kind === 'bool') {
       control = toggle(Boolean(entry.value), { id, disabled: locked });
       read = () => control.checked;
     } else if (Array.isArray(kind)) {
@@ -94,8 +103,9 @@ export async function render(ctx) {
     controls.set(key, { kind, read, initial: entry.value, control });
     return h(`div.setting-row${kind === 'lines' ? '.stacked' : ''}`,
       h('div.row-main',
-        h('label.row-title', { for: id }, title, locked ? h('span.badge', { title: 'Set in the config file or environment' }, icon('lock'), 'Config') : null)),
-      h('div.control', control));
+        h('label.row-title', { for: id }, title, locked ? h('span.badge', { title: 'Set in the config file or environment' }, icon('lock'), 'Config') : null),
+        sub),
+      h('div.control', control, extra));
   };
 
   const form = h('form.form', {
@@ -120,7 +130,8 @@ export async function render(ctx) {
   GROUPS.map(([title, rows]) => {
     const built = rows.map(settingRow).filter(Boolean);
     if (!built.length) return null;
-    const sec = section(title, h('div.list', built));
+    const aside = title === 'Last.fm' ? h('a', { href: LASTFM_KEYS, rel: 'noreferrer' }, 'Get a key') : undefined;
+    const sec = section(title, h('div.list', built), { aside });
     if (title === 'Server' && urls.urls.length) sec.append(addresses(urls.urls));
     return sec;
   }),
@@ -128,6 +139,37 @@ export async function render(ctx) {
   bar);
 
   return h('div.page.narrow', pageHead('Settings'), form);
+}
+
+/** A write-only key: typing replaces it, Remove clears it, Test tries the typed or saved key. */
+function secretControl(entry, id, locked, enrichment, refresh) {
+  let cleared = false;
+  const control = input({ id, type: 'password', placeholder: entry.value ? 'Saved' : '', disabled: locked, mono: true, spellcheck: 'false' });
+  const read = () => (cleared ? null : control.value.trim() || entry.value);
+  const sub = h('span.row-sub', enrichmentLine(enrichment));
+  const say = (text) => { sub.textContent = text; };
+  const test = button('Test', {
+    onClick: () => busy(test, async () => {
+      const typed = control.value.trim();
+      try {
+        const result = await call('POST /admin/enrichment/test', { body: typed ? { api_key: typed } : {} });
+        say(result.ok ? 'Working' : result.detail || 'Not working');
+      } catch (err) {
+        say(describe(err));
+      }
+    }),
+  });
+  const remove = entry.value && !locked ? button('Remove', {
+    onClick: () => { cleared = true; control.value = ''; control.placeholder = ''; remove.hidden = true; refresh(); },
+  }) : null;
+  control.addEventListener('input', () => { cleared = false; });
+  return { control, read, sub, extra: [test, remove] };
+}
+
+function enrichmentLine(status) {
+  if (!status?.configured) return '';
+  const counts = `${num(status.artists)} artists, ${num(status.songs)} songs`;
+  return status.last_error ? `${counts}. ${status.last_error.message}` : counts;
 }
 
 function addresses(urls) {

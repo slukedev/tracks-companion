@@ -1,0 +1,31 @@
+[package]
+name = "trackside-enrich"
+description = "Similar artists, similar songs, top songs and biographies from Last.fm, fetched in the background."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+trackside-core.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures-util.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+percent-encoding.workspace = true
+
+[dev-dependencies]
+trackside-core = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["test-util"] }
+axum.workspace = true
+rusqlite.workspace = true
+
+[lints]
+workspace = true

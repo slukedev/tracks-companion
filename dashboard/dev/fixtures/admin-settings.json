@@ -128,5 +128,10 @@
     "value": false,
     "source": "default",
     "editable": true
+  },
+  "enrichment.lastfm_api_key": {
+    "value": true,
+    "source": "dashboard",
+    "editable": true
   }
 }

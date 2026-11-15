@@ -360,10 +360,13 @@ pub const KEYS: &[KeyInfo] = &[
         "TRACKSIDE_ENRICHMENT__MUSICBRAINZ",
         Bool,
     ),
-    secret(
-        "enrichment.lastfm_api_key",
-        "TRACKSIDE_ENRICHMENT__LASTFM_API_KEY",
-    ),
+    KeyInfo {
+        dashboard: true,
+        ..secret(
+            "enrichment.lastfm_api_key",
+            "TRACKSIDE_ENRICHMENT__LASTFM_API_KEY",
+        )
+    },
 ];
 
 /// Environment variables the server reads that are not configuration keys.

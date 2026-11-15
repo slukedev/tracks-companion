@@ -10,6 +10,7 @@ pub mod artwork;
 pub mod audit;
 pub mod bookmarks;
 pub mod devices;
+pub mod enrichment;
 pub mod folders;
 pub mod genres;
 pub mod health;

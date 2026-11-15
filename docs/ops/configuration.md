@@ -270,7 +270,23 @@ keep = 14
 | Key | Environment | Default | Meaning |
 |---|---|---|---|
 | `enrichment.musicbrainz` **D** | `TRACKSIDE_ENRICHMENT__MUSICBRAINZ` | `false` | tag lookups for acquired files |
-| `enrichment.lastfm_api_key` | `TRACKSIDE_ENRICHMENT__LASTFM_API_KEY` / `_FILE` | unset | similar artists and songs, background only |
+| `enrichment.lastfm_api_key` **D** | `TRACKSIDE_ENRICHMENT__LASTFM_API_KEY` / `_FILE` | unset | Last.fm API key for suggestions |
+
+With a Last.fm API key, similar songs, similar artists, top songs and artist biographies also use
+Last.fm's data. Get a key at <https://www.last.fm/api/account/create> and paste it in the
+dashboard under Settings, Last.fm (Test checks it), or set it here.
+
+It is one key for the whole server, set by an admin. It powers suggestions for every user, and
+nobody needs a Last.fm account or connects one. The server only calls Last.fm's public read
+methods (`artist.getSimilar`, `track.getSimilar`, `artist.getTopTracks`, `artist.getInfo`) with
+the key and artist and track names: it never signs requests, uses a session or shared secret,
+scrobbles or writes anything, so the account that owns the key is never touched, and nothing
+about your users is sent. Each user's suggestions are still their own: Last.fm's data is ranked
+against that user's listens and stars.
+
+Lookups run in the background, at most a few a second, for the artists and songs people play
+first, and are kept for 30 days. Set in the dashboard, the key is stored sealed with the server's
+secret key and never shown again; a key from this file or the environment shows there as locked.
 
 This page follows the key table in `crates/trackside-core/src/config/loader.rs`. If
 `trackside config show` and this page disagree, the server is right; please open an issue.

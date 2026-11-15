@@ -215,6 +215,7 @@ async fn start_with_transcoder(
         media,
         scan: Arc::new(FakeScanControl::new()),
         acquire,
+        enrich: Arc::new(trackside_core::NoEnrich),
         events: test.events.clone(),
         config: Arc::new(config),
         server: ServerInfo::new(

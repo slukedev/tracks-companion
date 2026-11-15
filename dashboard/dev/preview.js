@@ -40,6 +40,7 @@ const reads = {
   'GET /admin/api-keys': () => 'admin-api-keys',
   'GET /admin/sessions': () => 'admin-sessions',
   'GET /admin/settings': () => 'admin-settings',
+  'GET /admin/enrichment': () => 'admin-enrichment',
   'GET /admin/server/urls': () => 'admin-server-urls',
   'GET /admin/backups': () => 'admin-backups',
   'GET /admin/audit': () => 'admin-audit',
@@ -71,6 +72,7 @@ const writes = {
   'POST /admin/pairing/approve': () => 'admin-pairing-approved',
   'POST /pair/requests/approve': () => 'pair-approved',
   'POST /admin/acquire/providers/{name}/test': () => 'admin-provider-test',
+  'POST /admin/enrichment/test': () => 'admin-enrichment-test',
   'POST /me/pairing-codes': () => 'me-pairing-code',
   'POST /me/api-keys': (_, __, body) => (body?.kind === 'app_password' ? 'me-app-password-created' : 'me-api-key-created'),
 };

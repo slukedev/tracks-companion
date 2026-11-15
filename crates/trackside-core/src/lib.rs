@@ -9,6 +9,7 @@ pub mod access;
 pub mod config;
 pub mod control;
 pub mod db;
+pub mod enrich;
 pub mod events;
 pub mod ids;
 pub mod ingest;
@@ -27,6 +28,7 @@ pub use access::{Access, LibrarySet, Permissions, Role};
 pub use config::{Config, ConfigReport, ConfigSources};
 pub use control::{AcquireControl, BoxFuture, ScanControl};
 pub use db::{Change, ChangeKind, ChangeOp, Db, DbError, DbOptions, WriteTx};
+pub use enrich::{EnrichControl, NoEnrich};
 pub use events::{Audience, EventBus, ServerEvent};
 pub use ids::{
     AcquisitionId, AlbumId, ArtistId, ArtworkId, AudioDigest, CandidateToken, DeviceId, DeviceKey,

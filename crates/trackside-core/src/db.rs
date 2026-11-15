@@ -20,13 +20,18 @@ use crate::ids::{LibraryKey, Seq, UserKey};
 use crate::time::{Clock, Millis};
 
 /// The schema version this build creates and understands (`PRAGMA user_version`).
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 const MIGRATION_1: &str = include_str!("../migrations/0001_initial.sql");
 const MIGRATION_2: &str = include_str!("../migrations/0002_stats_and_reauth.sql");
+const MIGRATION_3: &str = include_str!("../migrations/0003_enrichment.sql");
 
 fn migrations() -> Migrations<'static> {
-    Migrations::new(vec![M::up(MIGRATION_1), M::up(MIGRATION_2)])
+    Migrations::new(vec![
+        M::up(MIGRATION_1),
+        M::up(MIGRATION_2),
+        M::up(MIGRATION_3),
+    ])
 }
 
 /// How [`Db::open`] decides whether the database sits on a network filesystem.

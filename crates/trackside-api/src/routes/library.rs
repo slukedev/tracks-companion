@@ -13,17 +13,18 @@ use trackside_auth::Scopes;
 use trackside_auth::extract::Authed;
 use trackside_core::records::ItemRef;
 use trackside_core::repo::albums::{self, AlbumFilter, AlbumSort};
+use trackside_core::repo::enrichment as enrichment_repo;
 use trackside_core::repo::songs::{self, SongFilter};
 use trackside_core::repo::{artists, folders, genres, libraries, lyrics};
 use trackside_core::search::{self, SearchKinds, SearchQuery};
 use trackside_core::{AlbumId, ArtistId, FolderId, LibraryId, PublicId, SongId, similar};
 
-use super::{annotations, cached_json, library_etag, read, songs_with_me};
+use super::{annotations, cached_json, enrichment, library_etag, read, songs_with_me};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::{Query, body_id, json_with, path_id};
 use crate::wire::library::{
     AlbumPage, Albums, ArtistPage, Artists, ExternalSection, Folder, FolderPage, Genre, Genres,
-    SearchResults, SimilarArtist, SimilarArtists, Songs,
+    SearchResults, SimilarArtist, SimilarArtists, Songs, SuggestedSongs, Suggestion,
 };
 use crate::wire::{Libraries, Section};
 use crate::{ApiState, map};
@@ -173,6 +174,15 @@ struct CountQuery {
     count: Option<u32>,
 }
 
+/// How many not-yet-owned songs a suggestion list carries at most.
+const EXTERNAL_MAX: u32 = 20;
+
+/// Whether this caller may see songs the server does not have (api.md section 9).
+fn sees_external(state: &ApiState, principal: &trackside_auth::Principal) -> bool {
+    super::account::acquisition_feature(state, principal).is_some()
+        && principal.scopes.contains(Scopes::REQUEST)
+}
+
 async fn similar_songs(
     Authed(principal): Authed<LIBRARY>,
     State(state): State<ApiState>,
@@ -182,15 +192,41 @@ async fn similar_songs(
     let id: SongId = path_id(&id)?;
     let count = limit(query.count, 20, 100);
     let access = principal.access.clone();
-    let found = read(&state, move |c| {
-        if songs::get(c, &access, &id)?.is_none() {
-            return Err(trackside_core::DbError::NotFound);
-        }
-        similar::similar_songs(c, &access, &id, count)
+    let seed_id = id.clone();
+    let seed = read(&state, move |c| {
+        songs::get(c, &access, &seed_id)?.ok_or(trackside_core::DbError::NotFound)
+    })
+    .await?;
+    enrichment::look_up(&state, enrichment::song_targets(&seed)).await;
+    let access = principal.access.clone();
+    let external = sees_external(&state, &principal);
+    let (found, missing) = read(&state, move |c| {
+        let found = similar::similar_songs(c, &access, &id, count)?;
+        let missing = if external {
+            enrichment_repo::missing_similar(c, &access, &seed.song_key, count.min(EXTERNAL_MAX))?
+        } else {
+            Vec::new()
+        };
+        Ok((found, missing))
     })
     .await?;
     let songs = songs_with_me(&state, &principal.access, found).await?;
-    Ok(json_with(StatusCode::OK, &Songs { songs }))
+    Ok(json_with(
+        StatusCode::OK,
+        &SuggestedSongs {
+            songs,
+            external: suggestions(external, missing),
+        },
+    ))
+}
+
+fn suggestions(external: bool, missing: Vec<(String, String)>) -> Option<Vec<Suggestion>> {
+    external.then(|| {
+        missing
+            .into_iter()
+            .map(|(title, artist)| Suggestion { title, artist })
+            .collect()
+    })
 }
 
 async fn song_lyrics(
@@ -358,14 +394,21 @@ async fn artist(
 ) -> ApiResult<Response> {
     let id: ArtistId = path_id(&id)?;
     let access = principal.access.clone();
-    let (found, own, appears, top) = read(&state, move |c| {
+    let (found, own, appears, top, bio) = read(&state, move |c| {
         let artist = artists::get(c, &access, &id)?.ok_or(trackside_core::DbError::NotFound)?;
         let own = albums::by_artist(c, &access, &id)?;
         let appears = albums::appears_on(c, &access, &id)?;
         let top = songs::top_for_artist(c, &access, &id, 10)?;
-        Ok((artist, own, appears, top))
+        let bio = enrichment_repo::bio(c, &artist.identity)?;
+        Ok((artist, own, appears, top, bio))
     })
     .await?;
+    if bio.is_none() {
+        // The page answers at once; the next visit has what this lookup finds.
+        let state = state.clone();
+        let target = enrichment::artist_target(&found);
+        tokio::spawn(async move { enrichment::look_up(&state, vec![target]).await });
+    }
     let items = std::iter::once(ItemRef::Artist(found.id.clone()))
         .chain(
             own.iter()
@@ -383,6 +426,7 @@ async fn artist(
         albums: map::albums_with_me(&own, &annotations),
         appears_on: map::albums_with_me(&appears, &annotations),
         top_songs: map::songs_with_me(&top, &annotations),
+        bio,
     };
     Ok(cached_json(
         &headers,
@@ -399,16 +443,43 @@ async fn top_songs(
 ) -> ApiResult<Response> {
     let id: ArtistId = path_id(&id)?;
     let count = limit(query.count, 20, 100);
+    let found = visible_artist(&state, &principal.access, &id).await?;
+    enrichment::look_up(&state, vec![enrichment::artist_target(&found)]).await;
     let access = principal.access.clone();
-    let found = read(&state, move |c| {
-        if artists::get(c, &access, &id)?.is_none() {
-            return Err(trackside_core::DbError::NotFound);
-        }
-        songs::top_for_artist(c, &access, &id, count)
+    let external = sees_external(&state, &principal);
+    let (top, missing) = read(&state, move |c| {
+        let top = songs::top_for_artist(c, &access, &id, count)?;
+        let missing = if external {
+            enrichment_repo::missing_top(c, &access, &found.identity, count.min(EXTERNAL_MAX))?
+                .into_iter()
+                .map(|title| (title, found.name.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Ok((top, missing))
     })
     .await?;
-    let songs = songs_with_me(&state, &principal.access, found).await?;
-    Ok(json_with(StatusCode::OK, &Songs { songs }))
+    let songs = songs_with_me(&state, &principal.access, top).await?;
+    Ok(json_with(
+        StatusCode::OK,
+        &SuggestedSongs {
+            songs,
+            external: suggestions(external, missing),
+        },
+    ))
+}
+
+async fn visible_artist(
+    state: &ApiState,
+    access: &trackside_core::Access,
+    id: &ArtistId,
+) -> ApiResult<trackside_core::records::Artist> {
+    let (access, id) = (access.clone(), id.clone());
+    read(state, move |c| {
+        artists::get(c, &access, &id)?.ok_or(trackside_core::DbError::NotFound)
+    })
+    .await
 }
 
 async fn similar_artists(
@@ -419,11 +490,10 @@ async fn similar_artists(
 ) -> ApiResult<Response> {
     let id: ArtistId = path_id(&id)?;
     let count = limit(query.count, 15, 100);
+    let seed = visible_artist(&state, &principal.access, &id).await?;
+    enrichment::look_up(&state, vec![enrichment::artist_target(&seed)]).await;
     let access = principal.access.clone();
     let found = read(&state, move |c| {
-        if artists::get(c, &access, &id)?.is_none() {
-            return Err(trackside_core::DbError::NotFound);
-        }
         similar::similar_artists(c, &access, &id, count)
     })
     .await?;

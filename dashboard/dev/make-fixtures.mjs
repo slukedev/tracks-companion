@@ -200,6 +200,7 @@ w('admin-settings', {
   'acquire.soulseek.enabled': s(true, 'dashboard'),
   'acquire.soulseek.url': s('http://slskd:5030', 'config', false),
   'enrichment.musicbrainz': s(false),
+  'enrichment.lastfm_api_key': s(true, 'dashboard'),
 });
 w('admin-server-urls', { urls: [
   { url: 'http://192.168.1.20:4747', kind: 'lan', tls: false, source: 'detected', reachable: true, checked_at: '2026-11-14T09:59:00.000Z' },
@@ -242,6 +243,8 @@ w('admin-acquisitions', { acquisitions: [
 ] });
 w('admin-acquire-providers', { providers });
 w('admin-provider-test', { ok: true, elapsed_ms: 1840, candidates: 12, detail: 'Found 12 results for "beyonce halo".' });
+w('admin-enrichment', { configured: true, artists: 1840, songs: 5210, last_fetch_at: '2026-11-14T09:28:00.000Z', last_error: { at: '2026-11-14T08:30:00.000Z', message: 'Last.fm error 29: Rate Limit Exceeded' } });
+w('admin-enrichment-test', { ok: false, elapsed_ms: 212, detail: 'Last.fm error 10: Invalid API key' });
 
 w('me-devices', { devices: devices.filter((d) => d.user.id === luke.id).map(({ user, ...d }, i) => ({ ...d, current: false })) });
 w('me-api-keys', { keys: [

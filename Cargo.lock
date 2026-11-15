@@ -3587,6 +3587,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "trackside-enrich"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "futures-util",
+ "percent-encoding",
+ "reqwest",
+ "rusqlite",
+ "rustls",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "trackside-core",
+]
+
+[[package]]
 name = "trackside-media"
 version = "0.1.0"
 dependencies = [
@@ -3665,6 +3683,7 @@ dependencies = [
  "trackside-api",
  "trackside-auth",
  "trackside-core",
+ "trackside-enrich",
  "trackside-media",
  "trackside-scan",
  "trackside-subsonic",

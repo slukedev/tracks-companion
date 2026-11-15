@@ -6,6 +6,7 @@
 pub mod acquisition;
 pub mod admin;
 pub mod auth;
+pub mod enrichment;
 pub mod events;
 pub mod library;
 pub mod playback;

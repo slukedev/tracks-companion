@@ -1,0 +1,10 @@
+{
+  "configured": true,
+  "artists": 1840,
+  "songs": 5210,
+  "last_fetch_at": "2026-11-14T09:28:00.000Z",
+  "last_error": {
+    "at": "2026-11-14T08:30:00.000Z",
+    "message": "Last.fm error 29: Rate Limit Exceeded"
+  }
+}

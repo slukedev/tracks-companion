@@ -697,6 +697,18 @@ impl Auth {
         scheme.eq_ignore_ascii_case("pair").then(|| secret.trim())
     }
 
+    /// Seals a secret setting under the server's key, for storing in the `settings` table.
+    pub fn seal_setting(&self, name: &str, value: &str) -> Result<Vec<u8>, AuthError> {
+        seal(&self.secret, &format!("setting {name}"), value.as_bytes())
+    }
+
+    /// Opens what [`Self::seal_setting`] sealed for the same setting.
+    pub fn open_setting(&self, name: &str, sealed: &[u8]) -> Result<String, AuthError> {
+        let plain = open(&self.secret, &format!("setting {name}"), sealed)?;
+        String::from_utf8(plain.to_vec())
+            .map_err(|_| AuthError::Invalid(String::from("cannot open this sealed value")))
+    }
+
     /// Whether the secret key matches the one the database was last used with. On first use
     /// it records the key. False means app passwords and pending pairings sealed under the
     /// old key no longer open; the server logs that and the dashboard says so.

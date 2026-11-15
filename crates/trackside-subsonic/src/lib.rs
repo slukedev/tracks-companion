@@ -18,7 +18,7 @@ use http::{HeaderValue, StatusCode, header};
 use trackside_auth::extract::ClientIp;
 use trackside_auth::{Auth, Principal, Scopes, SubsonicCredentials};
 use trackside_core::now_playing::NowPlayingRegistry;
-use trackside_core::{Access, Config, Db, DbError, Millis, ScanControl};
+use trackside_core::{Access, Config, Db, DbError, EnrichControl, Millis, ScanControl};
 use trackside_media::Media;
 
 mod error;
@@ -44,6 +44,8 @@ pub struct SubsonicState {
     pub auth: Arc<Auth>,
     pub media: Arc<Media>,
     pub scan: Arc<dyn ScanControl>,
+    /// Last.fm lookups for similar songs, top songs and artist info.
+    pub enrich: Arc<dyn EnrichControl>,
     pub config: Arc<Config>,
     pub server_id: uuid::Uuid,
 }

@@ -24,6 +24,7 @@ trackside-media.workspace = true
 trackside-auth.workspace = true
 trackside-scan.workspace = true
 trackside-acquire = { workspace = true, optional = true }
+trackside-enrich.workspace = true
 trackside-subsonic.workspace = true
 trackside-api.workspace = true
 tokio.workspace = true

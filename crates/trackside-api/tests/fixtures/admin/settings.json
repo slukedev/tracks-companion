@@ -4,6 +4,11 @@
     "source": "config",
     "value": true
   },
+  "enrichment.lastfm_api_key": {
+    "editable": true,
+    "source": "dashboard",
+    "value": true
+  },
   "server.name": {
     "editable": true,
     "source": "dashboard",

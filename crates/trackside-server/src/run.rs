@@ -366,6 +366,21 @@ pub async fn run_with(
         shutdown.clone(),
     );
 
+    let lastfm_key = match config.enrichment.lastfm_api_key.clone() {
+        Some(key) => Some(key),
+        None => {
+            trackside_api::build::stored_secret(&db, &auth, trackside_api::build::LASTFM_API_KEY)
+                .await
+        }
+    };
+    let enrich: Arc<dyn trackside_core::EnrichControl> = trackside_enrich::Enricher::start(
+        db.clone(),
+        lastfm_key,
+        trackside_enrich::EnrichOptions::default(),
+        shutdown.clone(),
+    )
+    .context("cannot start Last.fm enrichment")?;
+
     let tls = tls::setup(&config.tls, &config.data_dir, &shutdown)?;
     let mut listeners = Vec::new();
     for address in &config.server.listen {
@@ -452,6 +467,7 @@ pub async fn run_with(
         media: Arc::clone(&media),
         scan: Arc::clone(&scan),
         acquire,
+        enrich: Arc::clone(&enrich),
         events: events.clone(),
         config: Arc::clone(&config),
         server: info,
@@ -464,6 +480,7 @@ pub async fn run_with(
         auth: Arc::clone(&auth),
         media: Arc::clone(&media),
         scan: Arc::clone(&scan),
+        enrich,
         config: Arc::clone(&config),
         server_id,
     };

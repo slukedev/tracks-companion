@@ -408,7 +408,9 @@ pub fn by_key(c: &Connection, a: &Access, song_key: &str) -> Result<Vec<Song>, D
     load(c, &tail, &[&song_key])
 }
 
-/// By plays on this server, then the caller's rating, then album order.
+/// By a score of plays on this server, the caller's own plays (counted twice), the caller's
+/// star, and the song's rank on Last.fm when enrichment has one; then the caller's rating,
+/// then album order.
 pub fn top_for_artist(
     c: &Connection,
     a: &Access,
@@ -421,8 +423,14 @@ pub fn top_for_artist(
                         WHERE sa.artist_id = (SELECT id FROM artists WHERE pid = ?1)
                           AND sa.role IN ('main', 'featured'))
            AND s.missing_since IS NULL AND {}
-         ORDER BY (SELECT coalesce(sum(ps.play_count), 0) FROM play_stats ps
-                   WHERE ps.song_pid = s.pid) DESC,
+         ORDER BY (SELECT coalesce(sum(ps.play_count), 0)
+                          + coalesce(sum(ps.play_count) FILTER (WHERE ps.user_id = ?2), 0)
+                   FROM play_stats ps WHERE ps.song_pid = s.pid)
+                  + 5 * EXISTS (SELECT 1 FROM stars st WHERE st.user_id = ?2
+                                AND st.item_kind = 'song' AND st.item_pid = s.pid)
+                  + coalesce((SELECT 20.0 / (1 + min(t.rank)) FROM enrichment_top_songs t
+                              WHERE t.artist_identity = (SELECT identity FROM artists WHERE pid = ?1)
+                                AND t.song_key = s.song_key), 0) DESC,
                   (SELECT r.rating FROM ratings r WHERE r.user_id = ?2 AND r.item_kind = 'song'
                    AND r.item_pid = s.pid) DESC NULLS LAST,
                   al.year, al.sort_name, coalesce(s.disc_number, 1),

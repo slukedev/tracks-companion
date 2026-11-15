@@ -13,8 +13,8 @@ use tokio_util::sync::CancellationToken;
 use trackside_auth::Auth;
 use trackside_core::now_playing::{NowPlayingRegistry, PlayState};
 use trackside_core::{
-    AcquireControl, BoxFuture, Config, ConfigReport, Db, EventBus, Millis, ScanControl,
-    ServerEvent, SongId, UserKey,
+    AcquireControl, BoxFuture, Config, ConfigReport, Db, EnrichControl, EventBus, Millis,
+    ScanControl, ServerEvent, SongId, UserKey,
 };
 use trackside_media::Media;
 
@@ -36,8 +36,10 @@ pub mod build {
         admin_library, admin_user, audit_summary, invite_state, library_problems_for,
         overview_library, scan_detail_body,
     };
+    pub use crate::routes::enrichment::status_body as enrichment_status_body;
     pub use crate::routes::media::{decision_body, download_name, reason_text};
     pub use crate::routes::public::capabilities_body;
+    pub use crate::routes::settings::{LASTFM_API_KEY, stored_secret};
     pub use crate::routes::social::{check_listen, listen_result};
     pub use crate::routes::stats::{
         DayBuckets, day_buckets, listening_body, requests_body, storage_body, streams_body,
@@ -373,6 +375,8 @@ pub struct ApiState {
     pub media: Arc<Media>,
     pub scan: Arc<dyn ScanControl>,
     pub acquire: Arc<dyn AcquireControl>,
+    /// Last.fm lookups for suggestions.
+    pub enrich: Arc<dyn EnrichControl>,
     pub events: EventBus,
     pub config: Arc<Config>,
     pub server: ServerInfo,

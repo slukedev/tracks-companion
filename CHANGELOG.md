@@ -10,7 +10,7 @@ Versions follow [semantic versioning](https://semver.org). Release tags are
 ## 0.1.0 (unreleased)
 
 The first release of Trackside, a music server for Tracks that you run yourself. The database
-starts at schema 2; there is nothing to upgrade from.
+starts at schema 3; there is nothing to upgrade from.
 
 - Indexes your music and keeps song ids stable through retags, moves and renames, even across
   a rebuilt database.
@@ -47,3 +47,9 @@ starts at schema 2; there is nothing to upgrade from.
   releases) and carry SBOM and provenance attestations; release binaries and packages carry
   build provenance.
 - Optional acquisition through yt-dlp and slskd, off unless an admin turns it on.
+- Suggestions from Last.fm with one server-wide API key, set in the dashboard under Settings,
+  Last.fm (with a Test button) or in the config: similar songs and artists, top songs and artist
+  bios for every user, ranked by each user's own listens and stars, with no Last.fm account
+  needed. Only public read calls with artist and track names are made, at most a few a second,
+  and answers are kept for 30 days. Users who can request songs also see suggestions the
+  server doesn't have yet.

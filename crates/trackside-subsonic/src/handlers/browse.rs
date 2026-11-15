@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 use rusqlite::Connection;
 use trackside_auth::Scopes;
+use trackside_core::enrich::{ON_DEMAND_WAIT, Target};
 use trackside_core::records::{Album, Artist, Folder, Song};
 use trackside_core::{Access, AlbumId, ArtistId, Millis, PublicId, SongId, repo, similar};
 
@@ -276,14 +277,30 @@ fn artist_of(c: &Connection, a: &Access, id: AnyId) -> Result<Artist, ApiError> 
     repo::artists::get(c, a, &artist_id)?.ok_or_else(|| ApiError::not_found("Artist"))
 }
 
+/// Starts the Last.fm lookups a request needs and waits briefly; answers come from what is
+/// stored either way.
+async fn look_up(call: &Call<'_>, targets: Vec<Target>) {
+    if !targets.is_empty() {
+        call.state().enrich.ensure(targets, ON_DEMAND_WAIT).await;
+    }
+}
+
+fn artist_target(artist: &Artist) -> Target {
+    Target::Artist {
+        identity: artist.identity.clone(),
+        name: artist.name.clone(),
+    }
+}
+
 pub async fn artist_info(call: &Call<'_>, element: &'static str) -> Result<Reply, ApiError> {
     call.require(Scopes::LIBRARY)?;
     let id =
         AnyId::parse(call.params.required("id")?).ok_or_else(|| ApiError::not_found("Artist"))?;
     let count = call.params.count("count", 20, 100)?;
+    let artist = call.read(move |c, a| artist_of(c, a, id)).await?;
+    look_up(call, vec![artist_target(&artist)]).await;
     let node = call
         .read(move |c, a| {
-            let artist = artist_of(c, a, id)?;
             let similar: Vec<Artist> = similar::similar_artists(c, a, &artist.id, count)?
                 .into_iter()
                 .filter_map(|s| s.artist)
@@ -291,6 +308,9 @@ pub async fn artist_info(call: &Call<'_>, element: &'static str) -> Result<Reply
             let refs: Vec<&Artist> = similar.iter().collect();
             let notes = notes(c, a.user, &[], &[], &refs)?;
             let mut node = Node::new();
+            if let Some(bio) = repo::enrichment::bio(c, &artist.identity)? {
+                node = node.text_child("biography", bio.as_str());
+            }
             if let Some(mbz) = &artist.mbz_artist {
                 node = node.text_child("musicBrainzId", mbz.as_str());
             }
@@ -395,6 +415,30 @@ pub async fn similar_songs(call: &Call<'_>, element: &'static str) -> Result<Rep
     let id =
         AnyId::parse(call.params.required("id")?).ok_or_else(|| ApiError::not_found("Item"))?;
     let count = call.params.count("count", 50, super::MAX_PAGE)?;
+    let seed = id.clone();
+    let targets = call
+        .read(move |c, a| {
+            Ok(match seed {
+                AnyId::Song(id) => repo::songs::get(c, a, &id)?
+                    .map(|song| {
+                        let lead = song
+                            .credits
+                            .first()
+                            .map_or(song.artist.as_str(), |c| c.name.as_str());
+                        vec![
+                            Target::song(&song.title, &song.artist),
+                            Target::artist(lead),
+                        ]
+                    })
+                    .unwrap_or_default(),
+                AnyId::Artist(id) => repo::artists::get(c, a, &id)?
+                    .map(|artist| vec![artist_target(&artist)])
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            })
+        })
+        .await?;
+    look_up(call, targets).await;
     let songs = call
         .read(move |c, a| {
             let songs = similar_to(c, a, id, count)?;
@@ -423,15 +467,22 @@ pub async fn top_songs(call: &Call<'_>) -> Result<Reply, ApiError> {
         Some(_) => None,
         None => Some(call.params.required("artist")?.to_owned()),
     };
-    let songs = call
+    let artist = call
         .read(move |c, a| {
-            let artist = match (by_id, name) {
+            Ok(match (by_id, name) {
                 (Some(id), _) => Some(
                     repo::artists::get(c, a, &id)?.ok_or_else(|| ApiError::not_found("Artist"))?,
                 ),
                 (None, Some(name)) => repo::artists::by_name(c, a, &name)?,
                 (None, None) => None,
-            };
+            })
+        })
+        .await?;
+    if let Some(artist) = &artist {
+        look_up(call, vec![artist_target(artist)]).await;
+    }
+    let songs = call
+        .read(move |c, a| {
             let songs = match artist {
                 Some(artist) => repo::songs::top_for_artist(c, a, &artist.id, count)?,
                 None => Vec::new(),

@@ -770,6 +770,19 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             albums: vec![map::album(&s.album)],
             appears_on: Vec::new(),
             top_songs: map::songs_with_me(&[s.halo.clone(), s.ladies.clone()], &me_halo),
+            bio: Some(String::from(
+                "Beyoncé Giselle Knowles-Carter is an American singer, songwriter and actress.",
+            )),
+        },
+    )?;
+    put(
+        "similar-songs.json",
+        &wire::library::SuggestedSongs {
+            songs: map::songs_with_me(std::slice::from_ref(&s.ladies), &me_halo),
+            external: Some(vec![wire::library::Suggestion {
+                title: String::from("Irreplaceable"),
+                artist: String::from("Beyoncé"),
+            }]),
         },
     )?;
     put(
@@ -1370,8 +1383,37 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
                 editable: false,
             },
         ),
+        (
+            String::from("enrichment.lastfm_api_key"),
+            wire::admin::Setting {
+                value: serde_json::json!(true),
+                source: String::from("dashboard"),
+                editable: true,
+            },
+        ),
     ]);
     put("admin/settings.json", &settings)?;
+    put(
+        "admin/enrichment.json",
+        &trackside_api::build::enrichment_status_body(&trackside_core::enrich::EnrichStatus {
+            configured: true,
+            artists: 1840,
+            songs: 5210,
+            last_fetch: Some(at(-120)),
+            last_error: Some((
+                at(-3600),
+                String::from("Last.fm error 29: Rate Limit Exceeded"),
+            )),
+        }),
+    )?;
+    put(
+        "admin/enrichment-test.json",
+        &wire::enrichment::EnrichmentTestResult {
+            ok: false,
+            elapsed_ms: 212,
+            detail: Some(String::from("Last.fm error 10: Invalid API key")),
+        },
+    )?;
     drop(put);
     for (name, value) in admin_extras(&s)? {
         out.insert(name, value);
@@ -1970,6 +2012,12 @@ fn dashboard_fixtures_match_server_shapes() -> TestResult {
             &[],
         ),
         ("admin/provider-test.json", "admin-provider-test.json", &[]),
+        ("admin/enrichment.json", "admin-enrichment.json", &[]),
+        (
+            "admin/enrichment-test.json",
+            "admin-enrichment-test.json",
+            &[],
+        ),
         ("approved.json", "admin-pairing-approved.json", &[]),
         ("approved.json", "pair-approved.json", &[]),
         (

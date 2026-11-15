@@ -1418,6 +1418,7 @@ async fn settings_body(state: &ApiState) -> ApiResult<crate::wire::admin::Settin
         let locked = settings::locked(state, key.name);
         let dashboard = saved.get(key.name).filter(|v| !v.is_null() && !locked);
         let (value, source) = match dashboard {
+            Some(_) if key.kind == settings::Kind::Secret => (Value::Bool(true), "dashboard"),
             Some(value) => (value.clone(), "dashboard"),
             None => (
                 (key.value)(&state.config),
@@ -1449,7 +1450,10 @@ async fn patch_settings(
     ClientIp(ip): ClientIp,
     Json(body): Json<serde_json::Map<String, Value>>,
 ) -> ApiResult<Response> {
-    if body.keys().any(|k| k.starts_with("auth.")) {
+    if body.keys().any(|k| {
+        k.starts_with("auth.")
+            || settings::key(k).is_some_and(|key| key.kind == settings::Kind::Secret)
+    }) {
         require_recent_auth(&state, &principal)?;
     }
     let mut changes = Vec::new();
@@ -1471,7 +1475,15 @@ async fn patch_settings(
         };
         changes.push((key.name, value));
     }
-    let to_store = changes.clone();
+    let mut to_store = changes.clone();
+    for (name, value) in &mut to_store {
+        if let (Some(plain), Some(settings::Kind::Secret)) =
+            (value.as_str(), settings::key(name).map(|k| k.kind))
+        {
+            *value = settings::sealed_value(&state.auth, name, plain)
+                .map_err(|e| ApiError::internal(&e))?;
+        }
+    }
     write(&state, move |tx| {
         for (name, value) in &to_store {
             if value.is_null() {
@@ -1484,6 +1496,9 @@ async fn patch_settings(
     })
     .await?;
     apply_acquisition_settings(&state, &changes).await;
+    if let Some((_, key)) = changes.iter().find(|(n, _)| *n == settings::LASTFM_API_KEY) {
+        state.enrich.set_key(key.as_str().map(Secret::new));
+    }
     audit_log(
         &state,
         Some(&principal),

@@ -3,7 +3,8 @@
 // 1. Every admin endpoint in api.md section 16 is called by some page (route strings like
 //    'GET /admin/users/{id}' in the dashboard's modules).
 // 2. Every GET route the pages use has a preview fixture.
-// 3. No "http" anywhere in the shipped .html, .js and .css files, so no external URL can creep in.
+// 3. No "http" anywhere in the shipped .html, .js and .css files, so no external URL can creep in,
+//    apart from two plain links: the acquisition setup guide and Last.fm's API key page.
 //    The one exception is the acquisition setup guide on GitHub, a plain link.
 // 4. Nothing that would break the CSP or insert HTML: inline scripts or styles, innerHTML and friends.
 // 5. Source provider names appear only on the acquisition page.
@@ -69,9 +70,10 @@ for (const f of files.filter((x) => extname(x) === '.json')) {
 
 // 3. External URLs.
 const SETUP_DOCS = "'https://github.com/slukedev/tracks-companion/blob/main/docs/ops/acquisition.md'";
+const LASTFM_KEYS = "'https://www.last.fm/api/account/create'";
 for (const f of [...shipped, ...files.filter((x) => relative(root, x).startsWith('dev') && ['.js', '.html', '.css'].includes(extname(x)))]) {
   read(f).split('\n').forEach((line, i) => {
-    if (/http/i.test(line.replace(SETUP_DOCS, ''))) fail(`${relative(root, f)}:${i + 1} mentions http`);
+    if (/http/i.test(line.replace(SETUP_DOCS, '').replace(LASTFM_KEYS, ''))) fail(`${relative(root, f)}:${i + 1} mentions http`);
   });
 }
 

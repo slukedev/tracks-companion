@@ -11,6 +11,23 @@ pub struct Songs {
     pub songs: Vec<Song>,
 }
 
+/// `GET /songs/{id}/similar` and `GET /artists/{id}/top-songs`: library songs, and songs the
+/// server does not have, by name. `external` is present only for callers who can request
+/// songs (api.md section 8).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SuggestedSongs {
+    pub songs: Vec<Song>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external: Option<Vec<Suggestion>>,
+}
+
+/// A song to request, not yet on the server.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Suggestion {
+    pub title: String,
+    pub artist: String,
+}
+
 /// `GET /albums/{id}`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AlbumPage {
@@ -41,6 +58,9 @@ pub struct ArtistPage {
     pub albums: Vec<Album>,
     pub appears_on: Vec<Album>,
     pub top_songs: Vec<Song>,
+    /// A short plain-text biography, when enrichment has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bio: Option<String>,
 }
 
 /// One similar artist, which may not be in the library.

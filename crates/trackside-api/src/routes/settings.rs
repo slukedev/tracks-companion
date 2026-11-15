@@ -4,9 +4,11 @@
 
 use std::time::Duration;
 
+use base64::Engine;
 use serde_json::{Value, json};
-use trackside_core::config::{BackupSchedule, ConfigSource, parse_duration, parse_size};
-use trackside_core::{Config, LibraryId, PublicId};
+use trackside_auth::Auth;
+use trackside_core::config::{BackupSchedule, ConfigSource, Secret, parse_duration, parse_size};
+use trackside_core::{Config, Db, LibraryId, PublicId};
 
 use crate::ApiState;
 
@@ -26,6 +28,8 @@ pub(crate) enum Kind {
     Schedule,
     Library,
     Url,
+    /// Write-only text, sealed at rest. Its value on the wire is whether it is set.
+    Secret,
 }
 
 pub(crate) struct Key {
@@ -160,7 +164,42 @@ pub(crate) const KEYS: &[Key] = &[
         kind: Kind::Bool,
         value: |c| json!(c.enrichment.musicbrainz),
     },
+    Key {
+        name: LASTFM_API_KEY,
+        kind: Kind::Secret,
+        value: |c| json!(c.enrichment.lastfm_api_key.is_some()),
+    },
 ];
+
+/// The server-wide Last.fm key for suggestions.
+pub const LASTFM_API_KEY: &str = "enrichment.lastfm_api_key";
+
+/// What a secret setting is stored as: `{"sealed": "<base64>"}`.
+pub(crate) fn sealed_value(auth: &Auth, name: &str, plain: &str) -> Result<Value, String> {
+    let sealed = auth.seal_setting(name, plain).map_err(|e| e.to_string())?;
+    Ok(json!({ "sealed": base64::engine::general_purpose::STANDARD.encode(sealed) }))
+}
+
+/// A secret setting the dashboard stored, opened. `None` when unset or when it no longer
+/// opens (the secret key was replaced).
+pub async fn stored_secret(db: &Db, auth: &Auth, name: &'static str) -> Option<Secret> {
+    let value = db
+        .read(move |c| trackside_core::repo::settings::get::<Value>(c, name))
+        .await
+        .ok()
+        .flatten()?;
+    let sealed = value.get("sealed")?.as_str()?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(sealed)
+        .ok()?;
+    match auth.open_setting(name, &bytes) {
+        Ok(plain) => Some(Secret::new(plain)),
+        Err(e) => {
+            tracing::warn!(setting = name, error = %e, "a stored secret setting cannot be opened; set it again");
+            None
+        }
+    }
+}
 
 pub(crate) fn key(name: &str) -> Option<&'static Key> {
     KEYS.iter().find(|k| k.name == name)
@@ -260,6 +299,14 @@ pub(crate) fn validate(kind: Kind, value: &Value) -> Result<Value, String> {
             None if value.is_null() => Ok(Value::Null),
             _ => Err(String::from("must be an http or https URL")),
         },
+        Kind::Secret => match text() {
+            Some(t)
+                if !t.is_empty() && t.len() <= 128 && t.chars().all(|c| c.is_ascii_graphic()) =>
+            {
+                Ok(json!(t))
+            }
+            _ => Err(String::from("must be a key of letters and digits")),
+        },
     }
 }
 
@@ -343,6 +390,8 @@ mod tests {
         assert!(validate(Kind::Profile, &json!("wma")).is_err());
         assert!(validate(Kind::Schedule, &json!("weekly mon 03:30")).is_ok());
         assert!(validate(Kind::Text, &json!("  ")).is_err());
+        assert!(validate(Kind::Secret, &json!("0123abcd")).is_ok());
+        assert!(validate(Kind::Secret, &json!("a key")).is_err());
         assert_eq!(
             validate(Kind::TextList, &json!([" https://a ", ""])),
             Ok(json!(["https://a"]))
@@ -354,7 +403,7 @@ mod tests {
         let config = Config::defaults("/data");
         for key in KEYS {
             let value = (key.value)(&config);
-            if value.is_null() {
+            if value.is_null() || key.kind == Kind::Secret {
                 continue;
             }
             assert!(validate(key.kind, &value).is_ok(), "{}: {value}", key.name);

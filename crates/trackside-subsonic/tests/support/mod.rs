@@ -192,6 +192,7 @@ impl Server {
             auth: Arc::clone(&auth),
             media: Arc::clone(&media),
             scan: scan.clone(),
+            enrich: Arc::new(trackside_core::NoEnrich),
             config: Arc::new(config),
             server_id: uuid::Uuid::nil(),
         };
