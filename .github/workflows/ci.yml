@@ -1,23 +1,28 @@
-# CI and releases for Trackside.
+# Checks for Trackside. Pushes to main and pull requests run one Linux job with every check.
+# On main, the edge job then builds amd64 and arm64 on an x64 runner (the Dockerfile
+# cross-compiles, so no emulation), smoke tests amd64, and pushes and signs edge and
+# edge-<commit>. macOS runs weekly, on each published release and by hand, not on every push.
 #
-# Releases: push a tag named trackside-vX.Y.Z (trackside-vX.Y.Z-rc.N for a pre-release).
-# docs/ops/releasing.md has the checklist.
+# Pull request and release images: images.yml. Release binaries and packages: release.yml.
 
 name: CI
 
 on:
   push:
     branches: [main]
-    tags: ["trackside-v*"]
   pull_request:
+  release:
+    types: [published]
+  schedule:
+    - cron: "17 4 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -32,58 +37,23 @@ defaults:
     shell: bash
 
 jobs:
-  fmt:
-    name: Format
-    runs-on: ubuntu-24.04
+  check:
+    name: Check
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install the toolchain from rust-toolchain.toml
         run: rustup toolchain install
-      - run: cargo fmt --all --check
-
-  clippy:
-    name: Clippy (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-15]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Clippy without the acquire feature
-        run: cargo clippy -p trackside-server --no-default-features --locked -- -D warnings
-
-  test:
-    name: Test (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-15]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          persist-credentials: false
-      - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo test --workspace --locked
-
-  ffmpeg-tests:
-    name: Tests with ffmpeg
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
         with:
-          persist-credentials: false
-      - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+          tool: cargo-deny@0.20.2
       - name: Install the ffmpeg the images ship
         run: |
           id=$(docker create "$FFMPEG_IMAGE")
@@ -91,47 +61,13 @@ jobs:
           sudo docker cp "$id:/ffprobe" /usr/local/bin/ffprobe
           docker rm "$id"
           ffmpeg -hide_banner -version | head -n 1
-      - name: Run the tests that need ffmpeg
-        env:
-          TRACKSIDE_TEST_FFMPEG: "1"
-        run: cargo test --locked -p trackside-media -p trackside-acquire -- --ignored
 
-  deny:
-    name: Dependencies (cargo deny)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
-        with:
-          tool: cargo-deny@0.20.2
-      - run: cargo deny --locked check
-
-  dashboard:
-    name: Dashboard checks
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Endpoint coverage, fixtures, no external URLs, CSP-safe markup
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Dashboard (endpoint coverage, fixtures, no external URLs, CSP-safe markup)
         run: node dashboard/dev/check-coverage.mjs
-
-  packaging:
-    name: Packaging checks
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Metadata in step, versions match, images pinned
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/trackside-v* ]]; then
-            python3 -I packaging/scripts/check-packaging.py
-          else
-            python3 -I packaging/scripts/check-packaging.py --allow-missing-metadata
-          fi
+      - name: Packaging metadata, versions and image pins
+        run: python3 -I packaging/scripts/check-packaging.py --allow-missing-metadata
       - name: Compose files
         working-directory: packaging
         env:
@@ -158,380 +94,153 @@ jobs:
           sudo install -m 0755 /bin/true /usr/bin/trackside
           systemd-analyze verify ./trackside.service
           systemd-analyze security --offline=yes --threshold=25 ./trackside.service
+          sudo rm /usr/bin/trackside
       - name: Shell scripts
         working-directory: packaging
-        run: shellcheck docker/smoke-test.sh deb/scripts/postinst
+        run: shellcheck docker/smoke-test.sh docker/image-tags.sh deb/scripts/postinst
+      - name: Dependencies (cargo deny)
+        run: cargo deny --locked check
 
-  binaries:
-    name: Binary (${{ matrix.target }})
-    needs: [clippy]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-24.04
-          - target: aarch64-unknown-linux-musl
-            os: ubuntu-24.04
-          - target: aarch64-apple-darwin
-            os: macos-15
-          - target: x86_64-apple-darwin
-            os: macos-15
-    runs-on: ${{ matrix.os }}
-    env:
-      TARGET: ${{ matrix.target }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          key: ${{ matrix.target }}
-      - name: Install zig and cargo-zigbuild
-        if: contains(matrix.target, 'linux-musl')
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Clippy without the acquire feature
+        run: cargo clippy -p trackside-server --no-default-features --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked
+      - name: Tests that need ffmpeg
+        env:
+          TRACKSIDE_TEST_FFMPEG: "1"
+        run: cargo test --locked -p trackside-media -p trackside-acquire -- --ignored
+      - name: End to end at 50k songs, compared with the stored baseline
         run: |
-          python3 -m pip install --user --break-system-packages ziglang==0.16.0
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
-        if: contains(matrix.target, 'linux-musl')
-        with:
-          tool: cargo-zigbuild@0.24.1
-      - name: Build
-        run: |
-          if [[ "$TARGET" == *linux-musl ]]; then
-            cargo zigbuild --release --locked -p trackside-server --bin trackside --target "$TARGET"
-          else
-            cargo build --release --locked -p trackside-server --bin trackside --target "$TARGET"
-          fi
-      - name: Package
-        id: package
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/trackside-v* ]]; then
-            version="${GITHUB_REF_NAME#trackside-v}"
-          else
-            version="0.0.0-${GITHUB_SHA::12}"
-          fi
-          name="trackside-${version}-${TARGET}"
-          mkdir -p "dist/$name"
-          cp "target/${TARGET}/release/trackside" "dist/$name/"
-          cp README.md CHANGELOG.md LICENSE "dist/$name/"
-          if [[ "$TARGET" == *linux* ]]; then
-            cp packaging/systemd/trackside.service packaging/linux/trackside.env "dist/$name/"
-          fi
-          tar -C dist -czf "dist/$name.tar.gz" "$name"
-          echo "file=dist/$name.tar.gz" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: binary-${{ matrix.target }}
-          path: |
-            ${{ steps.package.outputs.file }}
-            target/${{ matrix.target }}/release/trackside
-          if-no-files-found: error
-          retention-days: 14
-
-  packages:
-    name: .deb and .rpm
-    needs: [binaries, packaging]
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Skip until the server crate carries the package metadata
-        id: ready
-        run: |
-          if python3 -I packaging/scripts/check-packaging.py >/dev/null; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::crates/trackside-server/Cargo.toml has no package metadata yet; skipping .deb and .rpm"
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          fi
-      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
-        if: steps.ready.outputs.ready == 'true'
-        with:
-          tool: cargo-deb@3.8.0,cargo-generate-rpm@0.21.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: steps.ready.outputs.ready == 'true'
-        with:
-          pattern: binary-*-linux-musl
-          path: artifacts
-      - name: Build packages
-        if: steps.ready.outputs.ready == 'true'
-        run: |
-          for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
-            mkdir -p "target/$target/release"
-            install -m 0755 "artifacts/binary-$target/target/$target/release/trackside" "target/$target/release/trackside"
-            cargo deb -p trackside-server --target "$target" --no-build --no-strip --output dist/
-            cargo generate-rpm -p crates/trackside-server --target "$target" --output dist/
-          done
-          ls -l dist
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: steps.ready.outputs.ready == 'true'
-        with:
-          name: linux-packages
-          path: |
-            dist/*.deb
-            dist/*.rpm
-          if-no-files-found: error
-          retention-days: 14
-
-  e2e:
-    name: End to end at 50k songs
-    needs: [test]
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Check for the suite
-        id: suite
-        run: |
-          if [ -f tests-e2e/Cargo.toml ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; fi
-      - run: rustup toolchain install
-        if: steps.suite.outputs.present == 'true'
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        if: steps.suite.outputs.present == 'true'
-        with:
-          key: e2e
-      - name: Install the ffmpeg the images ship
-        if: steps.suite.outputs.present == 'true'
-        run: |
-          id=$(docker create "$FFMPEG_IMAGE")
-          sudo docker cp "$id:/ffmpeg" /usr/local/bin/ffmpeg
-          sudo docker cp "$id:/ffprobe" /usr/local/bin/ffprobe
-          docker rm "$id"
-      - name: Run the suite and compare with the stored baseline
-        if: steps.suite.outputs.present == 'true'
-        run: |
-          cargo run --release --locked --manifest-path tests-e2e/Cargo.toml -- \
+          cargo run --release --locked -p trackside-e2e -- \
             --songs 50000 \
             --baseline tests-e2e/baseline-50k.json \
             --max-regression 25 \
             --report target/e2e-50k.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always() && steps.suite.outputs.present == 'true'
+        if: always()
         with:
           name: e2e-report
           path: target/e2e-50k.json
-          if-no-files-found: warn
+          if-no-files-found: ignore
+          retention-days: 14
 
-  image:
-    name: Container images
-    needs: [test, packaging]
-    runs-on: ubuntu-24.04
+  edge:
+    name: Edge (amd64 and arm64)
+    needs: [check]
+    if: github.event_name == 'push'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
       id-token: write
-    env:
-      PUBLISH: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/trackside-v')) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Image name and tags
+      - name: Image name and version
         id: meta
         run: |
-          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/trackside"
-          echo "image=$image" >> "$GITHUB_OUTPUT"
-          if [[ "$GITHUB_REF" == refs/tags/trackside-v* ]]; then
-            version="${GITHUB_REF_NAME#trackside-v}"
-          else
-            version="0.0.0-${GITHUB_SHA::12}"
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          # Each variant gets its own suffix; the moving names are latest, slim and acquire.
-          for variant in standard slim acquire; do
-            case $variant in
-              standard) suffix="" alias=latest ;;
-              *) suffix="-$variant" alias=$variant ;;
-            esac
-            tags=()
-            if [[ "$GITHUB_REF" == refs/tags/trackside-v* ]]; then
-              tags+=("$image:$version$suffix")
-              if [[ "$version" != *-* ]]; then
-                minor="${version%.*}"
-                major="${version%%.*}"
-                tags+=("$image:$minor$suffix")
-                [[ "$major" != 0 ]] && tags+=("$image:$major$suffix")
-                tags+=("$image:$alias")
-              fi
-            else
-              tags+=("$image:edge$suffix" "$image:sha-${GITHUB_SHA::12}$suffix")
-            fi
-            {
-              echo "$variant<<EOF"
-              printf '%s\n' "${tags[@]}"
-              echo "EOF"
-            } >> "$GITHUB_OUTPUT"
-          done
-
-      # Build each variant for amd64, load it, and run it the way a new self-hoster would.
-      - name: Build slim (amd64)
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/trackside" >> "$GITHUB_OUTPUT"
+          echo "version=0.0.0-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+      - uses: useblacksmith/setup-docker-builder@06dd9c83a5d541274d2e3ac67625560979275267 # v2.3.0
         with:
-          context: .
-          file: packaging/docker/Dockerfile
-          target: slim
-          platforms: linux/amd64
-          load: true
-          tags: trackside-ci:slim
-          build-args: |
-            VERSION=${{ steps.meta.outputs.version }}
-            REVISION=${{ github.sha }}
-          cache-from: |
-            type=gha,scope=trackside-standard
-            type=gha,scope=trackside-acquire
-      - name: Build standard (amd64)
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: packaging/docker/Dockerfile
-          target: standard
-          platforms: linux/amd64
-          load: true
-          tags: trackside-ci:standard
-          build-args: |
-            VERSION=${{ steps.meta.outputs.version }}
-            REVISION=${{ github.sha }}
-          cache-from: type=gha,scope=trackside-standard
-      - name: Build acquire (amd64)
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: packaging/docker/Dockerfile
-          target: acquire
-          platforms: linux/amd64
-          load: true
-          tags: trackside-ci:acquire
-          build-args: |
-            VERSION=${{ steps.meta.outputs.version }}
-            REVISION=${{ github.sha }}
-          cache-from: type=gha,scope=trackside-acquire
-      - name: Smoke test each variant
-        run: |
-          for variant in slim standard acquire; do
-            packaging/docker/smoke-test.sh "trackside-ci:$variant" "$variant"
-          done
-
-      - name: Sign in to GHCR
-        if: env.PUBLISH == 'true'
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+          cache-key: trackside-amd64
+          platforms: linux/amd64,linux/arm64
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
-        if: env.PUBLISH == 'true'
         with:
           cosign-release: v3.1.4
 
-      # The Dockerfile cross-compiles on the runner's own architecture, so arm64 needs no
-      # emulation. SBOM and provenance attestations go with each image.
-      - name: Push slim
-        id: push-slim
-        if: env.PUBLISH == 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - name: Build and push slim by digest
+        id: slim
+        uses: useblacksmith/build-push-action@9b0579bbec7a6cad2f171596c57e7ac1e7658850 # v2.3.0
         with:
           context: .
           file: packaging/docker/Dockerfile
           target: slim
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.slim }}
+          outputs: type=image,name=${{ steps.meta.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
             REVISION=${{ github.sha }}
           sbom: true
           provenance: mode=max
-          cache-from: type=gha,scope=trackside-standard
-      - name: Push standard
-        id: push-standard
-        if: env.PUBLISH == 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - name: Build and push standard by digest
+        id: standard
+        uses: useblacksmith/build-push-action@9b0579bbec7a6cad2f171596c57e7ac1e7658850 # v2.3.0
         with:
           context: .
           file: packaging/docker/Dockerfile
           target: standard
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.standard }}
+          outputs: type=image,name=${{ steps.meta.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
             REVISION=${{ github.sha }}
           sbom: true
           provenance: mode=max
-          cache-from: type=gha,scope=trackside-standard
-          cache-to: type=gha,mode=max,scope=trackside-standard
-      - name: Push acquire
-        id: push-acquire
-        if: env.PUBLISH == 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - name: Build and push acquire by digest
+        id: acquire
+        uses: useblacksmith/build-push-action@9b0579bbec7a6cad2f171596c57e7ac1e7658850 # v2.3.0
         with:
           context: .
           file: packaging/docker/Dockerfile
           target: acquire
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.acquire }}
+          outputs: type=image,name=${{ steps.meta.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
             REVISION=${{ github.sha }}
           sbom: true
           provenance: mode=max
-          cache-from: type=gha,scope=trackside-acquire
-          cache-to: type=gha,mode=max,scope=trackside-acquire
-      - name: Sign the images (keyless, with this workflow's identity)
-        if: env.PUBLISH == 'true'
+
+      # The tags move only once every variant has passed.
+      - name: Smoke test each variant (amd64)
         env:
           IMAGE: ${{ steps.meta.outputs.image }}
-          SLIM: ${{ steps.push-slim.outputs.digest }}
-          STANDARD: ${{ steps.push-standard.outputs.digest }}
-          ACQUIRE: ${{ steps.push-acquire.outputs.digest }}
+          SLIM: ${{ steps.slim.outputs.digest }}
+          STANDARD: ${{ steps.standard.outputs.digest }}
+          ACQUIRE: ${{ steps.acquire.outputs.digest }}
         run: |
-          for digest in "$SLIM" "$STANDARD" "$ACQUIRE"; do
-            cosign sign --yes "$IMAGE@$digest"
+          for pair in "slim $SLIM" "standard $STANDARD" "acquire $ACQUIRE"; do
+            read -r variant digest <<< "$pair"
+            docker pull --quiet --platform linux/amd64 "$IMAGE@$digest"
+            packaging/docker/smoke-test.sh "$IMAGE@$digest" "$variant"
+          done
+      - name: Tag edge and sign
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          REVISION: ${{ github.sha }}
+          SLIM: ${{ steps.slim.outputs.digest }}
+          STANDARD: ${{ steps.standard.outputs.digest }}
+          ACQUIRE: ${{ steps.acquire.outputs.digest }}
+        run: |
+          for pair in "slim $SLIM" "standard $STANDARD" "acquire $ACQUIRE"; do
+            read -r variant digest <<< "$pair"
+            packaging/docker/image-tags.sh "$variant" edge "$REVISION" > "tags-$variant"
+            packaging/docker/publish-manifest.sh "$variant" "tags-$variant" "$digest" | tee -a "$GITHUB_STEP_SUMMARY"
           done
 
-  release:
-    name: GitHub release
-    if: startsWith(github.ref, 'refs/tags/trackside-v')
-    needs: [binaries, packages, image, ffmpeg-tests, deny, dashboard, fmt, e2e]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
+  macos:
+    name: macOS
+    if: github.event_name == 'schedule' || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    runs-on: blacksmith-6vcpu-macos-15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          path: artifacts
-      - name: Collect assets, checksums and the Homebrew formula
-        run: |
-          version="${GITHUB_REF_NAME#trackside-v}"
-          mkdir -p release
-          find artifacts -name '*.tar.gz' -exec cp {} release/ \;
-          find artifacts \( -name '*.deb' -o -name '*.rpm' \) -exec cp {} release/ \;
-          curl -fsSL -o source.tar.gz "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
-          source_sha=$(sha256sum source.tar.gz | cut -d' ' -f1)
-          sed -e "s/@VERSION@/$version/g" -e "s/@SHA256@/$source_sha/g" \
-            packaging/homebrew/trackside.rb > release/trackside.rb
-          (cd release && sha256sum -- * > SHA256SUMS)
-          # The release notes are this version's section of CHANGELOG.md.
-          awk -v v="$version" '
-            /^## / { if (found) exit; if ($2 == v) { found = 1; next } }
-            found { print }
-          ' CHANGELOG.md > notes.md
-          [ -s notes.md ] || { echo "::error::CHANGELOG.md has no section for $version"; exit 1; }
-      - name: Publish
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          version="${GITHUB_REF_NAME#trackside-v}"
-          flags=()
-          [[ "$version" == *-* ]] && flags+=(--prerelease)
-          gh release create "$GITHUB_REF_NAME" release/* \
-            --title "Trackside $version" --notes-file notes.md --verify-tag "${flags[@]}"
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked

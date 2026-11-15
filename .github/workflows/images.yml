@@ -1,0 +1,249 @@
+# Container images for ghcr.io/<owner>/trackside, in three variants: standard (no suffix),
+# slim and acquire.
+#
+# - Push to main: the edge job in ci.yml, after the checks pass.
+# - Pull request that changes packaging/: builds amd64 and smoke tests it, pushes nothing.
+# - Published GitHub release: builds natively on x64 and arm64 runners, smoke tests both,
+#   then merges them into X.Y.Z, X.Y and X tags, plus latest when the release is GitHub's
+#   latest. Pre-releases get only X.Y.Z-pre.
+#
+# Every pushed image has SBOM and provenance attestations and a keyless cosign signature from
+# the workflow that pushed it. Tag names come from packaging/docker/image-tags.sh.
+
+name: Images
+
+on:
+  pull_request:
+    paths:
+      - "packaging/**"
+      - ".github/workflows/images.yml"
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  pull-request:
+    name: Build (amd64, not pushed)
+    if: github.event_name == 'pull_request'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # A separate cache, so a pull request can't leave layers that a published image reuses.
+      - uses: useblacksmith/setup-docker-builder@06dd9c83a5d541274d2e3ac67625560979275267 # v2.3.0
+        with:
+          cache-key: trackside-pull-request
+      - name: Build slim
+        uses: useblacksmith/build-push-action@9b0579bbec7a6cad2f171596c57e7ac1e7658850 # v2.3.0
+        with:
+          context: .
+          file: packaging/docker/Dockerfile
+          target: slim
+          platforms: linux/amd64
+          load: true
+          tags: trackside-ci:slim
+          build-args: |
+            VERSION=0.0.0-${{ github.sha }}
+            REVISION=${{ github.sha }}
+      - name: Build standard
+        uses: useblacksmith/build-push-action@9b0579bbec7a6cad2f171596c57e7ac1e7658850 # v2.3.0
+        with:
+          context: .
+          file: packaging/docker/Dockerfile
+          target: standard
+          platforms: linux/amd64
+          load: true
+          tags: trackside-ci:standard
+          build-args: |
+            VERSION=0.0.0-${{ github.sha }}
+            REVISION=${{ github.sha }}
+      - name: Build acquire
+        uses: useblacksmith/build-push-action@9b0579bbec7a6cad2f171596c57e7ac1e7658850 # v2.3.0
+        with:
+          context: .
+          file: packaging/docker/Dockerfile
+          target: acquire
+          platforms: linux/amd64
+          load: true
+          tags: trackside-ci:acquire
+          build-args: |
+            VERSION=0.0.0-${{ github.sha }}
+            REVISION=${{ github.sha }}
+      - name: Smoke test each variant
+        run: |
+          for variant in slim standard acquire; do
+            packaging/docker/smoke-test.sh "trackside-ci:$variant" "$variant"
+          done
+
+  release-build:
+    name: Release build (${{ matrix.arch }})
+    if: github.event_name == 'release'
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: blacksmith-8vcpu-ubuntu-2404
+          - arch: arm64
+            runner: blacksmith-8vcpu-ubuntu-2404-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Image name and version
+        id: meta
+        run: |
+          [[ "$TAG" =~ ^trackside-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
+            echo "::error::release tag $TAG is not trackside-vX.Y.Z"; exit 1; }
+          version="${TAG#trackside-v}"
+          cargo_version=$(python3 -I -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          [[ "$cargo_version" == "$version" ]] || {
+            echo "::error::Cargo.toml has version $cargo_version, the release is $version"; exit 1; }
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/trackside" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: useblacksmith/setup-docker-builder@06dd9c83a5d541274d2e3ac67625560979275267 # v2.3.0
+        with:
+          cache-key: trackside-${{ matrix.arch }}
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push slim by digest
+        id: slim
+        uses: useblacksmith/build-push-action@9b0579bbec7a6cad2f171596c57e7ac1e7658850 # v2.3.0
+        with:
+          context: .
+          file: packaging/docker/Dockerfile
+          target: slim
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ steps.meta.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            REVISION=${{ github.sha }}
+          sbom: true
+          provenance: mode=max
+      - name: Build and push standard by digest
+        id: standard
+        uses: useblacksmith/build-push-action@9b0579bbec7a6cad2f171596c57e7ac1e7658850 # v2.3.0
+        with:
+          context: .
+          file: packaging/docker/Dockerfile
+          target: standard
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ steps.meta.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            REVISION=${{ github.sha }}
+          sbom: true
+          provenance: mode=max
+      - name: Build and push acquire by digest
+        id: acquire
+        uses: useblacksmith/build-push-action@9b0579bbec7a6cad2f171596c57e7ac1e7658850 # v2.3.0
+        with:
+          context: .
+          file: packaging/docker/Dockerfile
+          target: acquire
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ steps.meta.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            REVISION=${{ github.sha }}
+          sbom: true
+          provenance: mode=max
+
+      - name: Smoke test each variant
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          SLIM: ${{ steps.slim.outputs.digest }}
+          STANDARD: ${{ steps.standard.outputs.digest }}
+          ACQUIRE: ${{ steps.acquire.outputs.digest }}
+        run: |
+          mkdir -p digests
+          for pair in "slim $SLIM" "standard $STANDARD" "acquire $ACQUIRE"; do
+            read -r variant digest <<< "$pair"
+            docker pull --quiet "$IMAGE@$digest"
+            packaging/docker/smoke-test.sh "$IMAGE@$digest" "$variant"
+            echo "$digest" > "digests/$variant"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digests-${{ matrix.arch }}
+          path: digests/
+          if-no-files-found: error
+          retention-days: 1
+
+  release-publish:
+    name: Release tags
+    needs: [release-build]
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      PRERELEASE: ${{ github.event.release.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digests-*
+          path: digests
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v3.1.4
+      # latest moves only for the release GitHub marks as latest, so a patch to an older
+      # line doesn't take it back.
+      - name: Is this the latest release
+        id: latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          current=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name || true)
+          if [[ "$PRERELEASE" != true && "$current" == "$TAG" ]]; then
+            echo "latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "latest=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Merge amd64 and arm64, tag and sign
+        env:
+          IMAGE_OWNER: ${{ github.repository_owner }}
+          REVISION: ${{ github.sha }}
+          LATEST: ${{ steps.latest.outputs.latest }}
+        run: |
+          export IMAGE="ghcr.io/${IMAGE_OWNER,,}/trackside"
+          export VERSION="${TAG#trackside-v}"
+          for variant in slim standard acquire; do
+            packaging/docker/image-tags.sh "$variant" release "$VERSION" "$LATEST" > "tags-$variant"
+            packaging/docker/publish-manifest.sh "$variant" "tags-$variant" \
+              "$(cat "digests/digests-amd64/$variant")" \
+              "$(cat "digests/digests-arm64/$variant")" | tee -a "$GITHUB_STEP_SUMMARY"
+          done

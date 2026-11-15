@@ -1,7 +1,7 @@
 # Package metadata for cargo-deb. cargo-deb only reads it from the crate's own manifest, so
 # this table is copied verbatim into crates/trackside-server/Cargo.toml. Paths are relative
-# to that crate's directory. Keep the two in sync; CI fails the
-# package build when they differ (see .github/workflows/ci.yml, job "packages").
+# to that crate's directory. Keep the two in sync; CI fails when they differ
+# (packaging/scripts/check-packaging.py, run by .github/workflows/ci.yml and release.yml).
 #
 # Build:  cargo deb -p trackside-server --target x86_64-unknown-linux-musl --no-build
 

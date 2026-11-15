@@ -42,4 +42,8 @@ starts at schema 2; there is nothing to upgrade from.
 - Images for amd64 and arm64 (`latest`, `slim`, `acquire`), static Linux binaries, `.deb` and
   `.rpm` packages with a hardened systemd unit, a Homebrew formula, and templates for Unraid,
   TrueNAS, Synology and CasaOS.
+- `latest` is the newest release; `edge` is built from every commit to `main` and may break.
+  Images are signed by the workflow that built them (`ci.yml` for edge, `images.yml` for
+  releases) and carry SBOM and provenance attestations; release binaries and packages carry
+  build provenance.
 - Optional acquisition through yt-dlp and slskd, off unless an admin turns it on.

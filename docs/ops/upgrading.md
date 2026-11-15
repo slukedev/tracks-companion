@@ -69,6 +69,10 @@ If the release didn't change the database, just run the old version; no restore 
 
 ## Following edge builds
 
-The `edge` tags are built from every change to `main`. They get the same tests as releases
-but haven't been used by anyone yet. Use them on a second server, or with a backup you're ready
-to restore.
+The `edge` tags are built from every commit to `main` and may break. `latest` is the newest
+release. An edge image is published only after that commit passes the full checks and the
+start-up smoke test (on amd64), but nobody has used it yet. Use edge on a second server, or with a backup you're ready to restore.
+
+To stay on one edge build instead of the moving tag, use `edge-<commit>` (the first seven
+characters of the commit on `main`). Going back from edge to a release can need a restore,
+as in [Downgrading](#downgrading), if edge had a newer database schema.

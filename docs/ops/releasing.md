@@ -1,10 +1,20 @@
 # Releasing Trackside
 
-For maintainers. A release is a tag named `trackside-vX.Y.Z` on `main`
-(`trackside-vX.Y.Z-rc.N` for a pre-release). Pushing it runs
-[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), which tests everything,
-builds the binaries, packages and images, signs and pushes the images, and creates the GitHub
-release from the changelog. The performance and scenario checks that need a person are in
+For maintainers. A release is a GitHub release for a tag named `trackside-vX.Y.Z` on `main`
+(`trackside-vX.Y.Z-rc.N`, marked as a pre-release, for a pre-release). Publishing it starts
+three workflows, all on Blacksmith runners:
+
+- [`release.yml`](../../.github/workflows/release.yml) builds the static Linux binaries
+  (x86_64 and aarch64 musl), the macOS binaries, the `.deb` and `.rpm` packages, the filled-in
+  Homebrew formula and `SHA256SUMS`, and attaches them to the release with build provenance.
+- [`images.yml`](../../.github/workflows/images.yml) builds each image natively on x64 and
+  arm64, smoke tests both, merges them, and pushes and signs `X.Y.Z`, `X.Y`, `X` and, for the
+  release GitHub marks as latest, `latest`, `slim` and `acquire` (also `latest-slim` and
+  `latest-acquire`). A pre-release gets only `X.Y.Z-rc.N` tags.
+- [`ci.yml`](../../.github/workflows/ci.yml) runs the macOS tests.
+
+Every push to `main` already ran the full checks in `ci.yml` and, once they passed,
+published `edge` from the same workflow. The performance and scenario checks that need a person are in
 `tests-e2e/RELEASE.md`.
 
 ## Checklist
@@ -32,23 +42,33 @@ release from the changelog. The performance and scenario checks that need a pers
 - [ ] Tried on a real install: the `latest` image upgraded in place over the previous release,
       Tracks connected, played, downloaded and synced.
 
-### Tag
+### Tag and publish
 
 ```sh
 git switch main && git pull
 git tag -s trackside-vX.Y.Z -m "Trackside X.Y.Z"
 git push origin trackside-vX.Y.Z
+# The notes are this version's section of CHANGELOG.md.
+awk -v v=X.Y.Z '/^## / { if (found) exit; if ($2 == v) { found = 1; next } } found' CHANGELOG.md > notes.md
+gh release create trackside-vX.Y.Z --verify-tag --title "Trackside X.Y.Z" --notes-file notes.md
+# add --prerelease for trackside-vX.Y.Z-rc.N
 ```
 
-### After the workflow finishes
+Create the release from your own account (or the web page), not from a workflow: a release
+made with a workflow's `GITHUB_TOKEN` doesn't start other workflows. `release.yml` stops if the
+tag, `Cargo.toml` and `CHANGELOG.md` don't agree on the version.
+
+### After the workflows finish
 
 - [ ] The release page has the four binary tarballs, two `.deb`, two `.rpm`, `trackside.rb`
       and `SHA256SUMS`.
 - [ ] The images exist for amd64 and arm64:
       `docker buildx imagetools inspect ghcr.io/slukedev/trackside:X.Y.Z`.
 - [ ] The signature verifies (command in [install.md](install.md#images-and-tags)).
+- [ ] `gh attestation verify trackside-X.Y.Z-x86_64-unknown-linux-musl.tar.gz --repo slukedev/tracks-companion` passes.
 - [ ] `docker run --rm ghcr.io/slukedev/trackside:X.Y.Z version` prints X.Y.Z.
-- [ ] Copy `trackside.rb` from the release into the tap repository and push it;
+- [ ] Copy `trackside.rb` from the release into the tap repository and push it (the
+      `release.yml` run summary also shows its url and sha256);
       `brew install slukedev/tap/trackside` installs X.Y.Z.
 - [ ] Unraid, TrueNAS, Synology and CasaOS templates still point at the right tags.
 - [ ] Watch issues and discussions for a day.
@@ -59,8 +79,8 @@ git push origin trackside-vX.Y.Z
 - Song ids change across the upgrade.
 - Sign-in, playback or sync fails for Tracks.
 
-To pull one: mark the GitHub release as a pre-release, move the `latest`, `slim`, `acquire` and
-`X.Y` tags back to the previous release
+To pull one: mark the GitHub release as a pre-release, move the `latest`, `slim`, `acquire`,
+`latest-slim`, `latest-acquire`, `X.Y` and `X` tags back to the previous release
 (`docker buildx imagetools create -t ghcr.io/slukedev/trackside:latest ghcr.io/slukedev/trackside:<previous>`,
 and the same for the other names), and say in the release notes what to do. Never delete a
 pushed version tag; publish a fixed X.Y.Z+1 instead.
@@ -75,9 +95,10 @@ change both together.
 | Base images, ffmpeg, Deno, alpine, debian | `ARG` lines at the top of `packaging/docker/Dockerfile` | `docker buildx imagetools inspect <image>:<tag>` and copy `Digest` |
 | yt-dlp | `YTDLP_VERSION` and the two `YTDLP_SHA256_*` lines | the release's `SHA2-256SUMS`, lines for `yt-dlp_linux.zip` and `yt-dlp_linux_aarch64.zip` |
 | slskd, Tailscale | `packaging/compose.acquire.yaml`, `packaging/compose.tailscale.yaml` | `docker buildx imagetools inspect` |
-| ffmpeg in CI | `FFMPEG_IMAGE` in the workflow | same digest as the Dockerfile |
+| ffmpeg in CI | `FFMPEG_IMAGE` in `ci.yml` | same digest as the Dockerfile |
 | Rust | `rust-toolchain.toml` and `RUST_VERSION` in the Dockerfile | both together; CI checks they match |
-| GitHub Actions | `uses:` lines in the workflow | `git ls-remote --tags https://github.com/<owner>/<action>`, the commit of the tag |
+| GitHub Actions, including `useblacksmith/setup-docker-builder` and `useblacksmith/build-push-action` | `uses:` lines in the workflows | `git ls-remote --tags https://github.com/<owner>/<action>`, the commit of the tag (the `^{}` line for an annotated tag) |
+| Runner labels | `runs-on:` lines and `.github/actionlint.yaml` | [Blacksmith's runner list](https://docs.blacksmith.sh/blacksmith-runners/overview) |
 | CI tools | `tool:` lines (cargo-deny, cargo-zigbuild, cargo-deb, cargo-generate-rpm), `ziglang` | crates.io and PyPI |
 
 After a change, build each image target, run

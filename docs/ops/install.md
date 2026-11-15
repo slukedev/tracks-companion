@@ -33,17 +33,21 @@ docker logs trackside
 ### Images and tags
 
 Images are published to `ghcr.io/slukedev/trackside` for `linux/amd64` and `linux/arm64`,
-signed with cosign and shipped with an SBOM.
+signed with cosign and shipped with SBOM and provenance attestations.
 
-| Tag | Base | Includes | For |
-|---|---|---|---|
-| `latest`, `X.Y.Z`, `X.Y` | distroless static | Trackside, ffmpeg | most people |
-| `slim`, `X.Y.Z-slim`, `X.Y-slim` | distroless static | Trackside | the smallest image, direct play only |
-| `acquire`, `X.Y.Z-acquire`, `X.Y-acquire` | distroless cc | Trackside, ffmpeg, yt-dlp, Deno | [acquisition](acquisition.md) |
-| `edge`, `edge-slim`, `edge-acquire` | | builds of `main` | testing unreleased changes |
+| Variant | Release tags | Edge tags | Base | Includes | For |
+|---|---|---|---|---|---|
+| standard | `latest`, `X.Y.Z`, `X.Y`, `X` | `edge`, `edge-<commit>` | distroless static | Trackside, ffmpeg | most people |
+| slim | `slim` or `latest-slim`, `X.Y.Z-slim`, `X.Y-slim`, `X-slim` | `edge-slim`, `edge-<commit>-slim` | distroless static | Trackside | the smallest image, direct play only |
+| acquire | `acquire` or `latest-acquire`, `X.Y.Z-acquire`, `X.Y-acquire`, `X-acquire` | `edge-acquire`, `edge-<commit>-acquire` | distroless cc | Trackside, ffmpeg, yt-dlp, Deno | [acquisition](acquisition.md) |
+
+`latest` is the newest release, and `X.Y.Z` is one release that never changes. `edge` is
+built from every commit to `main`: it has the newest changes, may break, and is for trying
+something before it's released ([upgrading.md](upgrading.md#following-edge-builds)).
 
 Pin a version (`1.2.3`) on anything you depend on, and move it on purpose
-([upgrading.md](upgrading.md)). `X.Y` follows patch releases of that minor version.
+([upgrading.md](upgrading.md)). `X.Y` follows patch releases of that minor version, and `X`
+(from 1.0 on) follows that major version. Pre-releases get only their own `X.Y.Z-rc.N` tags.
 
 Every image:
 
@@ -59,7 +63,7 @@ To check a signature:
 
 ```sh
 cosign verify ghcr.io/slukedev/trackside:latest \
-  --certificate-identity-regexp '^https://github.com/slukedev/tracks-companion/\.github/workflows/ci\.yml@' \
+  --certificate-identity-regexp '^https://github.com/slukedev/tracks-companion/\.github/workflows/(ci|images)\.yml@' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 

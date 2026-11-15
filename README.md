@@ -89,6 +89,9 @@ There are three images. `latest` has ffmpeg, so Trackside can convert songs for 
 cellular and for formats Apple devices don't play. `slim` leaves ffmpeg out and plays every
 song as it is. `acquire` adds what the optional acquisition feature needs.
 
+`latest` is the newest release. `edge` is built from every commit to `main`, so it has the
+newest changes and may break; use it only to try something before it's released.
+
 ## Running it
 
 - [First run, accounts and invites](docs/ops/first-run.md)
