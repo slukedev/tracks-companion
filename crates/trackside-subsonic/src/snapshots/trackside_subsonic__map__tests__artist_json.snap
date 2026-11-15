@@ -1,0 +1,5 @@
+---
+source: crates/trackside-subsonic/src/map.rs
+expression: "render(&Body::one(\"artist\", artist), Format::Json)"
+---
+{"subsonic-response":{"artist":{"albumCount":7,"id":"rgtm6gw8kzkjyq611mzzp","musicBrainzId":"","name":"Beyoncé","sortName":"beyonce"},"openSubsonic":true,"serverVersion":"0.1.0","status":"ok","type":"trackside","version":"1.16.1"}}

@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Trackside</Name>
+  <Repository>ghcr.io/slukedev/trackside:latest</Repository>
+  <Registry>https://github.com/slukedev/tracks/pkgs/container/trackside</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/slukedev/tracks/discussions</Support>
+  <Project>https://github.com/slukedev/tracks/tree/main/Server</Project>
+  <ReadMe>https://github.com/slukedev/tracks/blob/main/Server/README.md</ReadMe>
+  <Overview>Trackside is a self-hosted music server for the Tracks app. It indexes the music you own and serves it to Tracks and to any Subsonic or OpenSubsonic app (Amperfy, Symfonium, Feishin and others), with accounts for everyone in the house, listens, favourites and playlists. After the first start, open the container log for the setup token, then go to the web UI to create the admin account. The music share is mounted read-only.</Overview>
+  <Category>MediaServer:Music</Category>
+  <WebUI>http://[IP]:[PORT:4747]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/slukedev/tracks/main/Server/packaging/nas/unraid/trackside.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/slukedev/tracks/main/images/icon.png</Icon>
+  <ExtraParams>--user 99:100 --read-only --tmpfs /tmp --security-opt no-new-privileges --cap-drop ALL</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="Port" Target="4747" Default="4747" Mode="tcp" Description="Web dashboard, native API and Subsonic API." Type="Port" Display="always" Required="true" Mask="false">4747</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/trackside" Mode="rw" Description="Database, keys, backups and caches. Keep it on a pool or cache drive, not on a network share." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/trackside</Config>
+  <Config Name="Music" Target="/music" Default="/mnt/user/media/music" Mode="ro" Description="Your music. Becomes the first library on the first start." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/media/music</Config>
+  <Config Name="Addresses for Tracks" Target="TRACKSIDE_SERVER__PUBLIC_URLS" Default="" Mode="" Description="Comma-separated addresses Tracks should try, for example http://192.168.1.20:4747 or your Tailscale address. Bridge networking hides the server's LAN address, so set at least that one for QR pairing." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Time zone" Target="TZ" Default="UTC" Mode="" Description="Used for the nightly backup schedule." Type="Variable" Display="advanced" Required="false" Mask="false">UTC</Config>
+</Container>

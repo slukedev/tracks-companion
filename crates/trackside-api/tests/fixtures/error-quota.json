@@ -1,0 +1,10 @@
+{
+  "error": {
+    "code": "quota_exceeded",
+    "details": {
+      "resets_at": "2026-11-15T09:30:00.000Z"
+    },
+    "message": "The request quota is used up.",
+    "request_id": "5d2c1b0a9f8e4d7c6b5a4f3e2d1c0b9a"
+  }
+}

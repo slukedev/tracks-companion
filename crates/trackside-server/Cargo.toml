@@ -1,0 +1,109 @@
+[package]
+name = "trackside-server"
+description = "Self-hosted music server for the Tracks app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "trackside"
+path = "src/main.rs"
+
+[features]
+default = ["acquire", "acme"]
+acquire = ["dep:trackside-acquire"]
+acme = ["dep:rustls-acme"]
+
+[dependencies]
+trackside-core.workspace = true
+trackside-media.workspace = true
+trackside-auth.workspace = true
+trackside-scan.workspace = true
+trackside-acquire = { workspace = true, optional = true }
+trackside-subsonic.workspace = true
+trackside-api.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures-util.workspace = true
+axum = { workspace = true, features = ["matched-path"] }
+axum-server.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+http-body.workspace = true
+http.workspace = true
+rustls.workspace = true
+rustls-acme = { workspace = true, optional = true }
+rcgen.workspace = true
+reqwest.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+jiff.workspace = true
+uuid.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+mdns-sd.workspace = true
+if-addrs.workspace = true
+rust-embed = { workspace = true, features = ["include-exclude"] }
+mime_guess.workspace = true
+sd-notify.workspace = true
+fs4.workspace = true
+zeroize.workspace = true
+ipnet.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+trackside-core = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true
+
+# Copied from Server/packaging/deb/metadata.toml; keep the two the same.
+[package.metadata.deb]
+name = "trackside"
+maintainer = "Trackside maintainers <https://github.com/slukedev/tracks/issues>"
+copyright = "Trackside contributors"
+license-file = ["../../../LICENSE", "0"]
+extended-description = """\
+Trackside indexes the music you own and serves it to the Tracks app over a native API, and to \
+other music apps over Subsonic and OpenSubsonic. It keeps per-user listens, favourites and \
+playlists, and runs as a single binary with an embedded web dashboard."""
+section = "sound"
+priority = "optional"
+depends = "$auto"
+recommends = "ffmpeg"
+assets = [
+    ["target/release/trackside", "usr/bin/", "755"],
+    ["../../README.md", "usr/share/doc/trackside/README.md", "644"],
+    ["../../CHANGELOG.md", "usr/share/doc/trackside/CHANGELOG.md", "644"],
+    ["../../packaging/linux/trackside.env", "etc/trackside/trackside.env", "644"],
+]
+conf-files = ["/etc/trackside/trackside.env"]
+maintainer-scripts = "../../packaging/deb/scripts"
+systemd-units = { unit-name = "trackside", unit-scripts = "../../packaging/systemd", enable = true, start = false, restart-after-upgrade = true }
+
+# Copied from Server/packaging/rpm/metadata.toml; keep the two the same.
+[package.metadata.generate-rpm]
+name = "trackside"
+summary = "Self-hosted music server for the Tracks app"
+license = "GPL-3.0-only"
+url = "https://github.com/slukedev/tracks/tree/main/Server"
+assets = [
+    { source = "target/release/trackside", dest = "/usr/bin/trackside", mode = "755" },
+    { source = "../../packaging/systemd/trackside.service", dest = "/usr/lib/systemd/system/trackside.service", mode = "644" },
+    { source = "../../packaging/linux/trackside.env", dest = "/etc/trackside/trackside.env", mode = "644", config = "noreplace" },
+    { source = "../../README.md", dest = "/usr/share/doc/trackside/README.md", mode = "644", doc = true },
+    { source = "../../CHANGELOG.md", dest = "/usr/share/doc/trackside/CHANGELOG.md", mode = "644", doc = true },
+    { source = "../../../LICENSE", dest = "/usr/share/licenses/trackside/LICENSE", mode = "644", doc = true },
+]
+post_install_script = "systemctl daemon-reload >/dev/null 2>&1 || :"
+pre_uninstall_script = "if [ \"$1\" -eq 0 ]; then systemctl disable --now trackside.service >/dev/null 2>&1 || :; fi"
+post_uninstall_script = "systemctl daemon-reload >/dev/null 2>&1 || :; if [ \"$1\" -ge 1 ]; then systemctl try-restart trackside.service >/dev/null 2>&1 || :; fi"
+
+[package.metadata.generate-rpm.recommends]
+ffmpeg = "*"

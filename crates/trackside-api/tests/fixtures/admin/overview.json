@@ -1,0 +1,102 @@
+{
+  "acquisition": {
+    "active": 2,
+    "enabled": true,
+    "providers": [
+      {
+        "configured": true,
+        "detail": "slskd 0.22.5",
+        "enabled": true,
+        "health": "ok",
+        "name": "soulseek",
+        "settings": {
+          "concurrency": 3,
+          "url": "http://slskd:5030"
+        },
+        "stats": {
+          "failures_today": 0,
+          "fetches_today": 2,
+          "searches_today": 18
+        },
+        "version": "0.22.5"
+      }
+    ],
+    "today": 14
+  },
+  "backups": {
+    "last": {
+      "at": "2026-11-14T03:30:00.000Z",
+      "bytes": 790000000,
+      "name": "trackside-20261114T033000Z.db"
+    },
+    "next_at": "2026-11-15T03:30:00.000Z"
+  },
+  "libraries": [
+    {
+      "id": "ldhmwjvv1e9320kfeh1mp",
+      "last_scan": {
+        "added": 212,
+        "errors": 2,
+        "files_seen": 48214,
+        "finished_at": "2026-11-14T08:45:00.000Z",
+        "folders_seen": 4112,
+        "id": "nedhqmcs0dnn76tb33c00",
+        "kind": "full",
+        "library_id": "ldhmwjvv1e9320kfeh1mp",
+        "missing": 1,
+        "moved": 3,
+        "started_at": "2026-11-14T08:30:00.000Z",
+        "state": "done",
+        "trigger": "admin",
+        "updated": 37
+      },
+      "name": "Music",
+      "scanning": false,
+      "song_count": 48211,
+      "state": "ok"
+    }
+  ],
+  "media": {
+    "ffmpeg": {
+      "found": true,
+      "version": "7.1"
+    },
+    "transcode_cache_bytes": 2100000000,
+    "transcodes": {
+      "queued": 0,
+      "running": 1
+    }
+  },
+  "problems": [
+    {
+      "code": "library_unavailable",
+      "help": "Check that the disk or share is mounted at /music. Its songs stay in the library until it is back.",
+      "message": "Music is unavailable.",
+      "severity": "warning",
+      "title": "Music offline"
+    }
+  ],
+  "server": {
+    "data_dir": "/data",
+    "listen": [
+      "[::]:4747"
+    ],
+    "name": "Home",
+    "server_id": "5f0c2b9e-8a3d-4c1e-9b7a-2d6e4f8a1c3b",
+    "started_at": "2026-11-13T09:30:00.000Z",
+    "tls": "off",
+    "uptime_s": 86400,
+    "version": "1.0.0"
+  },
+  "storage": {
+    "cache_bytes": 3200000000,
+    "data_free_bytes": 120000000000,
+    "database_bytes": 812000000,
+    "wal_bytes": 4100000,
+    "warnings": []
+  },
+  "users": {
+    "count": 4,
+    "devices": 7
+  }
+}

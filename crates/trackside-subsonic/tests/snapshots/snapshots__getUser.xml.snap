@@ -1,0 +1,5 @@
+---
+source: crates/trackside-subsonic/tests/snapshots.rs
+expression: redact(&xml.text())
+---
+<?xml version="1.0" encoding="UTF-8"?><subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1" type="trackside" serverVersion="0.1.0" openSubsonic="true"><user username="luke+music@example.com" email="" scrobblingEnabled="true" adminRole="false" settingsRole="false" downloadRole="true" uploadRole="false" playlistRole="true" coverArtRole="false" commentRole="false" podcastRole="false" streamRole="true" jukeboxRole="false" shareRole="false" videoConversionRole="false"><folder><l1></folder></user></subsonic-response>

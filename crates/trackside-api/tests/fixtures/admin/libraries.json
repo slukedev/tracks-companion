@@ -1,0 +1,32 @@
+{
+  "libraries": [
+    {
+      "acquire_target": false,
+      "enabled": true,
+      "id": "ldhmwjvv1e9320kfeh1mp",
+      "name": "Music",
+      "quick_scan_interval_s": 1800,
+      "root": "/music",
+      "song_count": 48211,
+      "state": "ok",
+      "uploads_target": false,
+      "watch": true,
+      "watching": "events",
+      "writable": false
+    },
+    {
+      "acquire_target": true,
+      "enabled": true,
+      "id": "ldhmqjvv1b5320gf8gstm",
+      "name": "Acquired",
+      "quick_scan_interval_s": 1800,
+      "root": "/acquired",
+      "song_count": 312,
+      "state": "ok",
+      "uploads_target": true,
+      "watch": true,
+      "watching": "events",
+      "writable": true
+    }
+  ]
+}

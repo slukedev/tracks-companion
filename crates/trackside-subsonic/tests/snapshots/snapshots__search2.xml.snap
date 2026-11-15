@@ -1,0 +1,5 @@
+---
+source: crates/trackside-subsonic/tests/snapshots.rs
+expression: redact(&xml.text())
+---
+<?xml version="1.0" encoding="UTF-8"?><subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1" type="trackside" serverVersion="0.1.0" openSubsonic="true"><searchResult2><song id="sdjcz08vf67h7cx28snq6" parent="<a1>" isDir="false" title="Halo" album="I Am... Sasha Fierce" artist="Beyoncé" track="3" year="2008" genre="R&amp;B" size="4096" contentType="audio/flac" suffix="flac" duration="201" bitRate="1000" bitDepth="16" samplingRate="44100" channelCount="2" path="Beyoncé/I Am... Sasha Fierce/03 - Halo.flac" isVideo="false" discNumber="1" created="2026-11-14T09:30:00.000Z" albumId="<a1>" artistId="rgtm6gw8kzkjyq611mzzp" type="music" mediaType="song" bpm="0" comment="" sortName="Halo" musicBrainzId="" displayArtist="Beyoncé" displayAlbumArtist="Beyoncé" explicitStatus="" starred="2026-11-14T09:30:00.000Z" playCount="0"><genres name="R&amp;B"/><artists id="rgtm6gw8kzkjyq611mzzp" name="Beyoncé"/><albumArtists id="rgtm6gw8kzkjyq611mzzp" name="Beyoncé"/><replayGain/></song></searchResult2></subsonic-response>

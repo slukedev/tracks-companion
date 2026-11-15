@@ -1,0 +1,12 @@
+# The build context is the repository root. Send only what the server build reads.
+*
+!Engine/Cargo.toml
+!Engine/Cargo.lock
+!Engine/crates/
+!Server/Cargo.toml
+!Server/Cargo.lock
+!Server/rust-toolchain.toml
+!Server/crates/
+!Server/dashboard/
+**/target/
+Server/dashboard/dev/

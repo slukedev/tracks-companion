@@ -1,0 +1,28 @@
+# Trackside on TrueNAS SCALE 24.10 or later: Apps > Discover Apps > the three dots >
+# Install via YAML, then paste this file. Change the two host paths first.
+#
+# The app runs as TrueNAS's "apps" user (568), so give that user write access to the data
+# dataset and read access to the music dataset:
+#   Datasets > trackside > Edit Permissions > add apps with Modify.
+
+services:
+  trackside:
+    image: ghcr.io/slukedev/trackside:latest
+    restart: unless-stopped
+    user: "568:568"
+    ports:
+      - "4747:4747"
+    volumes:
+      - /mnt/tank/apps/trackside:/data
+      - /mnt/tank/media/music:/music:ro
+    environment:
+      TZ: Etc/UTC
+      # The LAN address Tracks should use, so pairing QR codes work.
+      # TRACKSIDE_SERVER__PUBLIC_URLS: "http://192.168.1.20:4747"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

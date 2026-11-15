@@ -1,0 +1,5 @@
+---
+source: crates/trackside-subsonic/tests/snapshots.rs
+expression: redact(&json.text())
+---
+{"subsonic-response":{"indexes":{"ignoredArticles":"","index":[{"artist":[{"albumCount":1,"id":"rgtm6gw8kzkjyq611mzzp","musicBrainzId":"","name":"Beyoncé","sortName":"beyonce"}],"name":"B"},{"artist":[{"albumCount":1,"id":"rb8xc8hh2jxdgzte7vgvn","musicBrainzId":"","name":"Florence + the Machine","sortName":"florence + the machine"}],"name":"F"}],"lastModified":1794648600000},"openSubsonic":true,"serverVersion":"0.1.0","status":"ok","type":"trackside","version":"1.16.1"}}

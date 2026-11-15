@@ -1,0 +1,55 @@
+{
+  "device": {
+    "id": "dchjkb9k3cnapjw0kmhq6",
+    "name": "Luke's iPhone"
+  },
+  "features": {},
+  "libraries": [
+    {
+      "id": "ldhmwjvv1e9320kfeh1mp",
+      "name": "Music",
+      "song_count": 48211,
+      "state": "ok"
+    },
+    {
+      "id": "ldhmqjvv1b5320gf8gstm",
+      "name": "Acquired",
+      "song_count": 312,
+      "state": "ok"
+    }
+  ],
+  "server": {
+    "name": "Home",
+    "server_id": "5f0c2b9e-8a3d-4c1e-9b7a-2d6e4f8a1c3b",
+    "urls": [
+      {
+        "kind": "lan",
+        "tls": false,
+        "url": "http://192.168.1.20:4747"
+      },
+      {
+        "kind": "lan",
+        "tls": false,
+        "url": "http://home.local:4747"
+      },
+      {
+        "kind": "public",
+        "tls": true,
+        "url": "https://music.example.com"
+      }
+    ],
+    "version": "1.0.0"
+  },
+  "user": {
+    "display_name": "Luke",
+    "id": "uenspa9s0dhs6ps80kc00",
+    "permissions": {
+      "can_download": true,
+      "can_request": true,
+      "can_upload": false,
+      "legacy_subsonic": false
+    },
+    "role": "member",
+    "username": "luke"
+  }
+}

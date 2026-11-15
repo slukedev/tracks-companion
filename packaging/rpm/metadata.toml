@@ -1,0 +1,26 @@
+# Package metadata for cargo-generate-rpm. Like the .deb metadata, it is read only from the
+# crate's own manifest, so this table is copied verbatim into
+# Server/crates/trackside-server/Cargo.toml (WP6 owns that file). Paths are relative to that
+# crate's directory.
+#
+# Build:  cd Server && cargo generate-rpm -p crates/trackside-server --target x86_64-unknown-linux-musl
+
+[package.metadata.generate-rpm]
+name = "trackside"
+summary = "Self-hosted music server for the Tracks app"
+license = "GPL-3.0-only"
+url = "https://github.com/slukedev/tracks/tree/main/Server"
+assets = [
+    { source = "target/release/trackside", dest = "/usr/bin/trackside", mode = "755" },
+    { source = "../../packaging/systemd/trackside.service", dest = "/usr/lib/systemd/system/trackside.service", mode = "644" },
+    { source = "../../packaging/linux/trackside.env", dest = "/etc/trackside/trackside.env", mode = "644", config = "noreplace" },
+    { source = "../../README.md", dest = "/usr/share/doc/trackside/README.md", mode = "644", doc = true },
+    { source = "../../CHANGELOG.md", dest = "/usr/share/doc/trackside/CHANGELOG.md", mode = "644", doc = true },
+    { source = "../../../LICENSE", dest = "/usr/share/licenses/trackside/LICENSE", mode = "644", doc = true },
+]
+post_install_script = "systemctl daemon-reload >/dev/null 2>&1 || :"
+pre_uninstall_script = "if [ \"$1\" -eq 0 ]; then systemctl disable --now trackside.service >/dev/null 2>&1 || :; fi"
+post_uninstall_script = "systemctl daemon-reload >/dev/null 2>&1 || :; if [ \"$1\" -ge 1 ]; then systemctl try-restart trackside.service >/dev/null 2>&1 || :; fi"
+
+[package.metadata.generate-rpm.recommends]
+ffmpeg = "*"

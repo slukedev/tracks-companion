@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+#DEBHELPER#
+
+if [ "$1" = "configure" ] && [ -z "$2" ]; then
+  cat <<'EOF'
+
+Trackside is installed and enabled, but not started yet.
+
+  1. Set TRACKSIDE_MUSIC_DIR in /etc/trackside/trackside.env if your music is not in /srv/music.
+  2. sudo systemctl start trackside
+  3. sudo journalctl -u trackside   (the setup token is in the banner)
+
+Docs: https://github.com/slukedev/tracks/blob/main/Server/README.md
+EOF
+fi

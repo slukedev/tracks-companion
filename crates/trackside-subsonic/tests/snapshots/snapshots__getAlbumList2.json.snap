@@ -1,0 +1,5 @@
+---
+source: crates/trackside-subsonic/tests/snapshots.rs
+expression: redact(&json.text())
+---
+{"subsonic-response":{"albumList2":{"album":[{"artist":"Beyoncé","artistId":"rgtm6gw8kzkjyq611mzzp","artists":[{"id":"rgtm6gw8kzkjyq611mzzp","name":"Beyoncé"}],"created":"2026-11-14T09:30:00.000Z","displayArtist":"Beyoncé","duration":403,"genre":"R&B","genres":[{"name":"R&B"}],"id":"<a1>","isCompilation":false,"musicBrainzId":"","name":"I Am... Sasha Fierce","releaseTypes":[],"songCount":2,"sortName":"i am... sasha fierce","year":2008},{"artist":"Florence + the Machine","artistId":"rb8xc8hh2jxdgzte7vgvn","artists":[{"id":"rb8xc8hh2jxdgzte7vgvn","name":"Florence + the Machine"}],"created":"2026-11-14T09:30:00.000Z","displayArtist":"Florence + the Machine","duration":203,"genre":"Indie","genres":[{"name":"Indie"}],"id":"<a2>","isCompilation":false,"musicBrainzId":"","name":"Lungs","releaseTypes":[],"songCount":1,"sortName":"lungs","year":2008}]},"openSubsonic":true,"serverVersion":"0.1.0","status":"ok","type":"trackside","version":"1.16.1"}}

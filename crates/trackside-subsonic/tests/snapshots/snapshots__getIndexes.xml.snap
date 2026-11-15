@@ -1,0 +1,5 @@
+---
+source: crates/trackside-subsonic/tests/snapshots.rs
+expression: redact(&xml.text())
+---
+<?xml version="1.0" encoding="UTF-8"?><subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1" type="trackside" serverVersion="0.1.0" openSubsonic="true"><indexes lastModified="1794648600000" ignoredArticles=""><index name="B"><artist id="rgtm6gw8kzkjyq611mzzp" name="Beyoncé" albumCount="1" musicBrainzId="" sortName="beyonce"/></index><index name="F"><artist id="rb8xc8hh2jxdgzte7vgvn" name="Florence + the Machine" albumCount="1" musicBrainzId="" sortName="florence + the machine"/></index></indexes></subsonic-response>

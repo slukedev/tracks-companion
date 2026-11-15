@@ -1,0 +1,5 @@
+---
+source: crates/trackside-subsonic/tests/snapshots.rs
+expression: redact(&json.text())
+---
+{"subsonic-response":{"error":{"code":70,"message":"Animated art not found"},"openSubsonic":true,"serverVersion":"0.1.0","status":"failed","type":"trackside","version":"1.16.1"}}

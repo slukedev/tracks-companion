@@ -1,0 +1,117 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "tests-e2e"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "GPL-3.0-only"
+publish = false
+
+[workspace.dependencies]
+# Workspace crates
+trackside-core = { path = "crates/trackside-core" }
+trackside-media = { path = "crates/trackside-media" }
+trackside-auth = { path = "crates/trackside-auth" }
+trackside-scan = { path = "crates/trackside-scan" }
+trackside-acquire = { path = "crates/trackside-acquire" }
+trackside-subsonic = { path = "crates/trackside-subsonic" }
+trackside-api = { path = "crates/trackside-api" }
+
+# Shared with Tracks
+tracks-model = { path = "../Engine/crates/tracks-model" }
+
+# Runtime and HTTP
+tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "fs", "io-util", "net", "process", "signal", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt", "io"] }
+futures-util = "0.3"
+axum = { version = "0.8", default-features = false, features = ["http1", "http2", "json", "query", "form", "tokio"] }
+axum-server = { version = "0.9", features = ["tls-rustls-no-provider"] }
+tower = "0.5"
+tower-http = { version = "0.7", features = ["compression-br", "compression-gzip", "trace", "timeout", "limit", "request-id", "set-header", "sensitive-headers"] }
+http = "1"
+http-body = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
+# Without `axum`: the server drives the ACME state itself, and that feature pulls in an older
+# axum-server.
+rustls-acme = { version = "0.15", default-features = false, features = ["ring", "tls12", "webpki-roots"] }
+rcgen = "0.14"
+# No default provider: the binary installs ring once, as rustls and axum-server do.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "stream"] }
+
+# Storage and serialization
+rusqlite = { version = "0.41", features = ["bundled", "functions", "blob"] }
+rusqlite_migration = "2.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+quick-xml = { version = "0.42", features = ["serialize"] }
+toml = "1.2"
+
+# Errors, logging, CLI, time
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+clap = { version = "4.6", features = ["derive", "env"] }
+jiff = "0.2"
+uuid = { version = "1.29", features = ["v4", "serde"] }
+
+# Hashing and secrets
+blake3 = "1.8"
+sha2 = "0.11"
+md-5 = "0.11"
+argon2 = "0.6"
+chacha20poly1305 = "0.11"
+getrandom = "0.4"
+base64 = "0.23"
+subtle = "2.6"
+zeroize = "1.9"
+governor = "0.10"
+ipnet = { version = "2.12", features = ["serde"] }
+
+# Media, files and discovery
+lofty = "0.25"
+notify = "8.2"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+mdns-sd = "0.21"
+if-addrs = "0.15"
+rust-embed = "8.14"
+mime_guess = "2.0"
+httpdate = "1.0"
+percent-encoding = "2.3"
+sd-notify = "0.5"
+fs4 = "1.1"
+unicode-normalization = "0.1"
+
+# Dev
+proptest = "1.12"
+rstest = "0.28"
+insta = { version = "1.49", features = ["json"] }
+tempfile = "3.27"
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+single_match_else = "allow"
+missing_errors_doc = "allow"
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+unwrap_used = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+debug = "line-tables-only"
+strip = "debuginfo"

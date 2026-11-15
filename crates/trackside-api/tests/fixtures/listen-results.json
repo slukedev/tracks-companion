@@ -1,0 +1,17 @@
+{
+  "results": [
+    {
+      "client_listen_id": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C",
+      "status": "accepted"
+    },
+    {
+      "client_listen_id": "7A2E0D3B-4C5F-4A6B-9C8D-2E3F4A5B6C7D",
+      "status": "duplicate"
+    },
+    {
+      "client_listen_id": "8B3F1E4C-5D6A-4B7C-8D9E-3F4A5B6C7D8E",
+      "reason": "future",
+      "status": "rejected"
+    }
+  ]
+}

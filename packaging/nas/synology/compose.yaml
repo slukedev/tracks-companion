@@ -1,0 +1,32 @@
+# Trackside on a Synology NAS with Container Manager (DSM 7.2 or later).
+#
+#   1. In File Station, create docker/trackside/data. Leave your music where it is.
+#   2. Find your user and group ids: Control Panel > Terminal & SNMP > enable SSH, then
+#      `ssh you@nas id`. Put them in `user:` below (often 1026:100).
+#   3. Container Manager > Project > Create, path docker/trackside, source "Create
+#      docker-compose.yml", paste this file.
+#
+# Server/docs/ops/install.md covers each step in more detail.
+
+services:
+  trackside:
+    image: ghcr.io/slukedev/trackside:latest
+    container_name: trackside
+    restart: unless-stopped
+    user: "1026:100"
+    ports:
+      - "4747:4747"
+    volumes:
+      - /volume1/docker/trackside/data:/data
+      - /volume1/music:/music:ro
+    environment:
+      TZ: Europe/London
+      # The NAS's LAN address, so pairing QR codes work.
+      # TRACKSIDE_SERVER__PUBLIC_URLS: "http://192.168.1.20:4747"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

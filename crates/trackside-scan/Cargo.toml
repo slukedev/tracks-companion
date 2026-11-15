@@ -1,0 +1,29 @@
+[package]
+name = "trackside-scan"
+description = "Library walking, tag reading, audio digests, watching and the importer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+trackside-core.workspace = true
+trackside-media.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+blake3.workspace = true
+lofty.workspace = true
+notify.workspace = true
+unicode-normalization.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+trackside-core = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,34 @@
+{
+  "complete": true,
+  "libraries": [
+    {
+      "id": "ldhmwjvv1e9320kfeh1mp",
+      "name": "Music",
+      "song_count": 48211,
+      "state": "ok"
+    },
+    {
+      "id": "ldhmqjvv1b5320gf8gstm",
+      "name": "Acquired",
+      "song_count": 312,
+      "state": "ok"
+    }
+  ],
+  "mode": "snapshot",
+  "next_cursor": "eyJ2IjoxLCJlIjoxLCJzIjo5MTgyNzR9",
+  "play_queue": {
+    "changed_by": "Tracks",
+    "current": 1,
+    "device_id": "dchjkb9k3cnapjw0kmhq6",
+    "entries": [
+      "sdjcz08vf67h7cx28snq6",
+      "skskbcsede1n6haz492vm"
+    ],
+    "position_ms": 81000,
+    "updated_at": "2026-11-14T09:25:00.000Z"
+  },
+  "snapshot": {
+    "kind": "play_queue",
+    "seq": 918274
+  }
+}

@@ -1,0 +1,5 @@
+---
+source: crates/trackside-subsonic/tests/snapshots.rs
+expression: redact(&json.text())
+---
+{"subsonic-response":{"genres":{"genre":[{"albumCount":1,"songCount":1,"value":"Indie"},{"albumCount":1,"songCount":2,"value":"R&B"}]},"openSubsonic":true,"serverVersion":"0.1.0","status":"ok","type":"trackside","version":"1.16.1"}}

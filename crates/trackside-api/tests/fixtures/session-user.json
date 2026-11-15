@@ -1,0 +1,13 @@
+{
+  "display_name": "Luke",
+  "id": "uenspa9s0dhs6ps80kc00",
+  "permissions": {
+    "can_download": true,
+    "can_request": true,
+    "can_upload": false,
+    "legacy_subsonic": false
+  },
+  "recent_auth_until": "2026-11-14T09:40:00.000Z",
+  "role": "member",
+  "username": "luke"
+}

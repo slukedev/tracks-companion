@@ -1,0 +1,42 @@
+{
+  "artists": [
+    {
+      "album_count": 7,
+      "id": "rgtm6gw8kzkjyq611mzzp",
+      "identity": "beyonce",
+      "mbz": {
+        "artist": "859d0860-d480-4efd-970c-c05d5f1776b8"
+      },
+      "name": "Beyoncé",
+      "song_count": 112
+    },
+    {
+      "album_count": 15,
+      "id": "rr9ggkqfxn21ftg3fy1vy",
+      "identity": "queen",
+      "name": "Queen",
+      "song_count": 180
+    }
+  ],
+  "libraries": [
+    {
+      "id": "ldhmwjvv1e9320kfeh1mp",
+      "name": "Music",
+      "song_count": 48211,
+      "state": "ok"
+    },
+    {
+      "id": "ldhmqjvv1b5320gf8gstm",
+      "name": "Acquired",
+      "song_count": 312,
+      "state": "ok"
+    }
+  ],
+  "mode": "snapshot",
+  "next_cursor": "eyJ2IjoxLCJlIjoxLCJzIjo5MTgyNzQsInAiOnsia2luZCI6ImFsYnVtcyIsImFmdGVyIjowfX0",
+  "snapshot": {
+    "kind": "artists",
+    "next": "eyJ2IjoxLCJlIjoxLCJzIjo5MTgyNzQsInAiOnsia2luZCI6ImFsYnVtcyIsImFmdGVyIjowfX0",
+    "seq": 918274
+  }
+}

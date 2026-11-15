@@ -1,0 +1,5 @@
+---
+source: crates/trackside-subsonic/tests/snapshots.rs
+expression: redact(&json.text())
+---
+{"subsonic-response":{"lyrics":{"artist":"Beyoncé","title":"Halo","value":"First line\nSecond line"},"openSubsonic":true,"serverVersion":"0.1.0","status":"ok","type":"trackside","version":"1.16.1"}}

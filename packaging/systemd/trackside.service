@@ -1,0 +1,76 @@
+# Trackside as a systemd service. The .deb and .rpm packages install this file; for a manual
+# install copy it to /etc/systemd/system/ and the binary to /usr/bin/trackside.
+#
+# Change settings with a drop-in rather than editing this file, so upgrades keep them:
+#   sudo systemctl edit trackside
+# for example:
+#   [Service]
+#   Environment=TRACKSIDE_MUSIC_DIR=/mnt/nas/music
+#   ReadOnlyPaths=/mnt/nas/music
+#
+# Data lives in /var/lib/trackside (a link to /var/lib/private/trackside, because of
+# DynamicUser), caches in /var/cache/trackside. Put config.toml in /var/lib/trackside or
+# environment variables in /etc/trackside/trackside.env.
+
+[Unit]
+Description=Trackside music server
+Documentation=https://github.com/slukedev/tracks/blob/main/Server/README.md
+After=network-online.target local-fs.target remote-fs.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=/usr/bin/trackside serve
+WatchdogSec=30
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=5min
+TimeoutStopSec=30s
+
+DynamicUser=yes
+StateDirectory=trackside
+StateDirectoryMode=0750
+CacheDirectory=trackside
+CacheDirectoryMode=0750
+ConfigurationDirectory=trackside
+ConfigurationDirectoryMode=0755
+Environment=TRACKSIDE_CACHE_DIR=%C/trackside
+Environment=TRACKSIDE_MUSIC_DIR=/srv/music
+EnvironmentFile=-/etc/trackside/trackside.env
+UMask=0027
+LimitNOFILE=65536
+
+# Music is read, never written. Add each library folder here (a drop-in can add more
+# lines). The leading - lets the service start when the folder does not exist yet.
+ReadOnlyPaths=-/srv/music
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+# AF_NETLINK lists network interfaces for the LAN addresses in pairing codes.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# Deno, which yt-dlp uses for YouTube, compiles JavaScript at run time and cannot start
+# under this. If you turn on acquisition with Deno installed, set it to no in a drop-in.
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

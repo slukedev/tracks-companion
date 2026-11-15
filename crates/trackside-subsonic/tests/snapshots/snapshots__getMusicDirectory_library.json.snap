@@ -1,0 +1,5 @@
+---
+source: crates/trackside-subsonic/tests/snapshots.rs
+expression: redact(&json.text())
+---
+{"subsonic-response":{"directory":{"child":[{"id":"<f1>","isDir":true,"name":"Beyonce","parent":"<f2>","title":"Beyonce"},{"id":"<f3>","isDir":true,"name":"Florence","parent":"<f2>","title":"Florence"}],"id":"<f2>","name":"Music"},"openSubsonic":true,"serverVersion":"0.1.0","status":"ok","type":"trackside","version":"1.16.1"}}

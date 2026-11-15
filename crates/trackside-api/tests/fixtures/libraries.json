@@ -1,0 +1,16 @@
+{
+  "libraries": [
+    {
+      "id": "ldhmwjvv1e9320kfeh1mp",
+      "name": "Music",
+      "song_count": 48211,
+      "state": "ok"
+    },
+    {
+      "id": "ldhmqjvv1b5320gf8gstm",
+      "name": "Acquired",
+      "song_count": 312,
+      "state": "ok"
+    }
+  ]
+}

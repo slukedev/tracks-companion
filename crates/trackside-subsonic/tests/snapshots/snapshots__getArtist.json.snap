@@ -1,0 +1,5 @@
+---
+source: crates/trackside-subsonic/tests/snapshots.rs
+expression: redact(&json.text())
+---
+{"subsonic-response":{"artist":{"album":[{"artist":"Beyoncé","artistId":"rgtm6gw8kzkjyq611mzzp","artists":[{"id":"rgtm6gw8kzkjyq611mzzp","name":"Beyoncé"}],"created":"2026-11-14T09:30:00.000Z","displayArtist":"Beyoncé","duration":403,"genre":"R&B","genres":[{"name":"R&B"}],"id":"<a1>","isCompilation":false,"musicBrainzId":"","name":"I Am... Sasha Fierce","releaseTypes":[],"songCount":2,"sortName":"i am... sasha fierce","year":2008}],"albumCount":1,"id":"rgtm6gw8kzkjyq611mzzp","musicBrainzId":"","name":"Beyoncé","sortName":"beyonce"},"openSubsonic":true,"serverVersion":"0.1.0","status":"ok","type":"trackside","version":"1.16.1"}}

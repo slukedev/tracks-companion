@@ -1,0 +1,50 @@
+# Trackside with Docker Compose.
+#
+#   1. Put this file in an empty folder.
+#   2. Set MUSIC_DIR below or in a .env file beside it (see env.example).
+#   3. docker compose up -d
+#   4. docker compose logs trackside   (the setup token is in the banner)
+#
+# Optional extras, each in its own file layered on top of this one:
+#   compose.acquire.yaml    acquisition with the -acquire image and an slskd container
+#   compose.tailscale.yaml  reach the server from anywhere over your tailnet
+# Use them with `docker compose -f compose.yaml -f compose.acquire.yaml up -d`, or list them
+# in COMPOSE_FILE in .env so plain `docker compose` picks them up.
+#
+# Docs: https://github.com/slukedev/tracks/blob/main/Server/README.md
+
+name: trackside
+
+services:
+  trackside:
+    image: ghcr.io/slukedev/trackside:${TRACKSIDE_TAG:-latest}
+    container_name: trackside
+    restart: unless-stopped
+    ports:
+      - "${TRACKSIDE_PORT:-4747}:4747"
+    volumes:
+      - trackside-data:/data
+      - ${MUSIC_DIR:-./music}:/music:ro
+    environment:
+      # Backup schedules use local time.
+      TZ: ${TZ:-UTC}
+      # Inside Docker's bridge network the server cannot see your LAN address, so pairing QR
+      # codes would only carry Docker's internal one. List the addresses Tracks should try,
+      # comma-separated. Also editable in the dashboard under Settings.
+      # TRACKSIDE_SERVER__PUBLIC_URLS: "http://192.168.1.20:4747,https://music.example.com"
+    # The image runs as user 65532 and writes only to /data, so the rest can stay read-only.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # mDNS (Bonjour) discovery and LAN addresses in pairing QR codes need the host's network.
+    # With the default bridge network the server only sees Docker's internal address; pairing
+    # still works by code or by typing the address. To use host networking, remove `ports:`
+    # above and uncomment:
+    # network_mode: host
+
+volumes:
+  trackside-data:

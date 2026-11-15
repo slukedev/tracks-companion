@@ -1,0 +1,23 @@
+{
+  "artists": [
+    {
+      "artist": {
+        "album_count": 15,
+        "id": "rr9ggkqfxn21ftg3fy1vy",
+        "identity": "queen",
+        "name": "Queen",
+        "song_count": 180
+      },
+      "identity": "queen",
+      "in_library": true,
+      "name": "Queen",
+      "score": 0.6200000047683716
+    },
+    {
+      "identity": "rihanna",
+      "in_library": false,
+      "name": "Rihanna",
+      "score": 0.5799999833106995
+    }
+  ]
+}

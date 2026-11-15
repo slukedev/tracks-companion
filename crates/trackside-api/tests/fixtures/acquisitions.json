@@ -1,0 +1,15 @@
+{
+  "acquisitions": [
+    {
+      "album": "I Am... Sasha Fierce",
+      "artist": "Beyoncé",
+      "created_at": "2026-11-14T09:30:00.000Z",
+      "existing": false,
+      "id": "qc5hgnjk920q78t8wpcg1",
+      "quality": "lossless",
+      "state": "queued",
+      "title": "Halo",
+      "updated_at": "2026-11-14T09:30:07.000Z"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {
+      "action": "invite.create",
+      "actor": "luke",
+      "at": "2026-11-14T09:29:00.000Z",
+      "detail": "For Nana",
+      "ip": "192.168.1.41",
+      "summary": "Created an invite",
+      "target": "member"
+    }
+  ]
+}

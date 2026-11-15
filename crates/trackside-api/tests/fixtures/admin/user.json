@@ -1,0 +1,21 @@
+{
+  "api_keys": 1,
+  "created_at": "2026-09-05T09:30:00.000Z",
+  "devices": 2,
+  "disabled": false,
+  "display_name": "Luke",
+  "id": "uenspa9s0dhs6ps80kc00",
+  "last_seen_at": "2026-11-14T09:29:00.000Z",
+  "library_ids": [
+    "ldhmwjvv1e9320kfeh1mp"
+  ],
+  "permissions": {
+    "can_download": true,
+    "can_request": true,
+    "can_upload": false,
+    "legacy_subsonic": false
+  },
+  "role": "member",
+  "sessions": 1,
+  "username": "luke"
+}

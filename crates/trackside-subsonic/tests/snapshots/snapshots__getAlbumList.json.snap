@@ -1,0 +1,5 @@
+---
+source: crates/trackside-subsonic/tests/snapshots.rs
+expression: redact(&json.text())
+---
+{"subsonic-response":{"albumList":{"album":[{"album":"I Am... Sasha Fierce","artist":"Beyoncé","artistId":"rgtm6gw8kzkjyq611mzzp","created":"2026-11-14T09:30:00.000Z","duration":403,"genre":"R&B","id":"<a1>","isDir":true,"mediaType":"album","name":"I Am... Sasha Fierce","parent":"rgtm6gw8kzkjyq611mzzp","songCount":2,"title":"I Am... Sasha Fierce","year":2008},{"album":"Lungs","artist":"Florence + the Machine","artistId":"rb8xc8hh2jxdgzte7vgvn","created":"2026-11-14T09:30:00.000Z","duration":203,"genre":"Indie","id":"<a2>","isDir":true,"mediaType":"album","name":"Lungs","parent":"rb8xc8hh2jxdgzte7vgvn","songCount":1,"title":"Lungs","year":2008}]},"openSubsonic":true,"serverVersion":"0.1.0","status":"ok","type":"trackside","version":"1.16.1"}}

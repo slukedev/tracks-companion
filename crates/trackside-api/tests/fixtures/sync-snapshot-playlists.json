@@ -1,0 +1,46 @@
+{
+  "libraries": [
+    {
+      "id": "ldhmwjvv1e9320kfeh1mp",
+      "name": "Music",
+      "song_count": 48211,
+      "state": "ok"
+    },
+    {
+      "id": "ldhmqjvv1b5320gf8gstm",
+      "name": "Acquired",
+      "song_count": 312,
+      "state": "ok"
+    }
+  ],
+  "mode": "snapshot",
+  "next_cursor": "eyJ2IjoxLCJlIjoxLCJzIjo5MTgyNzQsInAiOnsia2luZCI6InN0YXJzIiwiYWZ0ZXIiOjB9fQ",
+  "playlists": [
+    {
+      "entries": [
+        "sdjcz08vf67h7cx28snq6",
+        "skskbcsede1n6haz492vm"
+      ],
+      "playlist": {
+        "comment": "",
+        "created_at": "2026-01-18T09:30:00.000Z",
+        "duration_ms": 470640,
+        "id": "pe13g4nkc9a478837bstf",
+        "is_public": false,
+        "name": "Late Drive",
+        "owner": {
+          "display_name": "Luke",
+          "id": "uenspa9s0dhs6ps80kc00"
+        },
+        "revision": 12,
+        "song_count": 2,
+        "updated_at": "2026-11-10T09:30:00.000Z"
+      }
+    }
+  ],
+  "snapshot": {
+    "kind": "playlists",
+    "next": "eyJ2IjoxLCJlIjoxLCJzIjo5MTgyNzQsInAiOnsia2luZCI6InN0YXJzIiwiYWZ0ZXIiOjB9fQ",
+    "seq": 918274
+  }
+}

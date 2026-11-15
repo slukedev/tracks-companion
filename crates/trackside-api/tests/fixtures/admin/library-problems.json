@@ -1,0 +1,22 @@
+{
+  "quarantined": [
+    {
+      "at": "2026-11-14T08:40:00.000Z",
+      "error": "Reading this file took longer than 30 seconds.",
+      "path": "Aphex Twin/Drukqs/broken.flac"
+    }
+  ],
+  "tag_problems": [
+    {
+      "path": "Various Artists/Now 47/07 Track07.mp3",
+      "problem": "Tags could not be read; the title was taken from the file name.",
+      "song_id": "sdjcz08vf67h7cx28snq6"
+    }
+  ],
+  "unreadable_folders": [
+    {
+      "path": "Private",
+      "since": "2026-11-14T08:40:00.000Z"
+    }
+  ]
+}

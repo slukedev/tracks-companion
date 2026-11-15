@@ -1,0 +1,12 @@
+{
+  "discovery.mdns": {
+    "editable": false,
+    "source": "config",
+    "value": true
+  },
+  "server.name": {
+    "editable": true,
+    "source": "dashboard",
+    "value": "Home"
+  }
+}

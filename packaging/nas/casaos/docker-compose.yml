@@ -1,0 +1,69 @@
+# Trackside for CasaOS and ZimaOS: App Store > Custom Install > Import, and paste this file.
+
+name: trackside
+
+services:
+  trackside:
+    image: ghcr.io/slukedev/trackside:latest
+    container_name: trackside
+    restart: unless-stopped
+    user: "1000:1000"
+    ports:
+      - target: 4747
+        published: "4747"
+        protocol: tcp
+    volumes:
+      - type: bind
+        source: /DATA/AppData/trackside
+        target: /data
+      - type: bind
+        source: /DATA/Media/Music
+        target: /music
+        read_only: true
+    environment:
+      TZ: ${TZ:-UTC}
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    x-casaos:
+      ports:
+        - container: "4747"
+          description:
+            en_us: Web dashboard and the API Tracks connects to
+      volumes:
+        - container: /data
+          description:
+            en_us: Database, keys, backups and caches
+        - container: /music
+          description:
+            en_us: Your music, read-only
+      envs:
+        - container: TZ
+          description:
+            en_us: Time zone for the backup schedule
+
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: trackside
+  author: Trackside contributors
+  developer: Trackside contributors
+  category: Media
+  title:
+    en_us: Trackside
+  tagline:
+    en_us: Your music server for the Tracks app
+  description:
+    en_us: >-
+      Trackside indexes the music you own and serves it to the Tracks app and to any
+      Subsonic or OpenSubsonic app, with accounts, listens, favourites and playlists.
+      After the first start, open the app's log for the setup token.
+  icon: https://raw.githubusercontent.com/slukedev/tracks/main/images/icon.png
+  index: /
+  port_map: "4747"
+  scheme: http

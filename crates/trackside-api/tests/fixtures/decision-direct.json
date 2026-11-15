@@ -1,0 +1,14 @@
+{
+  "delivered": {
+    "bit_depth": 16,
+    "bitrate_kbps": 1012,
+    "codec": "flac",
+    "container": "flac",
+    "duration_ms": 261640,
+    "lossless": true,
+    "sample_rate": 44100,
+    "size": 33102456
+  },
+  "mode": "direct",
+  "url": "/api/v1/songs/sdjcz08vf67h7cx28snq6/stream"
+}

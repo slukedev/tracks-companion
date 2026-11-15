@@ -1,0 +1,7 @@
+{
+  "code": "Q7RM-4X2K",
+  "expires_at": "2026-11-14T09:40:00.000Z",
+  "id": "ge1gnmkv9dsa20vtnqdjq",
+  "qr_payload": "trackside://pair?d=eyJ2IjoxLCJzZXJ2ZXJfaWQiOiI1ZjBjMmI5ZS04YTNkLTRjMWUtOWI3YS0yZDZlNGY4YTFjM2IiLCJuYW1lIjoiSG9tZSIsInVybHMiOlt7InVybCI6Imh0dHA6Ly8xOTIuMTY4LjEuMjA6NDc0NyIsImtpbmQiOiJsYW4iLCJ0bHMiOmZhbHNlfSx7InVybCI6Imh0dHA6Ly9ob21lLmxvY2FsOjQ3NDciLCJraW5kIjoibGFuIiwidGxzIjpmYWxzZX0seyJ1cmwiOiJodHRwczovL211c2ljLmV4YW1wbGUuY29tIiwia2luZCI6InB1YmxpYyIsInRscyI6dHJ1ZX1dLCJvZmZlciI6ImdlMWdubWt2OWRzYTIwdnRucWRqcSIsImNvZGUiOiJRN1JNNFgySzlUQlY2V05aM0hDSjhEUEY1WSIsImV4cCI6MTc5NDY0OTIwMH0",
+  "qr_svg_url": "/api/v1/me/pairing-codes/ge1gnmkv9dsa20vtnqdjq/qr.svg"
+}

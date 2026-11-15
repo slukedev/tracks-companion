@@ -1,0 +1,21 @@
+{
+  "providers": [
+    {
+      "configured": true,
+      "detail": "slskd 0.22.5",
+      "enabled": true,
+      "health": "ok",
+      "name": "soulseek",
+      "settings": {
+        "concurrency": 3,
+        "url": "http://slskd:5030"
+      },
+      "stats": {
+        "failures_today": 0,
+        "fetches_today": 2,
+        "searches_today": 18
+      },
+      "version": "0.22.5"
+    }
+  ]
+}

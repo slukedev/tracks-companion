@@ -1,0 +1,291 @@
+{
+  "songs": 50500,
+  "files": 50500,
+  "machine": {
+    "arch": "x86_64",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "cpus": "4",
+    "os": "linux"
+  },
+  "metrics": {
+    "album_page_p50_ms": {
+      "value": 2.123,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 5.0,
+      "budget_note": "p50 at 500k",
+      "gate": true
+    },
+    "album_page_p99_ms": {
+      "value": 3.045,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 40.0,
+      "budget_note": "p99 at 500k",
+      "gate": true
+    },
+    "artist_page_p50_ms": {
+      "value": 2.328,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 5.0,
+      "budget_note": "p50 at 500k",
+      "gate": true
+    },
+    "artist_page_p99_ms": {
+      "value": 4.116,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 40.0,
+      "budget_note": "p99 at 500k",
+      "gate": true
+    },
+    "artwork_600_cached_p99_ms": {
+      "value": 1.945,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 5.0,
+      "budget_note": "cached",
+      "gate": true
+    },
+    "artwork_600_first_resize_ms": {
+      "value": 26.993,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 120.0,
+      "budget_note": "first resize",
+      "gate": false
+    },
+    "cold_start_to_ready_ms": {
+      "value": 284.642,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 300.0,
+      "budget_note": "no migrations, 500k songs",
+      "gate": true
+    },
+    "concurrent_50_streams_worst_ttfb_ms": {
+      "value": 24.727,
+      "unit": "ms",
+      "better": "lower",
+      "gate": true
+    },
+    "graceful_stop_ms": {
+      "value": 82.178,
+      "unit": "ms",
+      "better": "lower",
+      "gate": false
+    },
+    "hls_first_segment_uncached_max_ms": {
+      "value": 113.404,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 700.0,
+      "budget_note": "medium machine",
+      "gate": true
+    },
+    "idle_rss_anon_mb": {
+      "value": 98.086,
+      "unit": "MB",
+      "better": "lower",
+      "budget": 120.0,
+      "budget_note": "500k songs, excluding the page cache",
+      "gate": true
+    },
+    "idle_rss_total_mb": {
+      "value": 175.539,
+      "unit": "MB",
+      "better": "lower",
+      "gate": false
+    },
+    "list_albums_artists_p50_ms": {
+      "value": 2.091,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 5.0,
+      "budget_note": "p50 at 500k",
+      "gate": true
+    },
+    "list_albums_artists_p99_ms": {
+      "value": 3.479,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 40.0,
+      "budget_note": "p99 at 500k",
+      "gate": true
+    },
+    "listens_500_max_ms": {
+      "value": 41.772,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 80.0,
+      "budget_note": "per batch",
+      "gate": true
+    },
+    "listens_500_p50_ms": {
+      "value": 22.402,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 80.0,
+      "budget_note": "per batch",
+      "gate": true
+    },
+    "scan_full_files_per_s": {
+      "value": 281.261,
+      "unit": "files/s",
+      "better": "higher",
+      "budget": 400.0,
+      "budget_note": "medium machine, local SSD",
+      "gate": true
+    },
+    "scan_quick_unchanged_s": {
+      "value": 0.62,
+      "unit": "s",
+      "better": "lower",
+      "budget": 2.02,
+      "budget_note": "20 s at 500k on SSD, scaled",
+      "gate": true
+    },
+    "search_as_you_type_p50_ms": {
+      "value": 7.059,
+      "unit": "ms",
+      "better": "lower",
+      "gate": true
+    },
+    "search_as_you_type_p99_ms": {
+      "value": 11.535,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 25.0,
+      "budget_note": "p99 at 500k",
+      "gate": true
+    },
+    "search_common_words_worst_p99_ms": {
+      "value": 9.889,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 40.0,
+      "budget_note": "list endpoint budget",
+      "gate": true
+    },
+    "search_multi_word_p50_ms": {
+      "value": 4.276,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 5.0,
+      "budget_note": "p50 at 500k",
+      "gate": true
+    },
+    "search_multi_word_p99_ms": {
+      "value": 7.241,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 40.0,
+      "budget_note": "p99 at 500k",
+      "gate": true
+    },
+    "search_one_word_p50_ms": {
+      "value": 7.058,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 5.0,
+      "budget_note": "p50 at 500k",
+      "gate": true
+    },
+    "search_one_word_p99_ms": {
+      "value": 10.204,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 40.0,
+      "budget_note": "p99 at 500k",
+      "gate": true
+    },
+    "stream_ttfb_cached_transcode_p99_ms": {
+      "value": 3.286,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 30.0,
+      "budget_note": "cached transcode",
+      "gate": true
+    },
+    "stream_ttfb_direct_p50_ms": {
+      "value": 2.155,
+      "unit": "ms",
+      "better": "lower",
+      "gate": true
+    },
+    "stream_ttfb_direct_p99_ms": {
+      "value": 3.844,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 25.0,
+      "budget_note": "LAN, warm disk",
+      "gate": true
+    },
+    "sync_delta_100_changes_ms": {
+      "value": 1.792,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 10.0,
+      "budget_note": "server time",
+      "gate": true
+    },
+    "sync_full_initial_s": {
+      "value": 1.607,
+      "unit": "s",
+      "better": "lower",
+      "budget": 4.545,
+      "budget_note": "45 s at 500k, scaled to this size",
+      "gate": true
+    },
+    "sync_snapshot_page_5000_kb_gzip": {
+      "value": 249.977,
+      "unit": "KB",
+      "better": "lower",
+      "budget": 400.0,
+      "budget_note": "brotli; this run asks for gzip",
+      "gate": true
+    },
+    "sync_snapshot_page_5000_max_ms": {
+      "value": 71.223,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 120.0,
+      "budget_note": "per page of 5000 songs",
+      "gate": true
+    },
+    "sync_snapshot_page_5000_p50_ms": {
+      "value": 58.261,
+      "unit": "ms",
+      "better": "lower",
+      "budget": 120.0,
+      "budget_note": "per page of 5000 songs",
+      "gate": true
+    },
+    "transcode_aac128_half_second_song_ms": {
+      "value": 70.472,
+      "unit": "ms",
+      "better": "lower",
+      "gate": false
+    },
+    "watcher_to_sync_s": {
+      "value": 5.181,
+      "unit": "s",
+      "better": "lower",
+      "budget": 8.0,
+      "budget_note": "5 s debounce plus import",
+      "gate": true
+    }
+  },
+  "notes": [
+    "library: 50500 files, 2075 artists, 4169 albums, 264 MB, generated in 7 s",
+    "times are measured by a client on the same host, so they include loopback HTTP; budgets are for 500k songs on the reference machines unless noted",
+    "first full scan: {\"added\":50500,\"errors\":0,\"files_seen\":50500,\"finished_at\":\"2026-11-15T02:53:18.182Z\",\"folders_seen\":6203,\"id\":\"nezbspccqjv2xta63ym0t\",\"kind\":\"full\",\"library_id\":\"ltvhjk6jqszbdw735dqzj\",\"missing\":0,\"moved\":0,\"started_at\":\"2026-11-15T02:50:18.983Z\",\"state\":\"done\",\"trigger\":\"admin\",\"updated\":0}",
+    "50 concurrent streams finished in 25.619088ms"
+  ],
+  "regressions": [],
+  "over_budget": [
+    "scan_full_files_per_s: 281.261 files/s against a budget of 400",
+    "search_one_word_p50_ms: 7.058 ms against a budget of 5"
+  ]
+}

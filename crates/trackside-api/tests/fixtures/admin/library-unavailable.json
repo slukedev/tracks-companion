@@ -1,0 +1,16 @@
+{
+  "acquire_target": false,
+  "enabled": true,
+  "id": "ldhmwjvv1e9320kfeh1mp",
+  "name": "Music",
+  "quick_scan_interval_s": 1800,
+  "root": "/music",
+  "song_count": 48211,
+  "state": "unavailable",
+  "unavailable_reason": "The folder is empty or not mounted.",
+  "unavailable_since": "2026-11-14T08:00:00.000Z",
+  "uploads_target": false,
+  "watch": true,
+  "watching": "events",
+  "writable": false
+}

@@ -1,0 +1,5 @@
+---
+source: crates/trackside-subsonic/tests/snapshots.rs
+expression: redact(&xml.text())
+---
+<?xml version="1.0" encoding="UTF-8"?><subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1" type="trackside" serverVersion="0.1.0" openSubsonic="true"><directory id="<f1>" name="Music"><child id="<f2>" parent="<f1>" isDir="true" title="Beyonce" name="Beyonce"/><child id="<f3>" parent="<f1>" isDir="true" title="Florence" name="Florence"/></directory></subsonic-response>

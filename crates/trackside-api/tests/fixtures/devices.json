@@ -1,0 +1,16 @@
+{
+  "devices": [
+    {
+      "app_name": "Tracks",
+      "app_version": "3.2",
+      "created_at": "2026-09-05T09:30:00.000Z",
+      "current": true,
+      "id": "dchjkb9k3cnapjw0kmhq6",
+      "last_ip": "192.168.1.41",
+      "last_seen_at": "2026-11-14T09:29:00.000Z",
+      "model": "iPhone18,1",
+      "name": "Luke's iPhone",
+      "platform": "ios"
+    }
+  ]
+}

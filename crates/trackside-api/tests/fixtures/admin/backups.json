@@ -1,0 +1,11 @@
+{
+  "backups": [
+    {
+      "at": "2026-11-14T03:30:00.000Z",
+      "bytes": 790000000,
+      "has_key": true,
+      "kind": "scheduled",
+      "name": "trackside-20261114T033000Z.db"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "created_at": "2026-11-14T09:15:00.000Z",
+  "created_by": "luke",
+  "expires_at": "2026-11-21T09:30:00.000Z",
+  "id": "vd5q0azkmcnapwrb59r00",
+  "library_ids": [
+    "ldhmwjvv1e9320kfeh1mp"
+  ],
+  "note": "For Nana",
+  "permissions": {
+    "can_download": true,
+    "can_request": true,
+    "can_upload": false,
+    "legacy_subsonic": false
+  },
+  "qr_svg_url": "/api/v1/admin/invites/vd5q0azkmcnapwrb59r00/qr.svg",
+  "role": "member",
+  "state": "open",
+  "url": "http://192.168.1.20:4747/invite/7KQ2M9XDp3XvQ8rL2mN6tY0w"
+}

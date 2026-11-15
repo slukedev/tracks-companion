@@ -1,0 +1,20 @@
+{
+  "scans": [
+    {
+      "added": 212,
+      "errors": 2,
+      "files_seen": 48214,
+      "finished_at": "2026-11-14T08:45:00.000Z",
+      "folders_seen": 4112,
+      "id": "nedhqmcs0dnn76tb33c00",
+      "kind": "full",
+      "library_id": "ldhmwjvv1e9320kfeh1mp",
+      "missing": 1,
+      "moved": 3,
+      "started_at": "2026-11-14T08:30:00.000Z",
+      "state": "done",
+      "trigger": "admin",
+      "updated": 37
+    }
+  ]
+}

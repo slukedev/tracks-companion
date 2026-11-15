@@ -1,0 +1,14 @@
+{
+  "acquire_target": false,
+  "enabled": true,
+  "id": "ldhmwjvv1e9320kfeh1mp",
+  "name": "Music",
+  "quick_scan_interval_s": 1800,
+  "root": "/music",
+  "song_count": 48211,
+  "state": "ok",
+  "uploads_target": false,
+  "watch": true,
+  "watching": "events",
+  "writable": false
+}

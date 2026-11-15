@@ -1,0 +1,13 @@
+{
+  "delivered": {
+    "bitrate_kbps": 256,
+    "codec": "aac",
+    "container": "m4a",
+    "duration_ms": 261640,
+    "lossless": false,
+    "sample_rate": 44100
+  },
+  "mode": "hls",
+  "reason": "unsupported_codec",
+  "url": "/api/v1/transcodes/j8k2m4n6p8/index.m3u8"
+}

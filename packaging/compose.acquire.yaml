@@ -1,0 +1,63 @@
+# Acquisition: lets the server get songs you do not have yet, through yt-dlp and an slskd
+# instance. Layer it on top of compose.yaml:
+#
+#   docker compose -f compose.yaml -f compose.acquire.yaml up -d
+#
+# Before the first start (Server/docs/ops/acquisition.md explains each step):
+#
+#   mkdir -p acquired slskd/app slskd/downloads
+#   sudo chown -R 65532:65532 acquired slskd
+#   echo "SLSKD_API_KEY=$(openssl rand -hex 32)" >> .env
+#
+# and put your Soulseek account and a password for slskd's own web page in .env (see
+# env.example). Nothing is fetched until an admin enables a provider in the dashboard.
+#
+# slskd shares only ./acquired, read-only. Keep it that way: everything else stays private.
+
+services:
+  trackside:
+    image: ghcr.io/slukedev/trackside:${TRACKSIDE_ACQUIRE_TAG:-acquire}
+    depends_on:
+      - slskd
+    volumes:
+      # The writable library acquired songs are filed into. Add it in the dashboard as a
+      # library with the folder /acquired, then choose it under Acquisition.
+      - ./acquired:/acquired
+      # slskd's finished downloads. Trackside moves each file out of here once it is complete.
+      - ./slskd/downloads:/slskd-downloads
+    environment:
+      TRACKSIDE_ACQUIRE__SOULSEEK__URL: http://slskd:5030
+      TRACKSIDE_ACQUIRE__SOULSEEK__API_KEY: ${SLSKD_API_KEY:?set SLSKD_API_KEY in .env}
+      TRACKSIDE_ACQUIRE__SOULSEEK__DOWNLOADS_DIR: /slskd-downloads
+
+  slskd:
+    image: ghcr.io/slskd/slskd:0.26.2@sha256:d0963a3e5b16facd295bf4f2156dad0182f246b1b21a032cae12f5494c694843
+    container_name: trackside-slskd
+    restart: unless-stopped
+    # The same user as Trackside, so each can read what the other writes.
+    user: "65532:65532"
+    ports:
+      # slskd's web page, reachable only from this machine.
+      - "127.0.0.1:5030:5030"
+      # Incoming peer connections. Forwarding this port on your router is optional and only
+      # makes transfers more likely to connect.
+      - "50300:50300"
+    volumes:
+      - ./slskd/app:/app
+      - ./slskd/downloads:/downloads
+      # The only share: what Trackside acquired, read-only.
+      - ./acquired:/share:ro
+    environment:
+      SLSKD_SHARED_DIR: /share
+      # slskd listens on [::] by default and exits on hosts with IPv6 turned off. Docker's
+      # bridge network always has IPv4. Its web page is only reached from this machine and
+      # from Trackside, so it needs no HTTPS listener.
+      SLSKD_HTTP_IP_ADDRESS: 0.0.0.0
+      SLSKD_NO_HTTPS: "true"
+      SLSKD_DOWNLOADS_DIR: /downloads
+      SLSKD_REMOTE_CONFIGURATION: "false"
+      SLSKD_API_KEY: ${SLSKD_API_KEY:?set SLSKD_API_KEY in .env}
+      SLSKD_USERNAME: ${SLSKD_WEB_USERNAME:-slskd}
+      SLSKD_PASSWORD: ${SLSKD_WEB_PASSWORD:?set SLSKD_WEB_PASSWORD in .env}
+      SLSKD_SLSK_USERNAME: ${SOULSEEK_USERNAME:?set SOULSEEK_USERNAME in .env}
+      SLSKD_SLSK_PASSWORD: ${SOULSEEK_PASSWORD:?set SOULSEEK_PASSWORD in .env}

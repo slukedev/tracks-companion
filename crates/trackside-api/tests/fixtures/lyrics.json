@@ -1,0 +1,33 @@
+{
+  "lyrics": [
+    {
+      "kind": "synced",
+      "lang": "eng",
+      "lines": [
+        {
+          "start_ms": 12340,
+          "text": "Remember those walls I built?"
+        },
+        {
+          "start_ms": 16800,
+          "text": "Well, baby, they're tumbling down"
+        }
+      ],
+      "offset_ms": 0,
+      "source": "sidecar"
+    },
+    {
+      "kind": "plain",
+      "lang": "eng",
+      "lines": [
+        {
+          "text": "Remember those walls I built?"
+        },
+        {
+          "text": "Well, baby, they're tumbling down"
+        }
+      ],
+      "source": "embedded"
+    }
+  ]
+}

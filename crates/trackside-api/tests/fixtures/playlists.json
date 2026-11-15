@@ -1,0 +1,19 @@
+{
+  "playlists": [
+    {
+      "comment": "",
+      "created_at": "2026-01-18T09:30:00.000Z",
+      "duration_ms": 470640,
+      "id": "pe13g4nkc9a478837bstf",
+      "is_public": false,
+      "name": "Late Drive",
+      "owner": {
+        "display_name": "Luke",
+        "id": "uenspa9s0dhs6ps80kc00"
+      },
+      "revision": 12,
+      "song_count": 2,
+      "updated_at": "2026-11-10T09:30:00.000Z"
+    }
+  ]
+}

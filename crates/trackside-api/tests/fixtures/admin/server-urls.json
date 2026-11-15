@@ -1,0 +1,12 @@
+{
+  "urls": [
+    {
+      "checked_at": "2026-11-14T09:30:00.000Z",
+      "kind": "lan",
+      "reachable": true,
+      "source": "detected",
+      "tls": false,
+      "url": "http://192.168.1.20:4747"
+    }
+  ]
+}

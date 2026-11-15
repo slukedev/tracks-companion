@@ -1,0 +1,5 @@
+---
+source: crates/trackside-subsonic/tests/snapshots.rs
+expression: redact(&xml.text())
+---
+<?xml version="1.0" encoding="UTF-8"?><subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1" type="trackside" serverVersion="0.1.0" openSubsonic="true"><albumList2><album id="<a1>" name="I Am... Sasha Fierce" artist="Beyoncé" artistId="rgtm6gw8kzkjyq611mzzp" songCount="2" duration="403" created="2026-11-14T09:30:00.000Z" year="2008" genre="R&amp;B" musicBrainzId="" displayArtist="Beyoncé" sortName="i am... sasha fierce" isCompilation="false"><genres name="R&amp;B"/><artists id="rgtm6gw8kzkjyq611mzzp" name="Beyoncé"/></album><album id="<a2>" name="Lungs" artist="Florence + the Machine" artistId="rb8xc8hh2jxdgzte7vgvn" songCount="1" duration="203" created="2026-11-14T09:30:00.000Z" year="2008" genre="Indie" musicBrainzId="" displayArtist="Florence + the Machine" sortName="lungs" isCompilation="false"><genres name="Indie"/><artists id="rb8xc8hh2jxdgzte7vgvn" name="Florence + the Machine"/></album></albumList2></subsonic-response>
