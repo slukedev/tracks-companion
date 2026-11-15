@@ -11,8 +11,9 @@ use zeroize::Zeroizing;
 use crate::AuthError;
 use crate::token::fill_random;
 
-/// Shortest and longest accepted login password, in bytes.
-pub const PASSWORD_BYTES: std::ops::RangeInclusive<usize> = 8..=1024;
+/// Accepted login password lengths, in bytes: anything but empty, up to a cap that keeps
+/// hashing cheap.
+pub const PASSWORD_BYTES: std::ops::RangeInclusive<usize> = 1..=1024;
 
 #[derive(Debug)]
 pub(crate) struct Hasher {
@@ -264,8 +265,9 @@ mod tests {
 
     #[test]
     fn password_length_rules() {
-        assert!(validate_new_password("1234567").is_err());
-        assert!(validate_new_password("12345678").is_ok());
+        assert!(validate_new_password("").is_err());
+        assert!(validate_new_password("1").is_ok());
+        assert!(validate_new_password(&"x".repeat(1025)).is_err());
         assert!(validate_new_password(&"x".repeat(1025)).is_err());
     }
 }

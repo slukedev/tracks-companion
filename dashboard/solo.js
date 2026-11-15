@@ -3,7 +3,6 @@
 import { call, preview } from './api.js';
 import { h, clear, icon, button, busy, field, input, formError, setFieldError } from './ui.js';
 
-export const MIN_PASSWORD = 8;
 
 export async function serverName() {
   const caps = await call('GET /capabilities').catch(() => null);
@@ -37,7 +36,7 @@ export function frame({ title, text, body, foot }) {
 
 /** Password and confirmation fields with matching validation. */
 export function passwordFields(label = 'Password') {
-  const password = input({ type: 'password', autocomplete: 'new-password', required: true, minlength: String(MIN_PASSWORD) });
+  const password = input({ type: 'password', autocomplete: 'new-password', required: true });
   const repeat = input({ type: 'password', autocomplete: 'new-password', required: true });
   const fields = [
     field(label, password),
@@ -49,11 +48,6 @@ export function passwordFields(label = 'Password') {
     validate() {
       setFieldError(password, '');
       setFieldError(repeat, '');
-      if (new TextEncoder().encode(password.value).length < MIN_PASSWORD) {
-        setFieldError(password, `Use at least ${MIN_PASSWORD} characters.`);
-        password.focus();
-        return false;
-      }
       if (password.value !== repeat.value) {
         setFieldError(repeat, 'Does not match.');
         repeat.focus();

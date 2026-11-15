@@ -36,7 +36,7 @@ async function newUser(ctx) {
   const { libraries } = await call('GET /admin/libraries');
   const display = input({ autocomplete: 'off', required: true });
   const username = input({ autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', required: true });
-  const password = input({ type: 'password', autocomplete: 'new-password', required: true, minlength: '8' });
+  const password = input({ type: 'password', autocomplete: 'new-password', required: true });
   const access = accessForm({ role: 'member', permissions: { can_download: true }, library_ids: libraries.map((l) => l.id) }, libraries, ctx);
   const error = formError();
   const submit = button('Add User', { kind: 'primary', type: 'submit' });
@@ -49,7 +49,6 @@ async function newUser(ctx) {
         error.hide();
         [display, username, password].forEach((c) => setFieldError(c, ''));
         if (!username.value.trim()) { setFieldError(username, 'Choose a username.'); username.focus(); return; }
-        if (new TextEncoder().encode(password.value).length < 8) { setFieldError(password, 'Use at least 8 characters.'); password.focus(); return; }
         await busy(submit, async () => {
           try {
             const created = await call('POST /admin/users', { body: {

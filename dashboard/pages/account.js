@@ -297,7 +297,7 @@ function profileSection(ctx) {
   }, h('div.field', h('label', { for: (display.id = nextId('n')) }, 'Name'), h('div.btn-row.nowrap-row', display, saveName)));
 
   const current = input({ type: 'password', autocomplete: 'current-password' });
-  const next = input({ type: 'password', autocomplete: 'new-password', minlength: '8' });
+  const next = input({ type: 'password', autocomplete: 'new-password' });
   const signOut = checkbox('Sign out my devices', false);
   const error = formError();
   const savePw = button('Change Password', { type: 'submit' });
@@ -308,7 +308,6 @@ function profileSection(ctx) {
         event.preventDefault();
         error.hide();
         setFieldError(next, '');
-        if (new TextEncoder().encode(next.value).length < 8) { setFieldError(next, 'Use at least 8 characters.'); next.focus(); return; }
         await busy(savePw, async () => {
           try {
             await call('POST /me/password', { body: { current_password: current.value, new_password: next.value, sign_out_devices: signOut.querySelector('input').checked } });

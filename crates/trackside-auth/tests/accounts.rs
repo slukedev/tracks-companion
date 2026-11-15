@@ -567,12 +567,7 @@ async fn password_reset_link_works_once_and_ends_sessions() -> TestResult {
         let session = h.auth.create_session(mia, ip(1), None).await?;
         let reset = h.auth.create_password_reset(admin, mia).await?;
         h.auth.password_reset_info(&reset.token).await?;
-        assert!(
-            h.auth
-                .use_password_reset(&reset.token, "short")
-                .await
-                .is_err()
-        );
+        assert!(h.auth.use_password_reset(&reset.token, "").await.is_err());
         h.auth
             .use_password_reset(&reset.token, "fresh password")
             .await?;

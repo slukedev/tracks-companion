@@ -23,7 +23,7 @@ Where to find it:
 | systemd | `sudo journalctl -u trackside` |
 | Anything | the file `setup-token` in the data folder |
 
-Open `/setup`, enter the token, and choose a username and password (8 characters or more).
+Open `/setup`, enter the token, and choose a username and password.
 That account is an admin. The token file is deleted and the token stops working.
 
 If the token is lost before anyone used it, make a new one on the host:
