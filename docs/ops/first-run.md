@@ -21,7 +21,6 @@ Where to find it:
 | Docker Compose | `docker compose logs trackside` |
 | Docker | `docker logs trackside` |
 | systemd | `sudo journalctl -u trackside` |
-| Homebrew | `cat "$(brew --prefix)/var/trackside/setup-token"` |
 | Anything | the file `setup-token` in the data folder |
 
 Open `/setup`, enter the token, and choose a username and password (8 characters or more).

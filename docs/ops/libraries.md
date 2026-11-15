@@ -59,7 +59,6 @@ acquisition libraries need that). It needs to read every file and list every fol
 |---|---|---|
 | Docker image | uid 65532 | files readable by everyone (`chmod -R a+rX /srv/music`), or run the container as a user that can read them (`user: "1000:1000"`) |
 | systemd | a dynamic uid | files readable by everyone; add the folder to `ReadOnlyPaths` |
-| Homebrew | you | macOS asks for permission for protected folders; see [install.md](install.md#homebrew) |
 | Unraid | 99:100 | the usual share permissions work |
 
 If a folder can't be read, the scan records it under the library's problems and leaves its

@@ -80,9 +80,8 @@ checks each address with it before sending any credential.
 | How | Guide |
 |---|---|
 | Docker without Compose, image variants and tags | [install.md](docs/ops/install.md#docker) |
-| A single binary on Linux or macOS | [install.md](docs/ops/install.md#binary) |
+| A single binary on Linux | [install.md](docs/ops/install.md#binary) |
 | systemd, `.deb` and `.rpm` packages | [install.md](docs/ops/install.md#systemd) |
-| Homebrew on a Mac, with `brew services` | [install.md](docs/ops/install.md#homebrew) |
 | Unraid, TrueNAS, Synology, CasaOS and ZimaOS | [install.md](docs/ops/install.md#nas) |
 
 There are three images. `latest` has ffmpeg, so Trackside can convert songs for phones on

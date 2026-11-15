@@ -2,16 +2,15 @@
 
 For maintainers. A release is a GitHub release for a tag named `trackside-vX.Y.Z` on `main`
 (`trackside-vX.Y.Z-rc.N`, marked as a pre-release, for a pre-release). Publishing it starts
-three workflows, all on Blacksmith runners:
+two workflows, both on Blacksmith runners:
 
 - [`release.yml`](../../.github/workflows/release.yml) builds the static Linux binaries
-  (x86_64 and aarch64 musl), the macOS binaries, the `.deb` and `.rpm` packages, the filled-in
-  Homebrew formula and `SHA256SUMS`, and attaches them to the release with build provenance.
+  (x86_64 and aarch64 musl), the `.deb` and `.rpm` packages and `SHA256SUMS`, and attaches
+  them to the release with build provenance.
 - [`images.yml`](../../.github/workflows/images.yml) builds each image natively on x64 and
   arm64, smoke tests both, merges them, and pushes and signs `X.Y.Z`, `X.Y`, `X` and, for the
   release GitHub marks as latest, `latest`, `slim` and `acquire` (also `latest-slim` and
   `latest-acquire`). A pre-release gets only `X.Y.Z-rc.N` tags.
-- [`ci.yml`](../../.github/workflows/ci.yml) runs the macOS tests.
 
 Every push to `main` already ran the full checks in `ci.yml` and, once they passed,
 published `edge` from the same workflow. The performance and scenario checks that need a person are in
@@ -60,16 +59,13 @@ tag, `Cargo.toml` and `CHANGELOG.md` don't agree on the version.
 
 ### After the workflows finish
 
-- [ ] The release page has the four binary tarballs, two `.deb`, two `.rpm`, `trackside.rb`
-      and `SHA256SUMS`.
+- [ ] The release page has the two Linux tarballs, two `.deb`, two `.rpm` and
+      `SHA256SUMS`.
 - [ ] The images exist for amd64 and arm64:
       `docker buildx imagetools inspect ghcr.io/slukedev/trackside:X.Y.Z`.
 - [ ] The signature verifies (command in [install.md](install.md#images-and-tags)).
 - [ ] `gh attestation verify trackside-X.Y.Z-x86_64-unknown-linux-musl.tar.gz --repo slukedev/tracks-companion` passes.
 - [ ] `docker run --rm ghcr.io/slukedev/trackside:X.Y.Z version` prints X.Y.Z.
-- [ ] Copy `trackside.rb` from the release into the tap repository and push it (the
-      `release.yml` run summary also shows its url and sha256);
-      `brew install slukedev/tap/trackside` installs X.Y.Z.
 - [ ] Unraid, TrueNAS, Synology and CasaOS templates still point at the right tags.
 - [ ] Watch issues and discussions for a day.
 

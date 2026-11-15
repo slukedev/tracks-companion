@@ -30,7 +30,7 @@ cargo test -p trackside-e2e                        # end-to-end scenarios; they 
 node dashboard/dev/check-coverage.mjs              # if you touched the dashboard
 ```
 
-CI runs the same on Linux and macOS, plus the end-to-end suite at 50k songs, which fails on a
+CI runs the same on Linux, plus the end-to-end suite at 50k songs, which fails on a
 regression of more than 25 % against the stored baseline. To run that locally:
 
 ```sh

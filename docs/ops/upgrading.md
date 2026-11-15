@@ -31,7 +31,6 @@ Upgrade:
 - [ ] Docker: `docker pull ghcr.io/slukedev/trackside:<version>`, then remove and
       recreate the container with the same volumes.
 - [ ] `.deb` or `.rpm`: install the new package; the service restarts by itself.
-- [ ] Homebrew: `brew upgrade trackside && brew services restart trackside`.
 - [ ] Binary: replace the file and restart the service.
 
 After:

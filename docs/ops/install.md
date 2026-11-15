@@ -5,7 +5,8 @@ Every method ends the same way: a running server, a setup token in its log, and
 
 Trackside needs:
 
-- Linux (amd64 or arm64) or macOS. A Raspberry Pi 4 or 5 is enough for a large library.
+- Linux (amd64 or arm64), directly or in Docker; macOS isn't supported yet. A Raspberry Pi 4
+  or 5 is enough for a large library.
 - A data folder on a local disk. The database must not live on a network share, because
   SQLite's locking is unreliable over NFS and SMB; the server refuses to start there unless
   you set `database.allow_network_fs`. Your music can be anywhere, including a NAS.
@@ -15,7 +16,7 @@ Trackside needs:
   original file.
 
 Contents: [Docker](#docker), [Docker Compose](#docker-compose), [Binary](#binary),
-[systemd](#systemd), [Homebrew](#homebrew), [NAS](#nas).
+[systemd](#systemd), [NAS](#nas).
 
 ## Docker
 
@@ -117,7 +118,7 @@ reach your LAN. Add the address in the dashboard instead.
 
 ## Binary
 
-Each release has static Linux binaries (musl, amd64 and arm64) and macOS binaries on the
+Each release has static Linux binaries (musl, amd64 and arm64) on the
 [releases page](https://github.com/slukedev/tracks-companion/releases), with a `SHA256SUMS` file.
 
 ```sh
@@ -136,9 +137,8 @@ Run it in the foreground to try it:
 TRACKSIDE_MUSIC_DIR=~/Music trackside serve
 ```
 
-Without `TRACKSIDE_DATA_DIR`, data goes to `~/.local/share/trackside` on Linux and
-`~/Library/Application Support/Trackside` on macOS. For something that keeps running, use
-systemd or Homebrew below.
+Without `TRACKSIDE_DATA_DIR`, data goes to `~/.local/share/trackside`. For something that
+keeps running, use systemd below.
 
 ## systemd
 
@@ -204,26 +204,6 @@ bind a low port:
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 ```
-
-## Homebrew
-
-```sh
-brew install slukedev/tap/trackside
-brew services start trackside
-cat "$(brew --prefix)/var/trackside/setup-token"
-```
-
-Then open `http://localhost:4747/setup`. Data is in `$(brew --prefix)/var/trackside` and the
-log in `$(brew --prefix)/var/log/trackside.log`. The formula installs ffmpeg.
-
-To add your music on the first start, set the folder before starting the service, or add a
-library in the dashboard afterwards (Libraries, then **Add Library**). macOS asks for
-permission the first time the server reads a folder in Music, Documents, Desktop or an
-external drive; if scans find nothing, give `trackside` Full Disk Access in System Settings,
-Privacy & Security.
-
-The Mac needs to stay awake for Tracks to reach it. In System Settings, Energy (or Battery,
-Options), turn on "Prevent automatic sleeping when the display is off".
 
 ## NAS
 

@@ -5,7 +5,7 @@ Guides for people hosting the server. New here? Start with the
 
 | Guide | Covers |
 |---|---|
-| [install.md](install.md) | Docker, Compose, the binary, systemd and packages, Homebrew, Unraid, TrueNAS, Synology, CasaOS |
+| [install.md](install.md) | Docker, Compose, the binary, systemd and packages, Unraid, TrueNAS, Synology, CasaOS |
 | [first-run.md](first-run.md) | the setup token, accounts, invites, roles, devices, app passwords, getting back in |
 | [libraries.md](libraries.md) | libraries, scanning, NAS folders, permissions, uploads |
 | [remote-access.md](remote-access.md) | Tailscale, Caddy, built-in HTTPS, Cloudflare Tunnel, Bonjour |

@@ -1,7 +1,7 @@
 # Checks for Trackside. Pushes to main and pull requests run one Linux job with every check.
 # On main, the edge job then builds amd64 and arm64 on an x64 runner (the Dockerfile
 # cross-compiles, so no emulation), smoke tests amd64, and pushes and signs edge and
-# edge-<commit>. macOS runs weekly, on each published release and by hand, not on every push.
+# edge-<commit>.
 #
 # Pull request and release images: images.yml. Release binaries and packages: release.yml.
 
@@ -11,10 +11,6 @@ on:
   push:
     branches: [main]
   pull_request:
-  release:
-    types: [published]
-  schedule:
-    - cron: "17 4 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -39,7 +35,6 @@ defaults:
 jobs:
   check:
     name: Check
-    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 90
     steps:
@@ -228,19 +223,3 @@ jobs:
             packaging/docker/image-tags.sh "$variant" edge "$REVISION" > "tags-$variant"
             packaging/docker/publish-manifest.sh "$variant" "tags-$variant" "$digest" | tee -a "$GITHUB_STEP_SUMMARY"
           done
-
-  macos:
-    name: macOS
-    if: github.event_name == 'schedule' || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    runs-on: blacksmith-6vcpu-macos-15
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Tests
-        run: cargo test --workspace --locked

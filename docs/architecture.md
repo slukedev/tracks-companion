@@ -81,13 +81,13 @@ Contents:
 ## 2. Crate layout and boundaries
 
 The server is its own Cargo workspace, separate from the Tracks engine because it targets
-Linux and macOS servers rather than Apple device static libraries, and has its own toolchain file.
+Linux servers rather than Apple device static libraries, and has its own toolchain file.
 It reuses `tracks-model` as a git dependency pinned to an exact revision of the Tracks repository.
 
 ```
 ./
   Cargo.toml                  workspace, shared dependency versions, lints (same lint set as the Tracks engine)
-  rust-toolchain.toml         channel 1.99.0; targets x86_64/aarch64 linux musl and gnu, apple darwin
+  rust-toolchain.toml         channel 1.99.0; targets x86_64/aarch64 linux musl and gnu
   crates/
     trackside-core/           domain types, ids, config, Db (writer + readers), migrations,
                               repositories, change log, sync, search, similarity, event bus,
@@ -105,7 +105,7 @@ It reuses `tracks-model` as a git dependency pinned to an exact revision of the 
     trackside-server/         the `trackside` binary: CLI, wiring, TLS, mDNS, scheduler,
                               backups, shutdown, embedded dashboard
   dashboard/                  static HTML, CSS and JavaScript modules, embedded at build time
-  packaging/                  Dockerfile, compose files, systemd unit, Homebrew formula, NAS templates
+  packaging/                  Dockerfile, compose files, systemd unit, NAS templates
   tests-e2e/                  black-box end-to-end and performance tests (not shipped)
   docs/
 ```
@@ -1694,7 +1694,7 @@ The server starts with no file at all: data in the platform default directory, l
 
 | Key | Env | Default | Meaning |
 |---|---|---|---|
-| `data_dir` | `TRACKSIDE_DATA_DIR` | `$STATE_DIRECTORY`, else `$XDG_DATA_HOME/trackside`, else `~/.local/share/trackside`; macOS `~/Library/Application Support/Trackside`; Docker `/data` | database, secret key, backups, caches unless moved |
+| `data_dir` | `TRACKSIDE_DATA_DIR` | `$STATE_DIRECTORY`, else `$XDG_DATA_HOME/trackside`, else `~/.local/share/trackside`; Docker `/data` | database, secret key, backups, caches unless moved |
 | `music_dir` | `TRACKSIDE_MUSIC_DIR` | unset (`/music` in the image) | creates the first library at first start only |
 | `server.name` **D** | `TRACKSIDE_SERVER__NAME` | host name | shown in apps, mDNS and pairing |
 | `server.listen` | `TRACKSIDE_SERVER__LISTEN` | `["[::]:4747"]` | addresses; comma-separated in env |

@@ -40,8 +40,8 @@ starts at schema 2; there is nothing to upgrade from.
 - Converts songs with ffmpeg for phones on cellular and for formats Apple devices don't play.
 - Nightly backups, and a backup before every database upgrade.
 - Images for amd64 and arm64 (`latest`, `slim`, `acquire`), static Linux binaries, `.deb` and
-  `.rpm` packages with a hardened systemd unit, a Homebrew formula, and templates for Unraid,
-  TrueNAS, Synology and CasaOS.
+  `.rpm` packages with a hardened systemd unit, and templates for Unraid, TrueNAS, Synology and
+  CasaOS. Linux and Docker only; macOS isn't supported yet.
 - `latest` is the newest release; `edge` is built from every commit to `main` and may break.
   Images are signed by the workflow that built them (`ci.yml` for edge, `images.yml` for
   releases) and carry SBOM and provenance attestations; release binaries and packages carry

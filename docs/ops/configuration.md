@@ -104,7 +104,7 @@ keep = 14
 
 | Key | Environment | Default | Meaning |
 |---|---|---|---|
-| `data_dir` | `TRACKSIDE_DATA_DIR` | `$STATE_DIRECTORY`, else `$XDG_DATA_HOME/trackside`, else `~/.local/share/trackside`; macOS `~/Library/Application Support/Trackside`; Docker `/data` | database, secret key, backups, caches unless moved |
+| `data_dir` | `TRACKSIDE_DATA_DIR` | `$STATE_DIRECTORY`, else `$XDG_DATA_HOME/trackside`, else `~/.local/share/trackside`; Docker `/data` | database, secret key, backups, caches unless moved |
 | `music_dir` | `TRACKSIDE_MUSIC_DIR` | unset (`/music` in the image) | creates the first library at first start only |
 | `cache_dir` | `TRACKSIDE_CACHE_DIR` | `<data>/cache` | artwork and transcodes, safe to delete |
 
