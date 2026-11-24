@@ -24,6 +24,12 @@ trackside-cloud = { path = "crates/trackside-cloud" }
 
 # Shared with Tracks
 tracks-model = { git = "https://github.com/slukedev/tracks", rev = "f8f07456fdf118823bccbfbbed49cdd88413ea61" }
+# Tracks' own mixes and Get More ranking, at the same revision as tracks-model so the server
+# and the apps rank the same plays the same way.
+tracks-mixes = { git = "https://github.com/slukedev/tracks", rev = "f8f07456fdf118823bccbfbbed49cdd88413ea61" }
+tracks-library = { git = "https://github.com/slukedev/tracks", rev = "f8f07456fdf118823bccbfbbed49cdd88413ea61" }
+# The jiff tracks-mixes takes its time zone from; the server's own times use `jiff` above.
+tracks-jiff = { package = "jiff", version = "0.2" }
 
 # Runtime and HTTP
 tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "fs", "io-util", "net", "process", "signal", "sync", "time"] }

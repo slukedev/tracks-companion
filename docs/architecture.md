@@ -1138,12 +1138,14 @@ Last.fm, and sends nothing about users.
   within 30 minutes of the seed by the same person (1 each, up to 3), each shared genre (1), the
   same album (1, less 1.5 for being the same album), the same decade (0.5). Similar artists:
   shared credits (up to 0.7), co-listening (up to 0.5), shared main genres (up to 0.3).
-- **Shelves.** `core::recommend` builds On Repeat (the caller's own listens in 30 days, two plays
-  or more, halving every 10 days), server top songs (from `play_stats`; other people's plays
-  count only for a song at least two other people played) and picks (similar songs for up to 5
-  seeds by different artists: the caller's plays in 90 days, their stars, the server's top
-  songs, then random songs; leaving out what they played in 30 days). Listens without a song id
-  are matched to a visible song by `song_key`. See api.md section 8, Shelves.
+- **Shelves.** `core::recommend` adapts the server's data to Tracks' own engine, the
+  `tracks-mixes` and `tracks-library` crates at the `tracks-model` revision: the caller's own
+  listens become `MixPlay`s (identity `song_key`, as in the apps) for the mixes (On Repeat,
+  Rediscover and the rest), and their plays by artist plus this server's similar artists become
+  Get More's taste for `tracks_library::rank`. Picks use the mixes for their seeds and the
+  engine's daily shuffle for their order. The engine has no rule for similar songs or for a
+  server's top songs, so those stay in `core::similar` and `core::recommend::top_songs`. See
+  api.md section 8, Shelves.
 - **Access.** Library results come from repository reads filtered by `Principal.libraries`, as
   everywhere. Co-listening signals add up everyone's listens and never name a listener. Songs Last.fm suggests that the caller cannot see are returned only by name, in
   the native API's `external` list, and only to callers with `features.acquisition` and the

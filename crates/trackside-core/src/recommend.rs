@@ -1,19 +1,27 @@
-//! Shelves made from listens and the library alone: On Repeat (the caller's own recent plays),
-//! top songs (plays on this server) and picks (songs like the caller's favourites that they have
-//! not played lately). Library songs the caller can see only. Never calls out during a request.
+//! Shelves from listens, through Tracks' own engine, so the server and the apps agree on the
+//! same plays: the mixes (On Repeat, Rediscover and the rest) from `tracks_mixes`, Get More
+//! from `tracks_library::rank`, and the daily artist-spread order from `tracks_mixes`. What the
+//! engine has no rule for stays here: this server's top songs, and which songs picks start
+//! from. Similarity itself is `crate::similar`. Library songs the caller can see only; never
+//! calls out during a request.
 //!
-//! Privacy: On Repeat and the picks' seeds read only the caller's own listens. Other people's
-//! plays count toward top songs only for a song that at least [`TOP_MIN_LISTENERS`] other
-//! people played, so no answer shows one person's listening.
+//! Privacy: the mixes, Get More's taste and the picks' seeds read only the caller's own
+//! listens. Other people's plays count toward top songs only for a song that at least
+//! [`TOP_MIN_LISTENERS`] other people played, so no answer shows one person's listening.
 
 use std::collections::{HashMap, HashSet};
 
 use rusqlite::{Connection, params};
+pub use tracks_jiff::tz::TimeZone;
+use tracks_library::{ArtistTaste, Candidate, CandidateKind, Rules};
+use tracks_mixes::{Mix, MixOutput, MixPlay};
 
 use crate::access::Access;
 use crate::db::DbError;
-use crate::ids::{PublicId, SongId};
+use crate::ids::{ArtistId, PublicId, SongId};
 use crate::records::Song;
+use crate::repo::artists;
+use crate::repo::enrichment as stored;
 use crate::repo::songs::{self, SongFilter};
 use crate::repo::sql::{json_strings, visible};
 use crate::similar;
@@ -21,86 +29,70 @@ use crate::time::Millis;
 
 const DAY_MS: i64 = 86_400_000;
 
-/// On Repeat looks back this many days.
-pub const ON_REPEAT_DAYS: i64 = 30;
-/// Plays of a song within [`ON_REPEAT_DAYS`] that put it On Repeat.
-pub const ON_REPEAT_MIN_PLAYS: u32 = 2;
-/// A play this many days old counts half as much toward On Repeat.
-const ON_REPEAT_HALF_LIFE_DAYS: f64 = 10.0;
+/// The most of the caller's own listens the mixes read, newest first.
+const MIX_LISTENS: i64 = 50_000;
 /// Other people's plays of a song count toward top songs only when at least this many other
 /// people played it.
 pub const TOP_MIN_LISTENERS: i64 = 2;
 /// Picks start from at most this many songs, each by a different artist.
 const PICKS_SEEDS: usize = 5;
-/// Picks start from the caller's plays in this many days.
-const PICKS_SEED_DAYS: i64 = 90;
 /// Picks leave out songs the caller played in this many days.
 const PICKS_FRESH_DAYS: i64 = 30;
-/// The most listens one shelf reads.
-const LISTENS_READ: i64 = 5000;
+/// Get More weighs the artists in this many of the caller's listens, newest first.
+const TASTE_LISTENS: i64 = 5000;
+/// Get More looks for artists like this many of the caller's top artists, as the apps do.
+const TASTE_LEADING: usize = 5;
 
-/// One song key in the caller's own listens.
-#[derive(Debug)]
-struct Played {
-    key: String,
-    /// The library song the latest listen named, if any.
-    pid: Option<String>,
-    plays: u32,
-    score: f64,
+/// The listener's time zone by IANA name, UTC when none is given. `None` for a name the
+/// system's time zone database does not know.
+pub fn zone(name: Option<&str>) -> Option<TimeZone> {
+    match name.map(str::trim).filter(|n| !n.is_empty()) {
+        None => Some(TimeZone::UTC),
+        Some(name) => TimeZone::get(name).ok(),
+    }
 }
 
-/// The caller's own listens since `days` before `now`, by song key, best first: each play
-/// counts by its age, halving every `half_life` days.
-fn own_played(
+/// One of the caller's listens.
+struct Listened {
+    key: String,
+    pid: Option<String>,
+    title: String,
+    artist: String,
+    album: Option<String>,
+    at: i64,
+}
+
+fn own_listens(c: &Connection, a: &Access, limit: i64) -> Result<Vec<Listened>, DbError> {
+    let mut statement = c.prepare_cached(
+        "SELECT song_key, song_pid, title, artist, album, started_at FROM listens
+         WHERE user_id = ?1 ORDER BY started_at DESC, id DESC LIMIT ?2",
+    )?;
+    let rows = statement.query_map(params![a.user, limit], |row| {
+        Ok(Listened {
+            key: row.get(0)?,
+            pid: row.get(1)?,
+            title: row.get(2)?,
+            artist: row.get(3)?,
+            album: row.get(4)?,
+            at: row.get(5)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// The visible, present library song for each `(song key, song id)`, in order: the song the
+/// listen named when the caller can see it, otherwise the first with the same key, so listens
+/// sent by title and artist find their song too. Keys with neither are dropped.
+fn resolve(
     c: &Connection,
     a: &Access,
-    now: Millis,
-    days: i64,
-    half_life: f64,
-) -> Result<Vec<Played>, DbError> {
-    let since = now.0 - days * DAY_MS;
-    let mut statement = c.prepare_cached(
-        "SELECT song_key, song_pid, started_at FROM listens
-         WHERE user_id = ?1 AND started_at >= ?2 ORDER BY started_at DESC LIMIT ?3",
-    )?;
-    let mut rows = statement.query(params![a.user, since, LISTENS_READ])?;
-    let mut by_key: HashMap<String, Played> = HashMap::new();
-    while let Some(row) = rows.next()? {
-        let key: String = row.get(0)?;
-        let pid: Option<String> = row.get(1)?;
-        let at: i64 = row.get(2)?;
-        let age_days = (now.0 - at).max(0) as f64 / DAY_MS as f64;
-        let entry = by_key.entry(key.clone()).or_insert(Played {
-            key,
-            pid: None,
-            plays: 0,
-            score: 0.0,
-        });
-        entry.plays += 1;
-        entry.score += 0.5_f64.powf(age_days / half_life);
-        if entry.pid.is_none() {
-            entry.pid = pid;
-        }
-    }
-    let mut out: Vec<Played> = by_key.into_values().collect();
-    out.sort_by(|x, y| {
-        y.score
-            .total_cmp(&x.score)
-            .then(y.plays.cmp(&x.plays))
-            .then_with(|| x.key.cmp(&y.key))
-    });
-    Ok(out)
-}
-
-/// The visible, present library song for each played key: the one the listen named when the
-/// caller can see it, otherwise the first with the same song key. Listens sent by title and
-/// artist only find their song this way.
-fn resolve(c: &Connection, a: &Access, played: &[Played]) -> Result<Vec<Song>, DbError> {
-    if played.is_empty() {
+    wanted: &[(&str, Option<&str>)],
+) -> Result<Vec<Song>, DbError> {
+    if wanted.is_empty() {
         return Ok(Vec::new());
     }
-    let pids = json_strings(played.iter().filter_map(|p| p.pid.as_deref()));
-    let keys = json_strings(played.iter().map(|p| p.key.as_str()));
+    let pids = json_strings(wanted.iter().filter_map(|(_, pid)| *pid));
+    let keys = json_strings(wanted.iter().map(|(key, _)| *key));
     let tail = format!(
         "WHERE (s.pid IN (SELECT value FROM json_each(?1))
                 OR s.song_key IN (SELECT value FROM json_each(?2)))
@@ -114,36 +106,89 @@ fn resolve(c: &Connection, a: &Access, played: &[Played]) -> Result<Vec<Song>, D
         by_pid.insert(song.id.as_str(), song);
         by_key.entry(song.song_key.as_str()).or_insert(song);
     }
-    Ok(played
+    let mut seen = HashSet::new();
+    Ok(wanted
         .iter()
-        .filter_map(|p| {
-            p.pid
-                .as_deref()
-                .and_then(|pid| by_pid.get(pid))
-                .or_else(|| by_key.get(p.key.as_str()))
+        .filter_map(|(key, pid)| {
+            pid.and_then(|pid| by_pid.get(pid))
+                .or_else(|| by_key.get(key))
                 .map(|song| (*song).clone())
         })
+        .filter(|song| seen.insert(song.song_key.clone()))
         .collect())
 }
 
-/// On Repeat: songs the caller played at least [`ON_REPEAT_MIN_PLAYS`] times in the last
-/// [`ON_REPEAT_DAYS`] days, recent plays counting most. Only the caller's own listens.
-pub fn on_repeat(
+/// Every mix `tracks_mixes` makes from the caller's own listens, at `now` in `zone` (the
+/// listener's, for the time-of-day mixes and the daily order). A song's identity is its
+/// `song_key`, as in the apps, and it carries the library song id the listen named.
+pub fn mixes(
     c: &Connection,
     a: &Access,
     now: Millis,
-    count: u32,
+    zone: &TimeZone,
+) -> Result<MixOutput, DbError> {
+    let plays: Vec<MixPlay> = own_listens(c, a, MIX_LISTENS)?
+        .into_iter()
+        .map(|l| MixPlay {
+            identity: l.key,
+            catalog_id: l.pid.unwrap_or_default(),
+            title: l.title,
+            artist_name: l.artist,
+            album_title: l.album,
+            artwork_url: None,
+            played_at_ms: l.at,
+            is_radio: false,
+        })
+        .collect();
+    Ok(tracks_mixes::build_mixes(
+        &plays,
+        &HashSet::<String>::new(),
+        now.0,
+        zone,
+    ))
+}
+
+/// The engine's mix with this id (`onRepeat`, `rediscover`, `newFinds`, `allTimeFavorites`,
+/// `deepCuts`, `radioFinds`, `throwback.<months>`, `rightNow.<part>.<weekend>`) as library
+/// songs in the engine's order. Empty when the engine does not offer that mix for these
+/// listens. Songs not on the server, or in libraries the caller cannot see, are left out.
+pub fn mix(
+    c: &Connection,
+    a: &Access,
+    now: Millis,
+    zone: &TimeZone,
+    id: &str,
 ) -> Result<Vec<Song>, DbError> {
-    let mut played = own_played(c, a, now, ON_REPEAT_DAYS, ON_REPEAT_HALF_LIFE_DAYS)?;
-    played.retain(|p| p.plays >= ON_REPEAT_MIN_PLAYS);
-    let mut songs = resolve(c, a, &played)?;
-    songs.truncate(count.clamp(1, 200) as usize);
-    Ok(songs)
+    let output = mixes(c, a, now, zone)?;
+    let found = output
+        .right_now
+        .iter()
+        .chain(&output.other_times)
+        .chain(&output.mixes)
+        .find(|m| m.kind.id() == id);
+    mix_songs(c, a, found)
+}
+
+fn mix_songs(c: &Connection, a: &Access, found: Option<&Mix>) -> Result<Vec<Song>, DbError> {
+    let Some(found) = found else {
+        return Ok(Vec::new());
+    };
+    let wanted: Vec<(&str, Option<&str>)> = found
+        .songs
+        .iter()
+        .map(|s| {
+            (
+                s.identity.as_str(),
+                Some(s.catalog_id.as_str()).filter(|id| !id.is_empty()),
+            )
+        })
+        .collect();
+    resolve(c, a, &wanted)
 }
 
 /// The most played songs on this server: the caller's plays counted twice, and other
 /// people's plays of songs that at least [`TOP_MIN_LISTENERS`] other people played. One song
-/// per song key. Empty while nobody has played anything.
+/// per song key. Empty while nobody has played anything. The engine has no server-wide rule.
 pub fn top_songs(c: &Connection, a: &Access, count: u32) -> Result<Vec<Song>, DbError> {
     let count = count.clamp(1, 200);
     let vis = visible(a, "s.library_id", None);
@@ -184,34 +229,59 @@ pub struct Picks {
     pub songs: Vec<Song>,
 }
 
+fn artist_key(song: &Song) -> String {
+    tracks_model::folded(&tracks_model::credits::lead(&song.artist))
+}
+
 /// Up to [`PICKS_SEEDS`] songs by different artists, in order.
 fn add_seeds(seeds: &mut Vec<Song>, artists: &mut HashSet<String>, from: Vec<Song>) {
     for song in from {
         if seeds.len() >= PICKS_SEEDS {
             return;
         }
-        let artist = song.artist_id.as_ref().map_or_else(
-            || tracks_model::folded(&song.artist),
-            |id| id.as_str().to_owned(),
-        );
-        if artists.insert(artist) {
+        if artists.insert(artist_key(&song)) {
             seeds.push(song);
         }
     }
 }
 
-/// Picks for the caller: songs like the ones they play most (the last
-/// [`PICKS_SEED_DAYS`] days), then like the songs they starred, taken from each in turn,
-/// leaving out what they played in the last [`PICKS_FRESH_DAYS`] days. With no plays or stars
-/// of their own it starts from this server's top songs, then from songs picked at random, so a
-/// new server and a new listener get picks too. Similar songs bring in stored Last.fm data
-/// when there is some.
-pub fn picks(c: &Connection, a: &Access, now: Millis, count: u32) -> Result<Picks, DbError> {
+/// The engine's seed for a day in `zone`, as the apps make it.
+fn day_seed(now: Millis, zone: &TimeZone, salt: &str) -> u64 {
+    let day = tracks_jiff::Timestamp::from_millisecond(now.0)
+        .unwrap_or(tracks_jiff::Timestamp::UNIX_EPOCH)
+        .to_zoned(zone.clone());
+    tracks_mixes::daily_seed(day.year(), day.month(), day.day(), salt)
+}
+
+/// Picks for the caller: songs like the ones they play, by way of similar songs. It starts
+/// from the engine's On Repeat, New Finds and All-Time Favorites mixes, then the songs they
+/// played most recently, then their starred songs; with none of those, this server's top
+/// songs, then songs picked at random, so a new server and a new listener get picks too. It
+/// leaves out the seeds and what the caller played in the last [`PICKS_FRESH_DAYS`] days, and
+/// orders the result with the engine's daily artist-spread shuffle.
+pub fn picks(
+    c: &Connection,
+    a: &Access,
+    now: Millis,
+    zone: &TimeZone,
+    count: u32,
+) -> Result<Picks, DbError> {
     let count = count.clamp(1, 200) as usize;
     let mut seeds = Vec::new();
     let mut artists = HashSet::new();
-    let played = own_played(c, a, now, PICKS_SEED_DAYS, ON_REPEAT_HALF_LIFE_DAYS)?;
-    add_seeds(&mut seeds, &mut artists, resolve(c, a, &played)?);
+    let output = mixes(c, a, now, zone)?;
+    for id in ["onRepeat", "newFinds", "allTimeFavorites"] {
+        let found = output.mixes.iter().find(|m| m.kind.id() == id);
+        add_seeds(&mut seeds, &mut artists, mix_songs(c, a, found)?);
+    }
+    if seeds.len() < PICKS_SEEDS {
+        let recent = own_listens(c, a, 200)?;
+        let wanted: Vec<(&str, Option<&str>)> = recent
+            .iter()
+            .map(|l| (l.key.as_str(), l.pid.as_deref()))
+            .collect();
+        add_seeds(&mut seeds, &mut artists, resolve(c, a, &wanted)?);
+    }
     if seeds.len() < PICKS_SEEDS {
         let starred: Vec<SongId> = c
             .prepare_cached(
@@ -227,11 +297,11 @@ pub fn picks(c: &Connection, a: &Access, now: Millis, count: u32) -> Result<Pick
         add_seeds(&mut seeds, &mut artists, top_songs(c, a, 20)?);
     }
     if seeds.is_empty() {
-        let random = songs::random(c, a, &SongFilter::default(), 20)?
-            .into_iter()
-            .filter(|s| !s.missing)
-            .collect();
-        add_seeds(&mut seeds, &mut artists, random);
+        add_seeds(
+            &mut seeds,
+            &mut artists,
+            songs::random(c, a, &SongFilter::default(), 20)?,
+        );
     }
     if seeds.is_empty() {
         return Ok(Picks::default());
@@ -249,17 +319,142 @@ pub fn picks(c: &Connection, a: &Access, now: Millis, count: u32) -> Result<Pick
     for seed in &seeds {
         lists.push(similar::similar_songs(c, a, &seed.id, per)?.into_iter());
     }
-    let mut out = Vec::new();
-    while out.len() < count && !lists.is_empty() {
+    let mut found = Vec::new();
+    while found.len() < count && !lists.is_empty() {
         lists.retain_mut(|list| match list.next() {
             Some(song) => {
-                if out.len() < count && taken.insert(song.song_key.clone()) {
-                    out.push(song);
+                if found.len() < count && taken.insert(song.song_key.clone()) {
+                    found.push(song);
                 }
                 true
             }
             None => false,
         });
     }
-    Ok(Picks { seeds, songs: out })
+    let songs =
+        tracks_mixes::fresh_order(&found, artist_key, |_| false, day_seed(now, zone, "picks"));
+    Ok(Picks { seeds, songs })
+}
+
+/// Get More: what `tracks_library::rank` puts first, as the apps rank what to get next.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GetMore {
+    /// Library songs the caller has never played.
+    pub songs: Vec<Song>,
+    /// `(title, artist)` of songs the server does not have, from stored Last.fm data. Empty
+    /// unless asked for.
+    pub external: Vec<(String, String)>,
+}
+
+/// Get More for the caller. The engine's taste is the caller's own listens by artist (plays,
+/// last heard); its similar artists are this server's (local signals and Last.fm) for the
+/// caller's top [`TASTE_LEADING`] artists, closest first. Candidates are library songs by
+/// those artists that the caller has never played and, with `external`, Last.fm's top songs
+/// by them that the caller cannot play here. Empty until the caller has listened.
+pub fn get_more(
+    c: &Connection,
+    a: &Access,
+    now: Millis,
+    count: u32,
+    external: bool,
+) -> Result<GetMore, DbError> {
+    let count = count.clamp(1, 100) as usize;
+    let listened = own_listens(c, a, TASTE_LISTENS)?;
+    let heard: HashSet<&str> = listened.iter().map(|l| l.key.as_str()).collect();
+    let mut by_artist: HashMap<String, ArtistTaste> = HashMap::new();
+    for l in &listened {
+        let entry = by_artist
+            .entry(tracks_model::folded(&l.artist))
+            .or_insert_with(|| ArtistTaste {
+                name: l.artist.clone(),
+                plays: 0,
+                last_played_ms: Some(l.at),
+            });
+        entry.plays += 1;
+    }
+    let mut taste: Vec<ArtistTaste> = by_artist.into_values().collect();
+    taste.sort_by(|x, y| y.plays.cmp(&x.plays).then_with(|| x.name.cmp(&y.name)));
+    if taste.is_empty() {
+        return Ok(GetMore::default());
+    }
+    let mut names: Vec<(String, Option<ArtistId>)> = Vec::new();
+    for artist in &taste {
+        let found = artists::by_name(c, a, &artist.name)?;
+        names.push((artist.name.clone(), found.map(|f| f.id)));
+    }
+    let mut links = Vec::new();
+    let leading: Vec<(String, ArtistId)> = names
+        .iter()
+        .take(TASTE_LEADING)
+        .filter_map(|(name, id)| id.clone().map(|id| (name.clone(), id)))
+        .collect();
+    for (name, id) in leading {
+        for like in similar::similar_artists(c, a, &id, 10)? {
+            links.push(tracks_library::SimilarArtist {
+                of: name.clone(),
+                name: like.name.clone(),
+            });
+            if !names
+                .iter()
+                .any(|(n, _)| tracks_model::folded(n) == like.identity)
+            {
+                names.push((like.name, like.artist.map(|ar| ar.id)));
+            }
+        }
+    }
+    let mut candidates = Vec::new();
+    let mut library: HashMap<String, Song> = HashMap::new();
+    let mut outside: HashMap<String, (String, String)> = HashMap::new();
+    for (name, id) in &names {
+        if let Some(id) = id {
+            for song in songs::top_for_artist(c, a, id, 20)? {
+                let key = song.id.as_str().to_owned();
+                if heard.contains(song.song_key.as_str()) || library.contains_key(&key) {
+                    continue;
+                }
+                candidates.push(Candidate {
+                    id: key.clone(),
+                    kind: CandidateKind::Song,
+                    artist: song.artist.clone(),
+                    owned_share: 0.0,
+                    is_requested: false,
+                });
+                library.insert(key, song);
+            }
+        }
+        if external {
+            for title in stored::missing_top(c, a, &tracks_model::folded(name), 10)? {
+                let key = format!("x\u{1f}{}", tracks_model::song_key(&title, name));
+                if outside.contains_key(&key) {
+                    continue;
+                }
+                candidates.push(Candidate {
+                    id: key.clone(),
+                    kind: CandidateKind::Song,
+                    artist: name.clone(),
+                    owned_share: 0.0,
+                    is_requested: false,
+                });
+                outside.insert(key, (title, name.clone()));
+            }
+        }
+    }
+    let rules = Rules {
+        limit: count * 2,
+        now_ms: now.0,
+        ..Rules::default()
+    };
+    let mut out = GetMore::default();
+    for pick in tracks_library::rank(&candidates, &taste, &links, &rules) {
+        if let Some(song) = library.remove(&pick.id) {
+            if out.songs.len() < count {
+                out.songs.push(song);
+            }
+        } else if let Some(pair) = outside.remove(&pick.id)
+            && out.external.len() < count
+        {
+            out.external.push(pair);
+        }
+    }
+    Ok(out)
 }

@@ -747,8 +747,9 @@ one library.
 | `GET /songs/{id}/similar?count=20` | `{"songs": [Song], "external"?: [Suggestion]}`, ranked below |
 | `GET /songs/random?count=40&genre&year_from&year_to` | `{"songs": [Song]}` |
 | `GET /songs/top?count=50` (max 200) | `{"songs": [Song]}`, the most played songs on this server (Shelves below) |
-| `GET /me/on-repeat?count=40` (max 200) | `{"songs": [Song]}`, the caller's own most played songs lately (Shelves below) |
-| `GET /me/picks?count=40` (max 200) | `{"songs": [Song], "external"?: [Suggestion]}`, songs like the caller's favourites (Shelves below) |
+| `GET /me/mixes/{id}?tz` | `{"songs": [Song]}`, one of Tracks' mixes from the caller's own listens, `id` as the apps name it (Shelves below) |
+| `GET /me/picks?count=40&tz` (max 200) | `{"songs": [Song], "external"?: [Suggestion]}`, songs like the caller's favourites (Shelves below) |
+| `GET /me/get-more?count=24` (max 100) | `{"songs": [Song], "external"?: [Suggestion]}`, Tracks' Get More ranking (Shelves below) |
 | `GET /genres` | `{"genres": [{"name", "song_count", "album_count"}]}` |
 | `GET /songs/{id}/lyrics` | section 11 |
 | `GET /folders/{id}` | `{"folder": {"id","name","parent_id"}, "folders": [...], "songs": [Song]}` |
@@ -781,30 +782,45 @@ client offers to request one with `POST /acquisitions` (section 15.3). Nothing n
 
 #### Shelves
 
-Three lists made from listens (section 12) and the library alone, for a client's home shelves.
-Each holds library songs the caller can see, one per `song_key`, each with the caller's `me`.
-Listens sent by title and artist without `song_id` count toward the song with the same
-`song_key`.
+Lists made from listens (section 12) and the library alone, for a client's home shelves. The
+mixes and Get More come from Tracks' own engine (`tracks-mixes` and `tracks-library`, at the
+`tracks-model` revision in `Cargo.toml`), so the server and the apps give the same answer for
+the same plays. Each list holds library songs the caller can see, one per `song_key`, each with
+the caller's `me`. A listen sent by title and artist without `song_id` counts toward the song
+with the same `song_key`. Only the caller's own listens are read, except for top songs.
 
-- **On Repeat**, `GET /me/on-repeat`: songs the caller played at least twice in the last 30 days,
-  best first, each play counting less as it ages (half as much after 10 days). Only the caller's
-  own listens; empty until they have some.
+- **Mixes**, `GET /me/mixes/{id}`: the mix the apps' `MixBuilder` builds from the caller's
+  listens, in its order: `onRepeat` (three plays or more in 30 days, recent plays counting
+  most), `rediscover` (four plays or more, none in 60 days, with 90 days of history), `newFinds`,
+  `allTimeFavorites`, `deepCuts`, `throwback.<months>` and `rightNow.<part>.<weekend>`. `tz` is
+  the listener's IANA time zone (default UTC) for the parts of the day and the daily order; an
+  unknown one is `400`. A mix the engine does not offer for these listens (it needs 6 songs,
+  8 for `rightNow`), or an id it does not make, is `{"songs": []}`. `radioFinds` is always empty:
+  listens do not say whether a station played them. Songs not on this server are left out.
 - **Top songs**, `GET /songs/top`: the most played songs on this server. The caller's plays count
   twice. Other people's plays of a song count only when at least two people other than the
   caller played it, so the list never shows what one other person plays. Ties go to the most
   recently played. Empty while nobody has played anything.
 - **Picks**, `GET /me/picks`: songs like the ones the caller plays, by way of similar songs
-  (above). It starts from up to 5 songs by different artists: the caller's most played in the
-  last 90 days, then their starred songs, then this server's top songs, then songs picked at
-  random, so a new server and a new listener get picks too. It takes from each in turn and leaves
-  out the starting songs and anything the caller played in the last 30 days. `external` is as
-  above, from Last.fm's similar songs for the starting songs; lookups for them start in the
-  background and the answer never waits for Last.fm.
+  (above), new to them. It starts from up to 5 songs by different artists: from the caller's
+  `onRepeat`, `newFinds` and `allTimeFavorites` mixes, then their latest listens, then their
+  starred songs; with none of those, this server's top songs, then songs picked at random, so
+  a new server and a new listener get picks too. It takes from each in turn, leaves out the
+  starting songs and anything the caller played in the last 30 days, and orders the result with
+  the engine's daily artist-spread shuffle (`tz` as for mixes). `external` is as above, from
+  Last.fm's similar songs for the starting songs; lookups for them start in the background and
+  the answer never waits for Last.fm.
+- **Get More**, `GET /me/get-more`: the engine's Get More ranking (`tracks_library::rank`). The
+  taste is the caller's listens by artist (plays, last heard); the similar artists are this
+  server's (above) for their top 5 artists. `songs` are library songs by those artists the caller
+  has never played; `external`, as above, Last.fm's top songs by them that the caller cannot play
+  here. Empty until the caller has listened.
 
-A client shows On Repeat from `/me/on-repeat`, a Most Played shelf from `/songs/top`, picks and
-new music from `/me/picks`, songs like one song from `/songs/{id}/similar`, and artists to
-explore from `/artists/{id}/similar` (with `in_library=true` when it can show only artists the
-server has). Fixtures: `on-repeat.json`, `top-songs.json`, `picks.json`, `similar-songs.json`,
+A client shows On Repeat from `/me/mixes/onRepeat`, Rediscover from `/me/mixes/rediscover`, a
+Most Played shelf from `/songs/top`, server picks from `/me/picks`, Get More from
+`/me/get-more`, songs like one song from `/songs/{id}/similar`, and artists to explore from
+`/artists/{id}/similar` (with `in_library=true` when it can show only artists the server has).
+Fixtures: `mix.json`, `top-songs.json`, `picks.json`, `get-more.json`, `similar-songs.json`,
 `similar-artists.json`.
 
 ---

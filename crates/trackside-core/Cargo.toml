@@ -14,6 +14,9 @@ testing = []
 
 [dependencies]
 tracks-model.workspace = true
+tracks-mixes.workspace = true
+tracks-library.workspace = true
+tracks-jiff.workspace = true
 rusqlite.workspace = true
 rusqlite_migration.workspace = true
 serde.workspace = true

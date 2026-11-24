@@ -812,7 +812,7 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
         },
     )?;
     put(
-        "on-repeat.json",
+        "mix.json",
         &wire::library::Songs {
             songs: map::songs_with_me(std::slice::from_ref(&s.halo), &me_halo),
         },
@@ -821,6 +821,16 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
         "top-songs.json",
         &wire::library::Songs {
             songs: map::songs_with_me(&[s.halo.clone(), s.dont_stop.clone()], &me_halo),
+        },
+    )?;
+    put(
+        "get-more.json",
+        &wire::library::SuggestedSongs {
+            songs: map::songs_with_me(std::slice::from_ref(&s.ladies), &me_halo),
+            external: Some(vec![wire::library::Suggestion {
+                title: String::from("Irreplaceable"),
+                artist: String::from("Beyoncé"),
+            }]),
         },
     )?;
     put(
@@ -1940,7 +1950,8 @@ fn fixtures_deserialize_into_their_wire_types() -> TestResult {
             back::<wire::admin::AdminAcquisitions>,
         ),
         ("starred.json", back::<wire::library::Starred>),
-        ("on-repeat.json", back::<wire::library::Songs>),
+        ("mix.json", back::<wire::library::Songs>),
+        ("get-more.json", back::<wire::library::SuggestedSongs>),
         ("top-songs.json", back::<wire::library::Songs>),
         ("picks.json", back::<wire::library::SuggestedSongs>),
         ("capabilities.json", back::<wire::Capabilities>),

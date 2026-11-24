@@ -1,12 +1,16 @@
-//! Suggestions with no Last.fm key: similar songs and artists, top songs, On Repeat and picks
-//! from the library and this server's listens alone, filtered by the caller's libraries, and
-//! never showing one person's listening to another.
+//! Suggestions with no Last.fm key: similar songs and artists, top songs, picks, Get More and
+//! the mixes (On Repeat, Rediscover) from the library and this server's listens alone, filtered
+//! by the caller's libraries, never showing one person's listening to another, and with the
+//! mixes exactly what Tracks' own engine builds from the same plays.
 
+use std::collections::HashSet;
 use std::path::Path;
 
+use tracks_mixes::MixPlay;
 use trackside_core::access::Role;
 use trackside_core::ids::SongId;
 use trackside_core::ingest::ScannedFile;
+use trackside_core::recommend::TimeZone;
 use trackside_core::records::Song;
 use trackside_core::repo::enrichment::{self as store, ArtistFacts, Related};
 use trackside_core::repo::listens::{self, ListenSource, NewListen};
@@ -127,8 +131,7 @@ impl World {
         self.songs
             .iter()
             .find(|(t, _)| t == title)
-            .map(|(_, id)| id.clone())
-            .unwrap_or_else(|| panic!("no song {title}"))
+            .map_or_else(|| panic!("no song {title}"), |(_, id)| id.clone())
     }
 
     fn now(&self) -> Millis {
@@ -138,9 +141,18 @@ impl World {
     /// Listens by `who`, each `(title, minutes ago)`, naming the library song unless
     /// `by_name`.
     fn listen(&self, who: &Access, plays: &[(&str, i64)], by_name: bool) -> TestResult {
+        let items = self.listens(who, plays, by_name);
+        let user: UserKey = who.user;
+        self.test
+            .db
+            .write_blocking(move |tx| listens::submit(tx, user, None, &items))?;
+        Ok(())
+    }
+
+    fn listens(&self, who: &Access, plays: &[(&str, i64)], by_name: bool) -> Vec<NewListen> {
         let now = self.now();
         let user: UserKey = who.user;
-        let items: Vec<NewListen> = plays
+        plays
             .iter()
             .enumerate()
             .map(|(i, (title, ago))| {
@@ -160,11 +172,7 @@ impl World {
                     source: ListenSource::Native,
                 }
             })
-            .collect();
-        self.test
-            .db
-            .write_blocking(move |tx| listens::submit(tx, user, None, &items))?;
-        Ok(())
+            .collect()
     }
 
     fn artist(&self, name: &str) -> Result<ArtistId, Box<dyn std::error::Error>> {
@@ -230,9 +238,9 @@ fn a_new_server_without_last_fm_suggests_from_the_library() -> TestResult {
     let (ana, now) = (w.ana.clone(), w.now());
     let (on_repeat, top, picks) = w.test.db.read_blocking(move |c| {
         Ok((
-            recommend::on_repeat(c, &ana, now, 40)?,
+            recommend::mix(c, &ana, now, &TimeZone::UTC, "onRepeat")?,
             recommend::top_songs(c, &ana, 40)?,
-            recommend::picks(c, &ana, now, 40)?,
+            recommend::picks(c, &ana, now, &TimeZone::UTC, 40)?,
         ))
     })?;
     assert!(on_repeat.is_empty(), "nothing played yet");
@@ -300,38 +308,163 @@ fn in_library_artists_are_not_crowded_out_by_last_fm() -> TestResult {
     Ok(())
 }
 
+/// What `tracks_mixes` builds from these listens on its own, as the apps call it: the song keys
+/// of the mix with this id, in order.
+fn engine_mix(listened: &[NewListen], now: Millis, id: &str) -> Vec<String> {
+    let plays: Vec<MixPlay> = listened
+        .iter()
+        .map(|l| MixPlay {
+            identity: tracks_model::song_key(&l.title, &l.artist),
+            catalog_id: String::new(),
+            title: l.title.clone(),
+            artist_name: l.artist.clone(),
+            album_title: None,
+            artwork_url: None,
+            played_at_ms: l.started_at.0,
+            is_radio: false,
+        })
+        .collect();
+    let output =
+        tracks_mixes::build_mixes(&plays, &HashSet::<String>::new(), now.0, &TimeZone::UTC);
+    output
+        .mixes
+        .iter()
+        .find(|m| m.kind.id() == id)
+        .map(|m| m.songs.iter().map(|s| s.identity.clone()).collect())
+        .unwrap_or_default()
+}
+
+fn keys(songs: &[Song]) -> Vec<String> {
+    songs.iter().map(|s| s.song_key.clone()).collect()
+}
+
+const ON_REPEAT: [&str; 7] = [
+    "Roads",
+    "Glory Box",
+    "Song 2",
+    "Airbag",
+    "Teardrop",
+    "Beetlebum",
+    "Angel",
+];
+
 #[test]
-fn on_repeat_is_the_callers_own_recent_plays() -> TestResult {
+fn on_repeat_is_the_engines_mix_of_the_callers_own_listens() -> TestResult {
     let w = world(true)?;
-    w.listen(
-        &w.ana,
-        &[
-            ("Roads", 10),
-            ("Roads", 2 * 24 * 60),
-            ("Roads", 3 * 24 * 60),
-            ("Song 2", 60),
-            ("Teardrop", 40 * 24 * 60),
-            ("Teardrop", 41 * 24 * 60),
-        ],
-        false,
-    )?;
-    // Sent by name only, as a play of a copy on the phone would be.
-    w.listen(&w.ana, &[("Angel", 30), ("Angel", 20 * 24 * 60)], true)?;
+    let mut plays = Vec::new();
+    for (i, title) in (0_i64..).zip(ON_REPEAT) {
+        for day in 0..3 {
+            plays.push((title, (i + day * 5) * 24 * 60 + 30));
+        }
+    }
+    let (named, by_name) = plays.split_at(plays.len() - 3);
+    let mut listened = w.listens(&w.ana, named, false);
+    // Angel sent by name only, as a play of a copy on the phone would be.
+    listened.extend(w.listens(&w.ana, by_name, true));
+    w.listen(&w.ana, named, false)?;
+    w.listen(&w.ana, by_name, true)?;
     w.listen(
         &w.bob,
         &[("Airbag", 5), ("Airbag", 6), ("Airbag", 7)],
         false,
     )?;
+
     let (ana, bob, now) = (w.ana.clone(), w.bob.clone(), w.now());
     let (mine, theirs) = w.test.db.read_blocking(move |c| {
         Ok((
-            recommend::on_repeat(c, &ana, now, 40)?,
-            recommend::on_repeat(c, &bob, now, 40)?,
+            recommend::mix(c, &ana, now, &TimeZone::UTC, "onRepeat")?,
+            recommend::mix(c, &bob, now, &TimeZone::UTC, "onRepeat")?,
         ))
     })?;
-    assert_eq!(titles(&mine), ["Roads", "Angel"]);
-    assert_eq!(mine[1].id, w.id("Angel"), "found by song key");
-    assert_eq!(titles(&theirs), ["Airbag"]);
+    let expected = engine_mix(&listened, now, "onRepeat");
+    assert_eq!(expected.len(), ON_REPEAT.len());
+    assert_eq!(
+        keys(&mine),
+        expected,
+        "the engine's songs in the engine's order"
+    );
+    let angel = mine.iter().find(|s| s.title == "Angel").ok_or("no Angel")?;
+    assert_eq!(angel.id, w.id("Angel"), "found by song key");
+    assert!(
+        theirs.is_empty(),
+        "one song is too few for the engine's mix"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_mix_leaves_out_songs_the_caller_cannot_see() -> TestResult {
+    let w = world(true)?;
+    let mut plays = Vec::new();
+    for title in ON_REPEAT.iter().take(5).chain(&["Unfinished Sympathy"]) {
+        for day in 0..3 {
+            plays.push((*title, day * 24 * 60 + 30));
+        }
+    }
+    w.listen(&w.ana, &plays, true)?;
+    let (ana, now) = (w.ana.clone(), w.now());
+    let mine = w
+        .test
+        .db
+        .read_blocking(move |c| recommend::mix(c, &ana, now, &TimeZone::UTC, "onRepeat"))?;
+    assert_eq!(mine.len(), 5, "{:?}", titles(&mine));
+    assert!(!titles(&mine).contains(&"Unfinished Sympathy"));
+    Ok(())
+}
+
+#[test]
+fn rediscover_is_the_engines_old_favourites() -> TestResult {
+    let w = world(true)?;
+    let mut plays = Vec::new();
+    for (i, title) in (0_i64..).zip(ON_REPEAT.iter().take(6)) {
+        for n in 0..4 {
+            plays.push((*title, (100 + i * 3 + n) * 24 * 60));
+        }
+    }
+    plays.push(("Exchange", 60));
+    let listened = w.listens(&w.ana, &plays, false);
+    w.listen(&w.ana, &plays, false)?;
+    let (ana, now) = (w.ana.clone(), w.now());
+    let found = w
+        .test
+        .db
+        .read_blocking(move |c| recommend::mix(c, &ana, now, &TimeZone::UTC, "rediscover"))?;
+    let expected = engine_mix(&listened, now, "rediscover");
+    assert_eq!(expected.len(), 6);
+    assert_eq!(keys(&found), expected);
+    assert!(!titles(&found).contains(&"Exchange"));
+    Ok(())
+}
+
+#[test]
+fn get_more_ranks_unheard_songs_by_what_you_play() -> TestResult {
+    let w = world(true)?;
+    w.listen(
+        &w.ana,
+        &[("Airbag", 10), ("Airbag", 20), ("Paranoid Android", 30)],
+        false,
+    )?;
+    w.listen(&w.bob, &[("Song 2", 5)], false)?;
+    let (ana, now) = (w.ana.clone(), w.now());
+    let more = w
+        .test
+        .db
+        .read_blocking(move |c| recommend::get_more(c, &ana, now, 24, true))?;
+    let found = titles(&more.songs);
+    assert_eq!(found.first(), Some(&"Karma Police"), "{found:?}");
+    assert!(
+        found.contains(&"Song 2"),
+        "an artist like Radiohead: {found:?}"
+    );
+    assert!(!found.contains(&"Airbag") && !found.contains(&"Paranoid Android"));
+    assert!(more.external.is_empty(), "no Last.fm data stored");
+
+    let (bob, now) = (w.carl.clone(), w.now());
+    let none = w
+        .test
+        .db
+        .read_blocking(move |c| recommend::get_more(c, &bob, now, 24, true))?;
+    assert!(none.songs.is_empty(), "nothing played, nothing to go on");
     Ok(())
 }
 
@@ -375,7 +508,7 @@ fn picks_are_like_what_you_play_and_leave_it_out() -> TestResult {
     let picks = w
         .test
         .db
-        .read_blocking(move |c| recommend::picks(c, &ana, now, 40))?;
+        .read_blocking(move |c| recommend::picks(c, &ana, now, &TimeZone::UTC, 40))?;
     assert_eq!(titles(&picks.seeds), ["Roads"]);
     let found = titles(&picks.songs);
     assert!(!found.contains(&"Roads"), "played lately: {found:?}");
@@ -388,7 +521,7 @@ fn picks_are_like_what_you_play_and_leave_it_out() -> TestResult {
     let picks = w
         .test
         .db
-        .read_blocking(move |c| recommend::picks(c, &admin, now, 40))?;
+        .read_blocking(move |c| recommend::picks(c, &admin, now, &TimeZone::UTC, 40))?;
     assert!(titles(&picks.songs).contains(&"Unfinished Sympathy"));
     assert_ne!(w.hidden, w.id("Teardrop"));
     Ok(())

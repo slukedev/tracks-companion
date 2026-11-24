@@ -679,7 +679,7 @@ async fn every_shelf_answers_without_last_fm() -> TestResult {
     server.setup_admin().await?;
     let key = server.device_key().await?;
     let ids = plain_library(&server.test)?;
-    let (airbag, paranoid, roads) = (&ids[0], &ids[1], &ids[6]);
+    let paranoid = &ids[1];
 
     let similar = get_json(&server, &key, &format!("/songs/{paranoid}/similar")).await?;
     let found = song_titles(&similar);
@@ -692,44 +692,64 @@ async fn every_shelf_answers_without_last_fm() -> TestResult {
     let top = get_json(&server, &key, &format!("/artists/{radiohead}/top-songs")).await?;
     assert_eq!(song_titles(&top).len(), 3);
 
-    assert_eq!(
-        get_json(&server, &key, "/songs/top").await?,
-        json!({"songs": []})
-    );
-    assert_eq!(
-        get_json(&server, &key, "/me/on-repeat").await?,
-        json!({"songs": []})
-    );
+    for path in [
+        "/songs/top",
+        "/me/mixes/onRepeat",
+        "/me/mixes/rediscover",
+        "/me/get-more",
+    ] {
+        assert_eq!(
+            get_json(&server, &key, path).await?,
+            json!({"songs": []}),
+            "{path} before any listens"
+        );
+    }
     let picks = get_json(&server, &key, "/me/picks").await?;
     assert!(!song_titles(&picks).is_empty(), "{picks}");
     assert!(picks.get("external").is_none());
+    let bad = server
+        .http
+        .get(server.url("/me/picks?tz=Not/AZone"))
+        .bearer_auth(&key)
+        .send()
+        .await?;
+    assert_eq!(bad.status(), 400);
 
-    listen(
-        &server,
-        &key,
-        &[
-            (roads, "2026-11-14T08:00:00.000Z"),
-            (roads, "2026-11-13T08:00:00.000Z"),
-            (airbag, "2026-11-14T08:05:00.000Z"),
-        ],
-    )
-    .await?;
-    let on_repeat = get_json(&server, &key, "/me/on-repeat?count=10").await?;
-    assert_eq!(song_titles(&on_repeat), ["Roads"]);
-    assert_eq!(on_repeat["songs"][0]["me"]["play_count"], 2);
-    let top = get_json(&server, &key, "/songs/top").await?;
-    assert_eq!(song_titles(&top), ["Roads", "Airbag"]);
+    // Six songs three times each in the last few days: enough for the engine's On Repeat.
+    let played = [0, 3, 4, 5, 6, 8];
+    let times = [
+        "2026-11-14T08:00:00.000Z",
+        "2026-11-13T08:00:00.000Z",
+        "2026-11-12T08:00:00.000Z",
+    ];
+    let mut plays: Vec<(&SongId, &str)> = Vec::new();
+    for i in played {
+        plays.extend(times.iter().map(|at| (&ids[i], *at)));
+    }
+    listen(&server, &key, &plays).await?;
+    let on_repeat = get_json(&server, &key, "/me/mixes/onRepeat?tz=UTC").await?;
+    let mut found = song_titles(&on_repeat);
+    found.sort();
+    assert_eq!(
+        found,
+        ["Airbag", "Beetlebum", "M.O.R.", "Numb", "Roads", "Song 2"]
+    );
+    assert_eq!(on_repeat["songs"][0]["me"]["play_count"], 3);
+    let top = get_json(&server, &key, "/songs/top?count=3").await?;
+    assert_eq!(song_titles(&top).len(), 3);
     let picks = get_json(&server, &key, "/me/picks").await?;
-    let found = song_titles(&picks);
-    assert!(found.contains(&String::from("Glory Box")), "{found:?}");
-    assert!(
-        !found.contains(&String::from("Roads")),
-        "played lately: {found:?}"
+    let mut found = song_titles(&picks);
+    found.sort();
+    assert_eq!(
+        found,
+        ["Glory Box", "Lucky", "Paranoid Android"],
+        "unplayed only"
     );
-    assert!(
-        !found.contains(&String::from("Airbag")),
-        "played lately: {found:?}"
-    );
+    let more = get_json(&server, &key, "/me/get-more").await?;
+    let mut found = song_titles(&more);
+    found.sort();
+    assert_eq!(found, ["Glory Box", "Lucky", "Paranoid Android"]);
+    assert!(more.get("external").is_none());
     let lookups = server.enrich.lookups.lock().unwrap().clone();
     assert!(
         lookups.contains(&Target::artist("Portishead")),
@@ -750,6 +770,12 @@ async fn picks_merge_last_fm_and_in_library_artists_come_first_when_asked() -> T
     assert_eq!(
         picks["external"],
         json!([{"title": "Glory Box", "artist": "Portishead"}])
+    );
+    let more = get_json(&server, &key, "/me/get-more").await?;
+    assert_eq!(
+        more["external"],
+        json!([{"title": "No Surprises", "artist": "Radiohead"}]),
+        "{more}"
     );
 
     let elsewhere: Vec<Related> = (0..5)

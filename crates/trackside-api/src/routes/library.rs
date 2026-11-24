@@ -39,8 +39,9 @@ pub(super) fn routes() -> Router<ApiState> {
         .route("/songs", get(songs_by_ids))
         .route("/songs/random", get(random_songs))
         .route("/songs/top", get(server_top_songs))
-        .route("/me/on-repeat", get(on_repeat))
+        .route("/me/mixes/{id}", get(mix))
         .route("/me/picks", get(picks))
+        .route("/me/get-more", get(get_more))
         .route("/songs/{id}", get(song))
         .route("/songs/{id}/similar", get(similar_songs))
         .route("/songs/{id}/lyrics", get(song_lyrics))
@@ -542,21 +543,56 @@ async fn server_top_songs(
     Ok(json_with(StatusCode::OK, &Songs { songs }))
 }
 
-/// `GET /me/on-repeat`: the caller's own most played songs lately.
-async fn on_repeat(
+#[derive(Debug, Deserialize)]
+struct ShelfQuery {
+    count: Option<u32>,
+    /// The listener's IANA time zone, for the mixes' parts of the day and daily order.
+    tz: Option<String>,
+}
+
+fn shelf_zone(tz: Option<&str>) -> ApiResult<recommend::TimeZone> {
+    recommend::zone(tz).ok_or_else(|| ApiError::bad_field("tz", "Not a known time zone."))
+}
+
+/// `GET /me/mixes/{id}`: one of Tracks' mixes (On Repeat, Rediscover and the rest) from the
+/// caller's own listens, as the apps build it.
+async fn mix(
+    Authed(principal): Authed<LIBRARY>,
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+    Query(query): Query<ShelfQuery>,
+) -> ApiResult<Response> {
+    let zone = shelf_zone(query.tz.as_deref())?;
+    let access = principal.access.clone();
+    let now = state.db.clock().now();
+    let found = read(&state, move |c| recommend::mix(c, &access, now, &zone, &id)).await?;
+    let songs = songs_with_me(&state, &principal.access, found).await?;
+    Ok(json_with(StatusCode::OK, &Songs { songs }))
+}
+
+/// `GET /me/get-more`: Tracks' Get More ranking over library songs the caller has not heard
+/// and, for callers who may request, songs the server does not have.
+async fn get_more(
     Authed(principal): Authed<LIBRARY>,
     State(state): State<ApiState>,
     Query(query): Query<CountQuery>,
 ) -> ApiResult<Response> {
-    let count = limit(query.count, 40, 200);
+    let count = limit(query.count, 24, 100);
     let access = principal.access.clone();
     let now = state.db.clock().now();
+    let external = sees_external(&state, &principal);
     let found = read(&state, move |c| {
-        recommend::on_repeat(c, &access, now, count)
+        recommend::get_more(c, &access, now, count, external)
     })
     .await?;
-    let songs = songs_with_me(&state, &principal.access, found).await?;
-    Ok(json_with(StatusCode::OK, &Songs { songs }))
+    let songs = songs_with_me(&state, &principal.access, found.songs).await?;
+    Ok(json_with(
+        StatusCode::OK,
+        &SuggestedSongs {
+            songs,
+            external: suggestions(external, found.external),
+        },
+    ))
 }
 
 /// `GET /me/picks`: songs like the caller's favourites that they have not played lately, and
@@ -564,14 +600,15 @@ async fn on_repeat(
 async fn picks(
     Authed(principal): Authed<LIBRARY>,
     State(state): State<ApiState>,
-    Query(query): Query<CountQuery>,
+    Query(query): Query<ShelfQuery>,
 ) -> ApiResult<Response> {
     let count = limit(query.count, 40, 200);
+    let zone = shelf_zone(query.tz.as_deref())?;
     let access = principal.access.clone();
     let now = state.db.clock().now();
     let external = sees_external(&state, &principal);
     let (found, missing) = read(&state, move |c| {
-        let picks = recommend::picks(c, &access, now, count)?;
+        let picks = recommend::picks(c, &access, now, &zone, count)?;
         let mut missing: Vec<(String, String)> = Vec::new();
         if external {
             for seed in &picks.seeds {
