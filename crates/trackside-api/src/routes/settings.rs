@@ -145,6 +145,16 @@ pub(crate) const KEYS: &[Key] = &[
         value: |c| json!(c.acquire.instant_play),
     },
     Key {
+        name: FETCHED_KEEP,
+        kind: Kind::Count,
+        value: |c| json!(c.acquire.fetched_keep),
+    },
+    Key {
+        name: FETCHED_MAX_BYTES,
+        kind: Kind::Size,
+        value: |c| json!(size_text(c.acquire.fetched_max_bytes)),
+    },
+    Key {
         name: "acquire.ytdlp.enabled",
         kind: Kind::Bool,
         value: |c| json!(c.acquire.ytdlp.enabled),
@@ -173,6 +183,9 @@ pub(crate) const KEYS: &[Key] = &[
 
 /// The server-wide Last.fm key for suggestions.
 pub const LASTFM_API_KEY: &str = "enrichment.lastfm_api_key";
+/// How many songs played without being kept stay fetched, and the most they may take.
+pub(crate) const FETCHED_KEEP: &str = "acquire.fetched_keep";
+pub(crate) const FETCHED_MAX_BYTES: &str = "acquire.fetched_max_bytes";
 /// Whether legacy Subsonic auth (app passwords) is on server-wide.
 pub(crate) const LEGACY_SUBSONIC: &str = "auth.legacy_subsonic";
 

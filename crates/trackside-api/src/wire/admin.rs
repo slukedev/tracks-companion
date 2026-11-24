@@ -84,6 +84,18 @@ pub struct OverviewAcquisition {
     pub providers: Vec<ProviderStatus>,
     pub active: u32,
     pub today: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fetched: Option<FetchedUsage>,
+}
+
+/// Songs played without being kept: what they take and the limits (api.md section 16).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FetchedUsage {
+    pub songs: u64,
+    pub bytes: u64,
+    pub fetching: u64,
+    pub keep: u32,
+    pub max_bytes: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -88,7 +88,7 @@ change both together.
 
 | What | Where | How to find the new pin |
 |---|---|---|
-| Base images, ffmpeg, Deno, alpine, debian | `ARG` lines at the top of `packaging/docker/Dockerfile` | `docker buildx imagetools inspect <image>:<tag>` and copy `Digest` |
+| Base images, ffmpeg, Deno, alpine | `ARG` lines at the top of `packaging/docker/Dockerfile` | `docker buildx imagetools inspect <image>:<tag>` and copy `Digest` |
 | yt-dlp | `YTDLP_VERSION` and the two `YTDLP_SHA256_*` lines | the release's `SHA2-256SUMS`, lines for `yt-dlp_linux.zip` and `yt-dlp_linux_aarch64.zip` |
 | slskd, Tailscale | `packaging/compose.acquire.yaml`, `packaging/compose.tailscale.yaml` | `docker buildx imagetools inspect` |
 | ffmpeg in CI | `FFMPEG_IMAGE` in `ci.yml` | same digest as the Dockerfile |

@@ -604,7 +604,7 @@ fn queued_writes_do_not_take_the_blocking_pool() -> TestResult {
         tokio::task::yield_now().await;
         let read = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            db.read(|c| Ok(settings::server_id(c)?)),
+            db.read(settings::server_id),
         )
         .await;
         let _ = release_tx.send(());

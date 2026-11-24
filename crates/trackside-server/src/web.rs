@@ -135,14 +135,15 @@ fn exempt_from_timeout(base_path: &str, path: &str) -> bool {
         return false;
     };
     let segments: Vec<&str> = rest.split('/').collect();
-    let one = |s: &str| !s.is_empty();
     match segments.as_slice() {
-        ["api", "v1", "songs", id, "download"] => one(id),
-        ["api", "v1", "uploads"]
-        | ["api", "v1", "events"]
-        | ["api", "v1", "me", "listens", "export"] => true,
-        ["api", "v1", "uploads", id] | ["api", "v1", "uploads", id, "complete"] => one(id),
-        ["api", "v1", "admin", "backups", name] => one(name),
+        ["api", "v1", api @ ..] => match api {
+            ["uploads" | "events"] | ["me", "listens", "export"] => true,
+            ["songs", id, "download"]
+            | ["uploads", id]
+            | ["uploads", id, "complete"]
+            | ["admin", "backups", id] => !id.is_empty(),
+            _ => false,
+        },
         ["rest", endpoint] => {
             let name = endpoint.strip_suffix(".view").unwrap_or(endpoint);
             name.eq_ignore_ascii_case("download") || name.eq_ignore_ascii_case("stream")

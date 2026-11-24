@@ -273,7 +273,8 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; }
 .nav a[aria-current="page"] .icon { color: #fff; }
 .nav a:focus-visible, .sidebar .btn:focus-visible, .tabbar a:focus-visible, .tabbar button:focus-visible, .topbar .btn:focus-visible { outline-color: #ff8cb4; }
 .nav-foot { margin-top: auto; display: flex; flex-direction: column; gap: 2px; }
-.nav-foot .btn { justify-content: flex-start; background: transparent; border-color: transparent; color: var(--rail-ink); padding: 0 var(--s2); min-height: max(34px, var(--target)); font-size: var(--t-md); font-weight: 400; gap: 10px; }
+
+.nav-foot .btn, .nav-foot .btn.plain { justify-content: flex-start; background: transparent; border-color: transparent; color: var(--rail-ink); padding: 0 var(--s2); min-height: max(34px, var(--target)); font-size: var(--t-md); font-weight: 400; gap: 10px; }
 .nav-foot .btn .icon { color: var(--rail-ink-2); width: 16px; height: 16px; }
 
 .topbar, .tabbar, .sheet-head { display: none; }
@@ -585,7 +586,7 @@ input.switch:checked:active:not(:disabled)::before { transform: translateX(16px)
 .callout .icon { margin-top: 2px; }
 .callout p { font-size: var(--t-sm); }
 .code-line { display: flex; gap: var(--s2); align-items: stretch; flex-wrap: wrap; }
-.code-line code { flex: 1 1 240px; min-width: 0; display: flex; align-items: center; padding: 6px 10px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--line-strong); word-break: break-all; color: var(--ink); }
+.code-line code { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; padding: 6px 10px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--line-strong); word-break: break-all; color: var(--ink); }
 
 /* ---------- Overview ---------- */
 

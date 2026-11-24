@@ -1,7 +1,7 @@
 // Shared frame for the pages people reach before they have a session: setup, invite, reset.
 
 import { call, preview } from './api.js';
-import { h, clear, icon, button, busy, field, input, formError, setFieldError } from './ui.js';
+import { h, clear, icon, button, busy, input, formError, setFieldError, field } from './ui.js';
 
 
 export async function serverName() {
@@ -29,7 +29,7 @@ export function frame({ title, text, body, foot }) {
   clear(app);
   app.append(h('main.solo', { id: 'main' },
     h('div.solo-card',
-      h('div.solo-head', h('span.mark.lg', icon('cassette')), h('h1', title), text ? h('p', text) : null),
+      h('div.solo-head', h('span.mark.lg', icon('cassette')), h('p.product', 'Trackside'), h('h1', title), text ? h('p', text) : null),
       body,
       foot ? h('p.solo-foot', foot) : null)));
 }
@@ -40,7 +40,7 @@ export function passwordFields(label = 'Password') {
   const repeat = input({ type: 'password', autocomplete: 'new-password', required: true });
   const fields = [
     field(label, password),
-    field('Repeat', repeat),
+    field('Confirm password', repeat),
   ];
   return {
     fields,
@@ -49,7 +49,7 @@ export function passwordFields(label = 'Password') {
       setFieldError(password, '');
       setFieldError(repeat, '');
       if (password.value !== repeat.value) {
-        setFieldError(repeat, 'Does not match.');
+        setFieldError(repeat, 'The passwords do not match.');
         repeat.focus();
         return false;
       }
@@ -83,7 +83,7 @@ export function checkUsername(control) {
   setFieldError(control, '');
   const value = control.value.trim();
   if (!/^[A-Za-z0-9._-]{1,64}$/.test(value)) {
-    setFieldError(control, 'Letters, numbers, . - _ only.');
+    setFieldError(control, 'Use letters, numbers, dots, dashes and underscores only.');
     control.focus();
     return null;
   }

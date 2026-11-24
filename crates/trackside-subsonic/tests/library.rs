@@ -257,7 +257,7 @@ async fn members_see_only_their_own_now_playing_and_admins_see_all() -> TestResu
     ))
     .await?;
     let member = fx.ok(&now_playing(&fx.member_key)).await?;
-    assert!(ids_in(&member["nowPlaying"]["entry"]).is_empty());
+    assert_eq!(ids_in(&member["nowPlaying"]["entry"]), Vec::<String>::new());
     fx.ok(&fx.tracks_url("scrobble", &[("id", id), ("submission", "false")], true))
         .await?;
     let member = fx.ok(&now_playing(&fx.member_key)).await?;

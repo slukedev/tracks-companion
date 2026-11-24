@@ -147,7 +147,7 @@ w('admin-duplicates', { groups: [
     { id: 's2f4g6h8j0k2l4z6x8c0', title: 'Halo', artist: 'Beyoncé', library_id: LIB.acquired.id, path: 'Beyoncé/I Am... Sasha Fierce/Halo.flac' },
   ] },
 ] });
-w('admin-imports', { imports: [
+w('admin-imports', { next_cursor: 'aW1wb3J0czoy', imports: [
   { id: 'i5q8w1e4r7t0y3u6i9o2', file_name: '01 Halo.flac', source: 'upload', user: ref(luke), state: 'imported', song_id: 's2f4g6h8j0k2l4z6x8c0', created_at: '2026-11-14T09:30:58.000Z' },
   { id: 'i2w5e8r1t4y7u0i3o6p9', file_name: 'voice memo.m4a', source: 'inbox', state: 'rejected', error: 'The file has a video track.', created_at: '2026-11-13T12:02:11.000Z' },
 ] });
@@ -246,7 +246,10 @@ w('admin-provider-test', { ok: true, elapsed_ms: 1840, candidates: 12, detail: '
 w('admin-enrichment', { configured: true, artists: 1840, songs: 5210, last_fetch_at: '2026-11-14T09:28:00.000Z', last_error: { at: '2026-11-14T08:30:00.000Z', message: 'Last.fm error 29: Rate Limit Exceeded' } });
 w('admin-enrichment-test', { ok: false, elapsed_ms: 212, detail: 'Last.fm error 10: Invalid API key' });
 
-w('me-devices', { devices: devices.filter((d) => d.user.id === luke.id).map(({ user, ...d }, i) => ({ ...d, current: false })) });
+w('me-devices', { devices: devices.filter((d) => d.user.id === luke.id).map(({ user, ...d }) => ({ ...d, current: false })) });
+// The member preview signs in as Mum, so her own devices and keys.
+w('me-devices-member', { devices: devices.filter((d) => d.user.id === mum.id).map(({ user, ...d }) => ({ ...d, current: false })) });
+w('me-api-keys-member', { keys: [] });
 w('me-api-keys', { keys: [
   { id: 'k2c4e6g8i0k2m4o6q8s0', kind: 'api_key', name: 'Home Assistant', prefix: 'tsk_Hq7', scopes: ['library'], created_at: '2026-10-01T09:00:00.000Z', last_used_at: '2026-11-14T09:55:00.000Z', last_used_ip: '192.168.1.10' },
 ] });
@@ -292,7 +295,8 @@ w('admin-stats-streams', {
 const days90 = dayList(90);
 w('admin-stats-storage', {
   bucket: 'day', days: days90,
-  data_free_bytes: days90.map((_, i) => Math.round(150e9 - i * 0.33e9 + (rand() - 0.5) * 1.2e9)),
+  // The last day matches the overview's data_free_bytes, so the page shows one number for it.
+  data_free_bytes: days90.map((_, i) => (i === 89 ? overview.storage.data_free_bytes : Math.round(150e9 - i * 0.33e9 + (rand() - 0.5) * 1.2e9))),
   database_bytes: days90.map((_, i) => Math.round(700e6 + i * 1.25e6)),
   cache_bytes: days90.map((_, i) => Math.round(2.2e9 + i * 11e6 + (rand() - 0.5) * 2e8)),
   volume_bytes: 500e9,

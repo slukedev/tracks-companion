@@ -1726,8 +1726,59 @@ async fn playing_without_keeping_keeps_nothing_and_replays_from_the_cache() {
     assert_eq!(done.song, Some(song));
 }
 
+/// Waits until no song is being fetched and the fetch's own sweep has run.
+async fn settle(acquirer: &Acquirer) {
+    while acquirer.fetched_usage().is_some_and(|u| u.fetching > 0) {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    acquirer.run_janitor().await.unwrap();
+}
+
+fn external_dir(world: &World) -> PathBuf {
+    world.dir.path().join("cache").join("external")
+}
+
+/// The song folders in the play cache, without the marker and the trash.
+fn cached_dirs(world: &World) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(external_dir(world))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| !n.starts_with('.'))
+        .collect();
+    names.sort();
+    names
+}
+
+/// Plays the first `n` candidates of a search, one after the other, each to the end.
+async fn play_all(
+    world: &World,
+    acquirer: &Acquirer,
+    n: usize,
+) -> Vec<trackside_core::CandidateToken> {
+    let search = acquirer
+        .search(
+            &world.member,
+            ExternalQuery::Text(String::from("beyonce halo")),
+        )
+        .await
+        .unwrap();
+    let mut tokens = Vec::new();
+    for candidate in &search.candidates[..n] {
+        let token = candidate.token.clone();
+        acquirer
+            .play_external(&world.member, ExternalPlayRequest::Candidate(token.clone()))
+            .await
+            .unwrap();
+        settle(acquirer).await;
+        tokens.push(token);
+    }
+    tokens
+}
+
+const PAST_IN_USE: Duration = Duration::from_secs(31 * 60);
+
 #[tokio::test(start_paused = true)]
-async fn a_cached_play_goes_once_it_is_old() {
+async fn fetched_songs_outlive_a_restart_and_replay_without_fetching() {
     let world = World::new().await;
     let video = streaming_provider(&["bnVUHWCynig"]);
     let acquirer = world.start(vec![video.clone()]);
@@ -1737,50 +1788,281 @@ async fn a_cached_play_goes_once_it_is_old() {
         album: None,
         duration_ms: Some(200_000),
     };
-    let play = acquirer.play_external(&world.member, halo()).await.unwrap();
-    let token = play.token.unwrap();
-    wait_complete(&acquirer, &token).await;
-    let path = acquirer
-        .external_stream(&world.member, &token)
+    let token = acquirer
+        .play_external(&world.member, halo())
+        .await
         .unwrap()
-        .progressive
-        .path;
-    tokio::time::advance(Timing::default().external_ttl + Duration::from_secs(1)).await;
-    acquirer.play_external(&world.member, halo()).await.unwrap();
-    assert_eq!(video.fetches.load(Ordering::SeqCst), 2);
-    assert!(path.exists(), "fetched again into the same place");
+        .token
+        .unwrap();
+    settle(&acquirer).await;
+    acquirer.shutdown().await;
+
+    let again = world.start(vec![video.clone()]);
+    let play = again.play_external(&world.other, halo()).await.unwrap();
+    assert_eq!(play.token.as_ref(), Some(&token), "asked by name, found by key");
+    let stream = again.external_stream(&world.other, &token).unwrap();
+    assert_eq!(
+        *stream.progressive.state.borrow(),
+        GrowState::Complete {
+            bytes: GOOD_FLAC.len() as u64
+        }
+    );
+    assert_eq!(std::fs::read(&stream.progressive.path).unwrap(), GOOD_FLAC);
+    assert_eq!(video.fetches.load(Ordering::SeqCst), 1);
+    let usage = again.fetched_usage().unwrap();
+    assert_eq!((usage.songs, usage.bytes), (1, GOOD_FLAC.len() as u64));
+    assert_eq!((usage.keep, usage.max_bytes), (500, 20 << 30));
+    assert_eq!(count(&world.db, "change_log").await, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_most_recently_played_songs_stay_within_the_count() {
+    let mut world = World::new().await;
+    world.config.fetched_keep = 2;
+    let video = streaming_provider(&["aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc"]);
+    let acquirer = world.start(vec![video.clone()]);
+    let tokens = play_all(&world, &acquirer, 2).await;
+    tokio::time::advance(PAST_IN_USE).await;
+    // The first is played again, so the second is now the least recently played.
+    acquirer
+        .play_external(&world.member, ExternalPlayRequest::Candidate(tokens[0].clone()))
+        .await
+        .unwrap();
+    let third = {
+        let search = acquirer
+            .search(&world.member, ExternalQuery::Text(String::from("beyonce halo")))
+            .await
+            .unwrap();
+        search.candidates[2].token.clone()
+    };
+    acquirer
+        .play_external(&world.member, ExternalPlayRequest::Candidate(third.clone()))
+        .await
+        .unwrap();
+    settle(&acquirer).await;
+    assert!(acquirer.external_stream(&world.member, &tokens[1]).is_err());
+    assert!(acquirer.external_stream(&world.member, &tokens[0]).is_ok());
+    assert!(acquirer.external_stream(&world.member, &third).is_ok());
+    let mut want = vec![tokens[0].to_string(), third.to_string()];
+    want.sort();
+    assert_eq!(cached_dirs(&world), want);
+    assert!(!external_dir(&world).join(".trash").exists());
+    assert_eq!(acquirer.fetched_usage().unwrap().songs, 2);
 }
 
 #[tokio::test(start_paused = true)]
 async fn the_play_cache_stays_under_its_size() {
-    let world = World::new().await;
+    let mut world = World::new().await;
+    world.config.fetched_max_bytes = GOOD_FLAC.len() as u64;
+    let video = streaming_provider(&["aaaaaaaaaaa", "bbbbbbbbbbb"]);
+    let acquirer = world.start(vec![video.clone()]);
+    let first = play_all(&world, &acquirer, 1).await.remove(0);
+    tokio::time::advance(PAST_IN_USE).await;
+    let search = acquirer
+        .search(&world.member, ExternalQuery::Text(String::from("beyonce halo")))
+        .await
+        .unwrap();
+    let second = search.candidates[1].token.clone();
+    acquirer
+        .play_external(&world.member, ExternalPlayRequest::Candidate(second.clone()))
+        .await
+        .unwrap();
+    settle(&acquirer).await;
+    assert!(acquirer.external_stream(&world.member, &first).is_err());
+    assert!(acquirer.external_stream(&world.member, &second).is_ok());
+    assert_eq!(cached_dirs(&world), vec![second.to_string()]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_song_being_streamed_or_played_lately_is_never_evicted() {
+    let mut world = World::new().await;
+    world.config.fetched_keep = 0;
+    let video = streaming_provider(&["aaaaaaaaaaa"]);
+    let acquirer = world.start(vec![video.clone()]);
+    let token = play_all(&world, &acquirer, 1).await.remove(0);
+    assert!(
+        acquirer.external_stream(&world.member, &token).is_ok(),
+        "played moments ago"
+    );
+    let held = acquirer.external_stream(&world.member, &token).unwrap();
+    tokio::time::advance(PAST_IN_USE).await;
+    acquirer.run_janitor().await.unwrap();
+    assert!(held.progressive.path.exists(), "a stream still reads it");
+    assert_eq!(acquirer.fetched_usage().unwrap().songs, 1, "over the limit while held");
+    drop(held);
+    acquirer.run_janitor().await.unwrap();
+    assert_eq!(acquirer.fetched_usage().unwrap().songs, 0);
+    assert!(cached_dirs(&world).is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_song_still_downloading_is_never_evicted() {
+    let mut world = World::new().await;
+    world.config.fetched_keep = 0;
+    world.config.fetched_max_bytes = 0;
+    let video = streaming_provider(&["aaaaaaaaaaa"]);
+    let (release, gate) = tokio::sync::oneshot::channel();
+    *video.release.lock().unwrap() = Some(gate);
+    let acquirer = world.start(vec![video.clone()]);
+    let search = acquirer
+        .search(&world.member, ExternalQuery::Text(String::from("beyonce halo")))
+        .await
+        .unwrap();
+    let token = search.candidates[0].token.clone();
+    acquirer
+        .play_external(&world.member, ExternalPlayRequest::Candidate(token.clone()))
+        .await
+        .unwrap();
+    tokio::time::advance(PAST_IN_USE).await;
+    acquirer.run_janitor().await.unwrap();
+    let usage = acquirer.fetched_usage().unwrap();
+    assert_eq!((usage.songs, usage.fetching), (0, 1));
+    assert_eq!(cached_dirs(&world), vec![token.to_string()]);
+    release.send(()).unwrap();
+    settle(&acquirer).await;
+    assert!(
+        acquirer.external_stream(&world.member, &token).is_ok(),
+        "just finished, so still in use"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn two_fetches_finishing_together_leave_exactly_the_limit() {
+    let mut world = World::new().await;
+    world.config.fetched_keep = 1;
     let video = streaming_provider(&["aaaaaaaaaaa", "bbbbbbbbbbb"]);
     let timing = Timing {
-        external_max_bytes: GOOD_FLAC.len() as u64,
+        external_in_use: Duration::ZERO,
         ..World::timing()
     };
     let acquirer = world.start_timed(vec![video.clone()], timing);
     let search = acquirer
-        .search(
-            &world.member,
-            ExternalQuery::Text(String::from("beyonce halo")),
-        )
+        .search(&world.member, ExternalQuery::Text(String::from("beyonce halo")))
         .await
         .unwrap();
-    let (first, second) = (
-        search.candidates[0].token.clone(),
-        search.candidates[1].token.clone(),
-    );
-    for token in [&first, &second] {
-        acquirer
-            .play_external(&world.member, ExternalPlayRequest::Candidate(token.clone()))
-            .await
-            .unwrap();
-        wait_complete(&acquirer, token).await;
-        tokio::time::advance(Duration::from_secs(1)).await;
+    let plays = search.candidates.iter().map(|c| {
+        acquirer.play_external(&world.member, ExternalPlayRequest::Candidate(c.token.clone()))
+    });
+    for play in futures_util::future::join_all(plays).await {
+        play.unwrap();
     }
-    assert!(acquirer.external_stream(&world.member, &first).is_err());
-    assert!(acquirer.external_stream(&world.member, &second).is_ok());
+    settle(&acquirer).await;
+    assert_eq!(acquirer.fetched_usage().unwrap().songs, 1);
+    assert_eq!(cached_dirs(&world).len(), 1);
+    assert!(!external_dir(&world).join(".trash").exists());
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_evicted_song_played_again_is_fetched_again() {
+    let mut world = World::new().await;
+    world.config.fetched_keep = 0;
+    let video = streaming_provider(&["aaaaaaaaaaa"]);
+    let acquirer = world.start(vec![video.clone()]);
+    let token = play_all(&world, &acquirer, 1).await.remove(0);
+    tokio::time::advance(PAST_IN_USE).await;
+    acquirer.run_janitor().await.unwrap();
+    assert!(acquirer.external_stream(&world.member, &token).is_err());
+    let play = acquirer
+        .play_external(&world.member, ExternalPlayRequest::Candidate(token.clone()))
+        .await
+        .unwrap();
+    assert_eq!(play.token.as_ref(), Some(&token));
+    settle(&acquirer).await;
+    let stream = acquirer.external_stream(&world.member, &token).unwrap();
+    assert_eq!(std::fs::read(&stream.progressive.path).unwrap(), GOOD_FLAC);
+    assert_eq!(video.fetches.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_crash_midway_is_cleaned_up_at_start() {
+    let world = World::new().await;
+    let video = streaming_provider(&["aaaaaaaaaaa", "bbbbbbbbbbb"]);
+    let acquirer = world.start(vec![video.clone()]);
+    let tokens = play_all(&world, &acquirer, 2).await;
+    acquirer.shutdown().await;
+    let root = external_dir(&world);
+    let file_of = |token: &trackside_core::CandidateToken| root.join(token.as_str()).join("audio.stream");
+    // The first lost its file after its record was written; the second has its file but no
+    // record. A fetch was cut off, an eviction was moved to the trash but not deleted, and a
+    // link points into the library.
+    std::fs::remove_file(file_of(&tokens[0])).unwrap();
+    std::fs::remove_file(root.join(tokens[1].as_str()).join("entry.json")).unwrap();
+    let cut: trackside_core::CandidateToken = random_id();
+    std::fs::create_dir_all(root.join(cut.as_str())).unwrap();
+    std::fs::write(root.join(cut.as_str()).join("audio.stream"), b"fLa").unwrap();
+    std::fs::create_dir_all(root.join(".trash").join("x.0")).unwrap();
+    std::fs::write(root.join(".trash").join("x.0").join("a"), b"a").unwrap();
+    let kept = world.library.join("Kept.flac");
+    std::fs::write(&kept, GOOD_FLAC).unwrap();
+    std::os::unix::fs::symlink(&world.library, root.join("library-link")).unwrap();
+    let link: trackside_core::CandidateToken = random_id();
+    std::os::unix::fs::symlink(&world.library, root.join(link.as_str())).unwrap();
+
+    let again = world.start(vec![video.clone()]);
+    again.run_janitor().await.unwrap();
+    assert_eq!(again.fetched_usage().unwrap().songs, 0);
+    assert!(cached_dirs(&world).is_empty());
+    assert!(!root.join(".trash").exists());
+    assert_eq!(std::fs::read(&kept).unwrap(), GOOD_FLAC, "the library is never touched");
+    assert!(world.library.exists());
+}
+
+#[tokio::test(start_paused = true)]
+async fn nothing_is_evicted_while_the_cache_volume_is_missing() {
+    let world = World::new().await;
+    let video = streaming_provider(&["aaaaaaaaaaa"]);
+    let acquirer = world.start(vec![video.clone()]);
+    let token = play_all(&world, &acquirer, 1).await.remove(0);
+    tokio::time::advance(PAST_IN_USE).await;
+    // The share is unmounted: the folder is there but empty.
+    let root = external_dir(&world);
+    let away = world.dir.path().join("away");
+    std::fs::rename(&root, &away).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    acquirer
+        .configure(ProviderChange::Fetched {
+            keep: 0,
+            max_bytes: 0,
+        })
+        .await
+        .unwrap();
+    settle(&acquirer).await;
+    assert_eq!(acquirer.fetched_usage().unwrap().songs, 1, "the index is left alone");
+    std::fs::remove_dir(&root).unwrap();
+    std::fs::rename(&away, &root).unwrap();
+    acquirer.run_janitor().await.unwrap();
+    assert_eq!(acquirer.fetched_usage().unwrap().songs, 0);
+    assert!(acquirer.external_stream(&world.member, &token).is_err());
+    assert!(cached_dirs(&world).is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_limits_come_from_the_dashboard_and_apply_at_once() {
+    let world = World::new().await;
+    world
+        .db
+        .write(|tx| {
+            settings::put(tx, "acquire.fetched_keep", &serde_json::json!(7))?;
+            settings::put(tx, "acquire.fetched_max_bytes", &serde_json::json!("1GiB"))
+        })
+        .await
+        .unwrap();
+    let video = streaming_provider(&["aaaaaaaaaaa"]);
+    let acquirer = world.start(vec![video.clone()]);
+    play_all(&world, &acquirer, 1).await;
+    let usage = acquirer.fetched_usage().unwrap();
+    assert_eq!((usage.keep, usage.max_bytes), (7, 1 << 30));
+    tokio::time::advance(PAST_IN_USE).await;
+    acquirer
+        .configure(ProviderChange::Fetched {
+            keep: 0,
+            max_bytes: 1 << 30,
+        })
+        .await
+        .unwrap();
+    settle(&acquirer).await;
+    let usage = acquirer.fetched_usage().unwrap();
+    assert_eq!((usage.songs, usage.keep), (0, 0));
 }
 
 #[tokio::test(start_paused = true)]

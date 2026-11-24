@@ -1079,6 +1079,8 @@ async fn find_staged(staging: &Path) -> Option<FetchedFile> {
 /// Removes staging directories without an active request and `.part` files older than a day,
 /// and prunes expired search candidates.
 pub(crate) async fn janitor(inner: &Arc<Inner>) -> Result<(), DbError> {
+    inner.load_external().await;
+    inner.sweep_external().await;
     let active = inner.db.read(acquisitions::active_ids).await?;
     let root = inner.config.staging_dir.clone();
     let max_age = inner.timing.part_max_age;

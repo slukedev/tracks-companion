@@ -57,12 +57,10 @@ impl LibraryGate {
         F: FnOnce() -> std::io::Result<T> + Send + 'static,
     {
         let semaphore = self.semaphore(library);
-        let permit = match tokio::time::timeout(self.wait, semaphore.acquire_owned()).await {
-            Ok(Ok(permit)) => permit,
-            Ok(Err(_)) | Err(_) => {
-                tracing::warn!(?library, "library filesystem calls are stuck");
-                return Err(MediaError::LibraryUnavailable);
-            }
+        let Ok(Ok(permit)) = tokio::time::timeout(self.wait, semaphore.acquire_owned()).await
+        else {
+            tracing::warn!(?library, "library filesystem calls are stuck");
+            return Err(MediaError::LibraryUnavailable);
         };
         tokio::task::spawn_blocking(move || {
             let result = call();

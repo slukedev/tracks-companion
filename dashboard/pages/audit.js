@@ -3,7 +3,7 @@ import { h, pageHead, list, button, busy, empty, time, dayLabel, select, nextId,
 import { sentence } from './history.js';
 
 const ACTIONS = [
-  ['', 'Everything'],
+  ['', 'All changes'],
   ['user', 'People'],
   ['invite', 'Invites'],
   ['device', 'Devices'],
@@ -25,11 +25,12 @@ export async function render(ctx) {
   const actionId = nextId('a');
   const actorId = nextId('a');
   const action = select(actions, '', { id: actionId });
-  const actor = select([['', 'Anyone'], ['system', 'Trackside'], ...users.map((u) => [u.username, u.display_name || u.username])], '', { id: actorId });
+  const actor = select([['', 'By anyone'], ['system', 'By Trackside itself'], ...users.map((u) => [u.username, u.display_name || u.username])], '', { id: actorId });
   const results = h('div.history.history-days', { 'aria-live': 'polite' });
-  const more = button('Show More', {});
+  const more = button('Show older', {});
   let cursor = firstPage.next_cursor;
   let lastDay = '';
+  let lastIp = '';
   let currentList = null;
 
   const add = (entries) => {
@@ -37,11 +38,14 @@ export async function render(ctx) {
       const day = dayLabel(entry.at);
       if (day !== lastDay) {
         lastDay = day;
+        lastIp = '';
         currentList = list([], { iconInset: true });
-        results.append(h('div.day', h('h2.small.muted', day), currentList));
+        results.append(h('div.day', h('h2', day), currentList));
       }
       const s = sentence(entry, names);
-      const who = entry.ip ? `from ${entry.ip}` : null;
+      // The address is shown when it changes, not on every row from the same place.
+      const who = entry.ip && entry.ip !== lastIp ? `From ${entry.ip}` : null;
+      if (entry.ip) lastIp = entry.ip;
       currentList.append(h('div.row',
         icon(s.icon, `tint-${s.tint}`),
         h('div.row-main', h('div.row-title.history-text', s.text), who ? h('div.row-sub', who) : null),
@@ -55,9 +59,9 @@ export async function render(ctx) {
     if (!reset) query.cursor = cursor;
     try {
       const page = await call('GET /admin/audit', { query });
-      if (reset) { results.replaceChildren(); lastDay = ''; }
+      if (reset) { results.replaceChildren(); lastDay = ''; lastIp = ''; }
       cursor = page.next_cursor;
-      if (reset && !page.entries.length) results.append(list(empty('Nothing matches', 'Try a different filter.')));
+      if (reset && !page.entries.length) results.append(list(empty('Nothing matches these filters', 'Try a wider filter.')));
       add(page.entries);
     } catch (err) { failed(err); }
   };
@@ -66,14 +70,14 @@ export async function render(ctx) {
   more.addEventListener('click', () => busy(more, () => load(false)));
 
   if (firstPage.entries.length) add(firstPage.entries);
-  else results.append(list(empty('Nothing yet', 'Every change made on this server is listed here.')));
+  else results.append(list(empty('Nothing has happened yet', 'Changes people make on this server are listed here.')));
   more.hidden = !cursor;
 
   return h('div.page.narrow',
     pageHead('Activity'),
     h('div.toolbar',
-      h('label.visually-hidden', { for: actionId }, 'Show'), action,
-      h('label.visually-hidden', { for: actorId }, 'By'), actor),
+      h('label.visually-hidden', { for: actionId }, 'What changed'), action,
+      h('label.visually-hidden', { for: actorId }, 'Who changed it'), actor),
     results,
     h('div.btn-row', more));
 }

@@ -1,17 +1,26 @@
 import { call, href, ensureRecentAuth } from '../api.js';
-import { h, pageHead, section, list, row, badge, button, busy, empty, ago, bytes, confirm, toast, failed, copyButton } from '../ui.js';
+import { h, pageHead, section, list, row, badge, button, busy, empty, ago, full, when, bytes, confirm, toast, failed, codeLine, capital } from '../ui.js';
 
-const KIND = { scheduled: 'Scheduled', manual: 'Made by hand', pre_migrate: 'Before an update' };
+const KIND = { scheduled: 'Scheduled', manual: 'Made by you', pre_migrate: 'Before an update' };
+
+/** "daily 03:30" becomes "Every day at 03:30"; anything else is shown as written. */
+export function scheduleText(schedule) {
+  const m = /^daily (\d\d:\d\d)$/.exec(schedule || '');
+  if (m) return `Every day at ${m[1]}`;
+  return capital(schedule);
+}
 
 export async function render(ctx) {
-  const [{ backups }, settings] = await Promise.all([
+  const [{ backups }, settings, overview] = await Promise.all([
     call('GET /admin/backups'),
     call('GET /admin/settings').catch(() => ({})),
+    call('GET /admin/overview').catch(() => null),
   ]);
   const schedule = settings['backup.schedule']?.value;
   const keep = settings['backup.keep']?.value;
+  const nextAt = overview?.backups?.next_at;
 
-  const now = button('Back Up Now', { kind: 'primary', iconName: 'backups' });
+  const now = button('Back up now', { kind: 'primary', iconName: 'backups' });
   now.addEventListener('click', () => busy(now, async () => {
     try {
       await call('POST /admin/backups');
@@ -24,9 +33,9 @@ export async function render(ctx) {
 
   const rows = [...backups].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).map((b) => {
     const del = button('Delete', { kind: 'danger' });
-    del.setAttribute('aria-label', `Delete ${b.name}`);
+    del.setAttribute('aria-label', `Delete the backup from ${full(b.at)}`);
     del.addEventListener('click', async () => {
-      if (!await confirm({ title: 'Delete this backup?', text: `${b.name} is deleted from the data folder.`, action: 'Delete' })) return;
+      if (!await confirm({ title: 'Delete this backup?', text: `The backup from ${full(b.at)} (${bytes(b.bytes)}) is deleted for good.`, action: 'Delete backup' })) return;
       await busy(del, async () => {
         try {
           await call('DELETE /admin/backups/{name}', { values: { name: b.name } });
@@ -36,31 +45,30 @@ export async function render(ctx) {
       });
     });
     return row({
-      icon: 'backups', tint: 'teal',
-      title: [ago(b.at), b.kind !== 'scheduled' ? badge(KIND[b.kind] || b.kind) : null],
+      icon: 'backups', tint: 'muted',
+      title: [capital(ago(b.at)), b.kind !== 'scheduled' ? badge(KIND[b.kind] || b.kind) : null],
       sub: bytes(b.bytes),
       trail: [downloadButton(b), del],
       wrapTrail: true,
     });
   });
 
-  const command = 'trackside backup restore <file>';
+  const on = schedule && schedule !== 'off';
+  const lede = on
+    ? `${scheduleText(schedule)}, keeping the last ${keep ?? 7}.${nextAt ? ` Next one ${when(nextAt)}.` : ''}`
+    : 'Automatic backups are off.';
   return h('div.page.narrow',
-    pageHead('Backups', {
-      lede: schedule && schedule !== 'off' ? `${schedule[0].toUpperCase()}${schedule.slice(1)}, keep ${keep ?? 7}` : 'Automatic backups off',
-      actions: now,
-    }),
-    section('Backups', list(rows.length ? rows : [empty('No backups yet')], { iconInset: true }),
-      { aside: h('a', { href: '#/settings' }, 'Schedule') }),
+    pageHead('Backups', { lede, actions: now }),
+    section('Saved backups', list(rows.length ? rows : [empty('No backups yet', 'A backup holds accounts, settings, playlists and listening history. Music files are not included.')], { iconInset: true }),
+      { aside: h('a', { href: '#/settings' }, 'Change schedule') }),
     section('Restore', h('div.panel',
-      h('p', 'Stop the server, then run:'),
-      h('div.secret', h('code.input.mono', command), copyButton(command)),
-    )));
+      h('p', 'Restoring replaces everything on the server with the backup. Stop Trackside, then run this on the host with the backup file:'),
+      codeLine('trackside backup restore <file>', 'Copy command'))));
 }
 
 /** Backups hold everything on the server, so the download asks for a recent sign-in first. */
 function downloadButton(b) {
-  const link = h('a.btn', { href: href('GET /admin/backups/{name}', { name: b.name }), download: b.name, 'aria-label': `Download ${b.name}` }, 'Download');
+  const link = h('a.btn', { href: href('GET /admin/backups/{name}', { name: b.name }), download: b.name, 'aria-label': `Download the backup from ${full(b.at)}` }, 'Download');
   link.addEventListener('click', async (event) => {
     if (link.dataset.confirmed) { delete link.dataset.confirmed; return; }
     event.preventDefault();

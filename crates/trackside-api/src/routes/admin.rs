@@ -311,6 +311,7 @@ async fn overview(
             providers: providers.iter().map(map::provider).collect(),
             active: u32::try_from(active).unwrap_or(u32::MAX),
             today: u32::try_from(today).unwrap_or(u32::MAX),
+            fetched: state.acquire.fetched_usage().map(map::fetched_usage),
         })
     };
     Ok(json_with(StatusCode::OK, &body))
@@ -1522,6 +1523,23 @@ async fn patch_settings(
     Ok(json_with(StatusCode::OK, &settings_body(&state).await?))
 }
 
+/// The effective limits on fetched songs: the dashboard's, else the configuration's. A value
+/// set back to null returns to the configuration's.
+async fn fetched_limits(state: &ApiState) -> ProviderChange {
+    let keep = match settings::effective(state, settings::FETCHED_KEEP).await {
+        Some(v) => v.as_u64().and_then(|n| u32::try_from(n).ok()),
+        None => None,
+    };
+    let max_bytes = match settings::effective(state, settings::FETCHED_MAX_BYTES).await {
+        Some(v) => v.as_str().and_then(trackside_core::config::parse_size),
+        None => None,
+    };
+    ProviderChange::Fetched {
+        keep: keep.unwrap_or(state.config.acquire.fetched_keep),
+        max_bytes: max_bytes.unwrap_or(state.config.acquire.fetched_max_bytes),
+    }
+}
+
 /// Acquisition settings take effect through the acquirer as well as the settings table.
 async fn apply_acquisition_settings(state: &ApiState, changes: &[(&'static str, Value)]) {
     let get = |name: &str| changes.iter().find(|(n, _)| *n == name).map(|(_, v)| v);
@@ -1550,9 +1568,16 @@ async fn apply_acquisition_settings(state: &ApiState, changes: &[(&'static str, 
         n.starts_with("acquire.")
             && !n.starts_with("acquire.ytdlp")
             && !n.starts_with("acquire.soulseek")
+            && !n.starts_with("acquire.fetched_")
             && *n != "acquire.library"
     }) {
         wanted.push(global);
+    }
+    if changes
+        .iter()
+        .any(|(n, _)| *n == settings::FETCHED_KEEP || *n == settings::FETCHED_MAX_BYTES)
+    {
+        wanted.push(fetched_limits(state).await);
     }
     for provider in ["ytdlp", "soulseek"] {
         let enabled = get(&format!("acquire.{provider}.enabled")).and_then(Value::as_bool);
