@@ -67,7 +67,7 @@ pub struct SettingResult {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SettingsPage {
     pub settings: Vec<Setting>,
-    pub cursor: i64,
+    pub cursor: crate::epoch::Cursor,
 }
 
 /// What to store, before a version is given to it.

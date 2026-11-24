@@ -37,6 +37,8 @@ pub const TOMBSTONE_DAYS: u64 = 90;
 /// commits and lets other writers in (ADR 0002).
 pub const CHUNK_ITEMS: usize = 250;
 pub const CHUNK_TIME: Duration = Duration::from_millis(50);
+/// Records deleted per transaction when a user is deleted.
+pub const PURGE_CHUNK: u32 = 5000;
 
 /// Per-user quotas. The admin sets them with `cloud.quota_items` and `cloud.quota_bytes`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

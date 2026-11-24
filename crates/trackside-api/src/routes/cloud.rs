@@ -17,8 +17,8 @@ use trackside_auth::{Principal, Scopes, Via};
 use trackside_cloud::limits::{DEFAULT_PAGE, MAX_BATCH, MAX_PAGE};
 use trackside_cloud::store::{self, Registration};
 use trackside_cloud::{
-    Body, CloudDevice, CloudError, Entity, Limits, Page, PushItem, PushOutcome, PushResult, Record,
-    Setting, SettingOutcome, SettingResult, SettingWrite, SettingsPage, Usage,
+    Body, CloudDevice, CloudError, Cursor, Entity, Limits, Page, PushItem, PushOutcome, PushResult,
+    Record, Setting, SettingOutcome, SettingResult, SettingWrite, SettingsPage, Usage,
 };
 use trackside_core::DeviceId;
 use trackside_core::config::parse_size;
@@ -70,6 +70,14 @@ impl From<CloudError> for ApiError {
                 "too_large",
                 format!("At most {MAX_BATCH} items per batch."),
             ),
+            CloudError::DeviceMismatch => Self::new(
+                StatusCode::FORBIDDEN,
+                "device_mismatch",
+                "This device key is bound to another device id.",
+            ),
+            CloudError::UnknownPredecessor(id) => {
+                Self::bad_field("predecessors", format!("{id} is not one of your devices."))
+            }
         }
     }
 }
@@ -113,16 +121,22 @@ fn entity(raw: &str) -> ApiResult<Entity> {
         .ok_or_else(ApiError::not_found)
 }
 
-fn cursor(raw: Option<&str>) -> ApiResult<Option<i64>> {
+fn cursor(raw: Option<&str>) -> ApiResult<Option<Cursor>> {
     match raw.map(str::trim).filter(|c| !c.is_empty()) {
         None => Ok(None),
-        Some(text) => text
-            .parse::<i64>()
-            .ok()
-            .filter(|c| *c >= 0)
+        Some(text) => Cursor::parse(text)
             .map(Some)
             .ok_or_else(|| ApiError::bad_field("cursor", "The cursor is not valid.")),
     }
+}
+
+/// The app device id bound to the caller's device key: items, settings and registrations
+/// must name it.
+async fn bound(state: &ApiState, principal: &Principal) -> ApiResult<Option<String>> {
+    let Some((install, _)) = &principal.device else {
+        return Err(ApiError::forbidden());
+    };
+    Ok(store::bound_device(&state.db, principal.access.user, *install).await?)
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -170,7 +184,8 @@ async fn push(
     }
     let items = batch.items.into_iter().map(push_item).collect();
     let limits = limits(&state).await;
-    let results = store::push(&state.db, user, entity, items, limits).await?;
+    let device = bound(&state, &principal).await?;
+    let results = store::push(&state.db, user, entity, items, device, limits).await?;
     Ok(json_with(StatusCode::OK, &push_body(&results)))
 }
 
@@ -211,7 +226,7 @@ pub fn page_body(page: &Page) -> wire::Page {
     wire::Page {
         upserts: page.upserts.iter().map(record_body).collect(),
         deletes: page.deletes.iter().map(record_body).collect(),
-        cursor: page.cursor.to_string(),
+        cursor: page.cursor.encode(),
         has_more: page.has_more,
     }
 }
@@ -273,7 +288,7 @@ pub fn settings_body(page: &SettingsPage) -> wire::Settings {
             .iter()
             .map(|s| (s.key.clone(), setting_value(s)))
             .collect(),
-        cursor: page.cursor.to_string(),
+        cursor: page.cursor.encode(),
     }
 }
 
@@ -312,7 +327,8 @@ async fn patch_settings(
         });
     }
     let limits = limits(&state).await;
-    let results = store::patch_settings(&state.db, user, writes, limits).await?;
+    let device = bound(&state, &principal).await?;
+    let results = store::patch_settings(&state.db, user, writes, device, limits).await?;
     Ok(json_with(StatusCode::OK, &setting_results_body(&results)))
 }
 
@@ -431,9 +447,10 @@ pub fn usage_body(usage: &Usage, limits: Limits) -> wire::Usage {
 }
 
 /// `capabilities.cloud`.
-pub fn cloud_info() -> wire::CloudInfo {
+pub fn cloud_info(epoch: &str) -> wire::CloudInfo {
     wire::CloudInfo {
         version: 1,
+        epoch: epoch.to_owned(),
         entities: Entity::ALL.iter().map(|e| e.as_str().to_owned()).collect(),
         max_batch: MAX_BATCH as u32,
         max_page: MAX_PAGE,

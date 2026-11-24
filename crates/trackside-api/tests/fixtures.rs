@@ -524,7 +524,14 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
     };
     put(
         "capabilities.json",
-        &build::capabilities_body(&info, &media, String::from("Home"), false, false, true),
+        &build::capabilities_body(
+            &info,
+            &media,
+            String::from("Home"),
+            false,
+            false,
+            Some(cloud::EPOCH),
+        ),
     )?;
     put(
         "setup-status.json",

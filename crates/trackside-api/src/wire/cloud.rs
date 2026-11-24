@@ -81,6 +81,7 @@ pub struct Record {
 pub struct Page {
     pub upserts: Vec<Record>,
     pub deletes: Vec<Record>,
+    /// Opaque: send it back as it came.
     pub cursor: String,
     pub has_more: bool,
 }
@@ -189,6 +190,9 @@ pub struct Usage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CloudInfo {
     pub version: u32,
+    /// The sync epoch every cursor carries; it changes when the database is restored or
+    /// replaced, and every cursor from before is then `410 sync_reset`.
+    pub epoch: String,
     pub entities: Vec<String>,
     pub max_batch: u32,
     pub max_page: u32,

@@ -77,7 +77,7 @@ pub fn capabilities_body(
     name: String,
     setup_required: bool,
     uploads: bool,
-    cloud: bool,
+    cloud_epoch: Option<&str>,
 ) -> Capabilities {
     Capabilities {
         product: String::from("trackside"),
@@ -112,20 +112,24 @@ pub fn capabilities_body(
             uploads,
             events: true,
             animated_art: false,
-            cloud,
+            cloud: cloud_epoch.is_some(),
         },
         subsonic: SubsonicInfo {
             enabled: true,
             path: format!("{}/rest", server.base_path),
         },
-        cloud: cloud.then(super::cloud::cloud_info),
+        cloud: cloud_epoch.map(super::cloud::cloud_info),
     }
 }
 
 async fn capabilities(State(state): State<ApiState>) -> ApiResult<Json<Capabilities>> {
     let setup = setup_required(&state).await?;
     let uploads = super::settings::effective_bool(&state, "uploads.enabled").await;
-    let cloud = super::settings::effective_bool(&state, super::cloud::ENABLED).await;
+    let cloud = if super::settings::effective_bool(&state, super::cloud::ENABLED).await {
+        Some(trackside_cloud::epoch::read(&state.db).await?)
+    } else {
+        None
+    };
     let name = server_name(&state).await;
     Ok(Json(capabilities_body(
         &state.server,
@@ -133,7 +137,7 @@ async fn capabilities(State(state): State<ApiState>) -> ApiResult<Json<Capabilit
         name,
         setup,
         uploads,
-        cloud,
+        cloud.as_deref(),
     )))
 }
 

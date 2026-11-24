@@ -45,7 +45,8 @@ Contents:
   `stream`) are absolute paths that start with `server.base_path` and `/api/v1`. Resolve them
   against the origin (scheme, host and port) of the candidate URL in use.
 - **Content.** Requests and responses are `application/json; charset=utf-8` unless stated.
-  Request bodies are limited to 1 MiB except uploads. Responses are compressed with `br` or
+  Request bodies are limited to 1 MiB except uploads and Trackside Cloud batches (8 MiB,
+  section 19). Responses are compressed with `br` or
   `gzip` when the client accepts it; media is never compressed.
 - **Field names** are `snake_case`. Clients must ignore unknown fields and unknown enum values.
   Absent optional fields mean "unknown" or "none"; `null` is not sent, with three exceptions:
@@ -135,6 +136,7 @@ display in Tracks. `details` is optional and code-specific.
 | 403 | `csrf` | session request without the CSRF header or with a foreign `Origin` |
 | 403 | `setup_required` | an endpoint used before the first admin exists |
 | 403 | `https_required` | a password, key, or setup, invite, reset or pairing secret sent over plain HTTP from an address that isn't nearby (section 2, Plain HTTP) |
+| 403 | `device_mismatch` | a Trackside Cloud route named a device id other than the one bound to the calling device key (section 19) |
 | 403 | `reauth_required` | a sensitive change from a session whose last password check is over 10 minutes old; `POST /auth/reauth` and retry (section 6) |
 | 404 | `not_found` | unknown id, or an id the caller cannot see (never `403`, to avoid leaking existence) |
 | 405 | `method_not_allowed` | |
@@ -386,14 +388,15 @@ No auth. Lets a client tell Trackside from other servers and decide what to call
   "features": {"lyrics": true, "uploads": false, "events": true, "animated_art": false,
                "cloud": true},
   "subsonic": {"enabled": true, "path": "/rest"},
-  "cloud": {"version": 1, "max_batch": 1000, "max_page": 2000,
+  "cloud": {"version": 1, "epoch": "3f9a0c1d7e2b4a65", "max_batch": 1000, "max_page": 2000,
             "entities": ["plays", "sessions", "stations", "forgotten-songs", "blocked-artists",
                          "excluded-stations", "playlists", "playlist-entries", "likes", "settings"]}
 }
 ```
 
 `features.cloud` and `cloud` say Trackside Cloud is on (section 19); `cloud` is left out when the
-admin turned it off.
+admin turned it off. `cloud.epoch` is the sync epoch: it changes when the server's database is
+restored or replaced, and every cloud cursor from before is then refused.
 
 The unauthenticated document never mentions acquisition. Authenticated feature flags are in
 `GET /api/v1/me` (section 7).
@@ -1730,6 +1733,10 @@ design. Fixtures: `crates/trackside-api/tests/fixtures/cloud-*.json`.
   admins see item and byte counts on the user page (section 16).
 - **Device keys only**, scope `library` to read and `write` to change. A session or an API key is
   `403 forbidden`. With `cloud.enabled` off (section 16, Server settings) every route is `404`.
+- **One device id per key.** A device key speaks for one app device id: the one it registered
+  with `PUT /cloud/devices/{device_id}` (Devices below), or, until it registers one, the
+  `client_device_id` it signed in or paired with (section 6). Every pushed item's and setting's
+  `device_id` must be that id, or it is `rejected` with `device_mismatch`.
 - **Shapes.** The envelope follows section 1 (`snake_case`, RFC 3339 times). `fields` is the
   app's own object under the app's own names; the server keeps it as sent apart from the rules
   below, so unknown fields and enum values round-trip. The times inside `fields` that the server
@@ -1737,8 +1744,8 @@ design. Fixtures: `crates/trackside-api/tests/fixtures/cloud-*.json`.
   `null` inside `fields` is dropped on a new record, clears a field on a newest-wins field, and
   is ignored elsewhere.
 - **Versions.** Each user has their own change seq. Every write takes the next value, which
-  becomes the record's `version`. The pull cursor is that seq as a decimal string; it never
-  depends on client time.
+  becomes the record's `version`. Cursors are opaque strings that carry that seq and the
+  server's sync epoch; they never depend on client time. Send a cursor back exactly as it came.
 
 ### Entities
 
@@ -1773,7 +1780,7 @@ the start; tombstones are included, so a snapshot can also be applied as a delta
                "client_modified_at": "2026-11-14T09:29:30.000Z",
                "deleted_at": "2026-11-14T09:29:30.000Z",
                "merged_into": "6A8C0E2F-4B6D-4F8A-9C1E-3B5D7F9A1C3E"}],
-  "cursor": "918",
+  "cursor": "3f9a0c1d7e2b4a65.918",
   "has_more": false
 }
 ```
@@ -1782,10 +1789,12 @@ the start; tombstones are included, so a snapshot can also be applied as a delta
   after it was paged comes again later at its new version; nothing committed before a page is
   skipped by it.
 - Commit `cursor` only after applying the page, and keep pulling while `has_more`.
-- `410 sync_reset`: the cursor is older than tombstones the server pruned, or newer than anything
-  it has (a restored backup). Pull again without a cursor, keeping local data until done.
-- `400 bad_request` (`details.field = "cursor"`) for a cursor that is not a number; `404` for an
-  unknown entity.
+- `410 sync_reset`: the cursor is from another sync epoch (the server's database was restored
+  from a backup or replaced), older than tombstones the server pruned, or newer than anything it
+  has. Pull again without a cursor, keeping local data until done, then push what the server
+  lacks.
+- `400 bad_request` (`details.field = "cursor"`) for a cursor the server did not make; `404` for
+  an unknown entity.
 
 ### `POST /api/v1/cloud/{entity}:batch` (scope: write)
 
@@ -1833,7 +1842,7 @@ an 8 MiB body; more is `413 too_large`. Each item is idempotent by `id`.
 - `conflict`: the stored copy stands; `current` is it (a record as in a pull, or a delete), absent
   when nothing is stored. Apply `current`, or rebase and push again with its `version`.
 - `rejected` with `reason`: `invalid`, `too_large`, `deleted`, `not_owner`, `grow_only`,
-  `future`, `identity_mismatch`, `encryption_required` or `quota_exceeded`. Drop the item, except
+  `future`, `identity_mismatch`, `encryption_required`, `device_mismatch` or `quota_exceeded`. Drop the item, except
   for `quota_exceeded`, which clears when space is freed or the admin raises the quota. Reasons
   are an open set.
 - For a keyed entity pushed with an empty `id`, `id` in the result is the key the server derived.
@@ -1859,7 +1868,7 @@ between them during a large import.
                   "modified_at": "2026-11-14T09:20:00.000Z", "device_id": "6F1D9C2A-...",
                   "version": 412}
   },
-  "cursor": "918"
+  "cursor": "3f9a0c1d7e2b4a65.918"
 }
 ```
 
@@ -1918,6 +1927,13 @@ scrobbles).
 - `PUT /api/v1/cloud/devices/{device_id}` (scope: write) `{"predecessors": [...], "name"?,
   "platform"?}`: registers the device or adds predecessors (they only grow, at most 32; a
   device cannot be its own). `200` with the device. At most 200 devices per user.
+  - It binds the calling device key to `device_id`. A key already bound to another id, or a
+    `device_id` bound to another live (not revoked) key, is `403 device_mismatch`; a re-signed-in
+    install keeps its key's device and so its binding.
+  - Each predecessor must be one of the caller's own devices: registered here, or the
+    `client_device_id` of one of their signed-in installs (revoked ones included). Anything else
+    is `400 bad_request` with `details.field = "predecessors"`. A device restored from a backup
+    therefore registers its new id with the old one as predecessor.
 
 Device `A` succeeds device `B` when `A` is `B` or `B` is among `A`'s predecessors, directly or
 through others.
@@ -1949,8 +1965,12 @@ segment>"}`, or `"devices"` for the registry: pull that entity. The event never 
 goes to nobody else. After reconnecting, pull every entity: the stream does not replay `cloud`
 events.
 
-### Backups and deletion
+### Backups, restores and deletion
 
 Cloud data lives in the same database, so every backup holds it (section 16, Backups), as
-readable as the rest of the database apart from encrypted values. Deleting a user deletes their
-cloud data with them.
+readable as the rest of the database apart from encrypted values. When the server starts on a
+restored backup, or on a database file put in place by hand, it takes a new sync epoch
+(`capabilities.cloud.epoch`), so every cursor from before is `410 sync_reset` instead of silently
+missing what the restore lost; the clients pull again and push what the server no longer has.
+Deleting a user deletes their cloud data with them, in short transactions before the account
+itself.

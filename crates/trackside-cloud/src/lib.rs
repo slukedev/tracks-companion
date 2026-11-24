@@ -14,6 +14,7 @@
 pub mod devices;
 pub mod entity;
 pub mod envelope;
+pub mod epoch;
 pub mod limits;
 pub mod merge;
 pub mod model;
@@ -24,6 +25,7 @@ pub mod validate;
 
 pub use devices::{CloudDevice, Registry};
 pub use entity::Entity;
+pub use epoch::Cursor;
 pub use limits::{Limits, PushLimiter};
 pub use model::{
     Body, CloudError, Page, PushItem, PushOutcome, PushResult, Record, Reject, Usage, UsageEntry,

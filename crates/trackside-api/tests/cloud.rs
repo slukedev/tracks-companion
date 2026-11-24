@@ -355,7 +355,7 @@ async fn each_user_sees_and_changes_only_their_own_cloud_data() -> TestResult {
             reqwest::Method::PUT,
             &luke,
             "/cloud/devices/LUKE-IPHONE",
-            &json!({"predecessors": ["OLD"]}),
+            &json!({"name": "Luke's iPhone"}),
         )
         .await?;
     assert_eq!(status, 200);
@@ -500,10 +500,18 @@ async fn batches_cursors_and_limits() -> TestResult {
         "halo\u{1f}beyonce"
     );
 
-    let (status, body) = server.get(&key, "/cloud/plays?cursor=99999").await?;
+    let (epoch, _) = cursor.rsplit_once('.').ok_or("cursor shape")?;
+    let ahead = format!("/cloud/plays?cursor={epoch}.99999");
+    let (status, body) = server.get(&key, &ahead).await?;
     assert_eq!(
         (status, body["error"]["code"].as_str()),
         (410, Some("sync_reset"))
+    );
+    let (status, body) = server.get(&key, "/cloud/plays?cursor=elsewhere.1").await?;
+    assert_eq!(
+        (status, body["error"]["code"].as_str()),
+        (410, Some("sync_reset")),
+        "a cursor from another epoch"
     );
     let (status, _) = server.get(&key, "/cloud/plays?cursor=abc").await?;
     assert_eq!(status, 400);
@@ -591,6 +599,7 @@ async fn the_admin_sets_quotas_and_can_turn_cloud_off() -> TestResult {
         .await?;
     assert_eq!(caps["features"]["cloud"], true);
     assert_eq!(caps["cloud"]["max_batch"], 1000);
+    assert!(caps["cloud"]["epoch"].is_string());
     let response = server
         .http
         .patch(server.url("/admin/settings"))
@@ -692,5 +701,77 @@ async fn the_cloud_event_says_what_to_pull_and_only_to_its_owner() -> TestResult
         "{seen_nana}"
     );
     assert!(!seen_nana.contains("plays"), "{seen_nana}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_device_key_speaks_only_for_its_own_device() -> TestResult {
+    let server = start().await?;
+    let cookie = server.setup_admin().await?;
+    server.add_member(&cookie, "nana").await?;
+    let key = server.device_key("luke", "IPHONE").await?;
+    server.device_key("luke", "MAC").await?;
+    server.device_key("nana", "NANA-PHONE").await?;
+    let (_, body) = server
+        .post(
+            &key,
+            "/cloud/plays:batch",
+            &json!({"items": [play("p1", "IPHONE"), play("p2", "MAC")]}),
+        )
+        .await?;
+    assert_eq!(statuses(&body), vec!["accepted", "device_mismatch"]);
+    let patch = json!({"settings": {
+        "playlistName": {"value": "x", "modified_at": NOW, "device_id": "MAC"}}});
+    let (_, body) = server
+        .send(reqwest::Method::PATCH, &key, "/cloud/settings", &patch)
+        .await?;
+    assert_eq!(body["results"][0]["reason"], "device_mismatch");
+    let put = |id: &str| format!("/cloud/devices/{id}");
+    let (status, body) = server
+        .send(
+            reqwest::Method::PUT,
+            &key,
+            &put("IPHONE-17"),
+            &json!({"predecessors": ["IPHONE"]}),
+        )
+        .await?;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["current"], true);
+    let (status, body) = server
+        .send(
+            reqwest::Method::PUT,
+            &key,
+            &put("SOMETHING-ELSE"),
+            &json!({}),
+        )
+        .await?;
+    assert_eq!(
+        (status, body["error"]["code"].as_str()),
+        (403, Some("device_mismatch"))
+    );
+    let (status, body) = server
+        .send(
+            reqwest::Method::PUT,
+            &key,
+            &put("IPHONE-17"),
+            &json!({"predecessors": ["NANA-PHONE"]}),
+        )
+        .await?;
+    assert_eq!(
+        (status, body["error"]["details"]["field"].as_str()),
+        (400, Some("predecessors"))
+    );
+    let (_, body) = server
+        .post(
+            &key,
+            "/cloud/plays:batch",
+            &json!({"items": [play("p3", "IPHONE"), play("p4", "IPHONE-17")]}),
+        )
+        .await?;
+    assert_eq!(
+        statuses(&body),
+        vec!["device_mismatch", "accepted"],
+        "once registered, the key speaks for the registered id"
+    );
     Ok(())
 }

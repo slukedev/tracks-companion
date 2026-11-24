@@ -329,6 +329,11 @@ pub async fn run_with(
     let events = EventBus::default();
     let db = open_database(&config, events.clone(), Arc::clone(&clock))?;
     tracing::info!(path = %config.database.path.display(), schema = db.schema_version()?, "database ready");
+    let cloud =
+        trackside_cloud::epoch::reconcile(&db).context("cannot set the cloud sync epoch")?;
+    if cloud.new_epoch {
+        tracing::info!(epoch = %cloud.epoch, "new cloud sync epoch: apps pull their cloud data again");
+    }
     let server_id = db
         .read(settings::server_id)
         .await

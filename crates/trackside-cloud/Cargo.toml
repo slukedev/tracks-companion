@@ -20,6 +20,7 @@ tokio.workspace = true
 tracing.workspace = true
 base64.workspace = true
 governor.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 trackside-core = { workspace = true, features = ["testing"] }

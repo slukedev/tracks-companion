@@ -33,14 +33,15 @@ in `trackside-api` are thin. Migration 4 adds four tables, all `ON DELETE CASCAD
   values round-trip. A tombstone keeps its row with `fields` NULL and `deleted_at` set.
   `meta` holds what the server needs and never sends (per-field times, a session's owner).
 - `cloud_state`: the user's own change seq. Every write takes the next value; it is the row's
-  `version` and the pull cursor, so cursors never depend on client clocks. Paging is
+  `version` and, with the server's sync epoch, the pull cursor (`<epoch>.<seq>`, opaque to
+  clients), so cursors never depend on client clocks. Paging is
   `version > cursor ORDER BY version` on a unique `(user, entity, version)` index inside one read
   snapshot, and the last page's cursor is the user's current seq read in the same snapshot.
   Because one writer assigns seqs and commits in order, a page never skips a row committed
   before it, and a row changed after it was paged reappears later at its new version.
 - `cloud_entities`: items and bytes per user and entity (quotas, admin counts), and the highest
   version whose tombstone was pruned; an older cursor is `410 sync_reset`, as is a cursor above
-  the user's seq (a restored backup).
+  the user's seq.
 - `cloud_devices`: the app's device ids and the ids each was restored from, linked to the
   server's `devices` row when registered with a device key.
 
@@ -55,6 +56,24 @@ Merge rules, per entity, all pure functions with tests:
 | blocked-artists, excluded-stations, likes | One newest-wins value per item by `client_modified_at`, deletes included, so a later add brings an item back without an undelete. |
 | playlists, playlist-entries | Newest wins per field; an entry keeps its `playlistID`; deleting a playlist tombstones its live entries in the same transaction. |
 | settings | Tracks' `SyncedSetting.decide`, run by the server: newest wins, ties keep the stored value, a 1970 seed never replaces anything, `forgottenSongs` and `forgottenSongDates` merge by union, `null` is an explicit clear. |
+
+Restores. A restored backup lacks whatever was written after it, and its seqs restart below
+what clients hold, so a plain seq cursor would silently skip the gap. Every cursor therefore
+carries a sync epoch (`settings.cloud.epoch`, also in `capabilities.cloud.epoch`). The database
+also holds an instance token (`settings.cloud.instance`), replaced at every start and after
+every backup, and the server keeps the last token it wrote in a sidecar file
+`<database>.cloud-instance`. At start, a database whose token differs from the sidecar's is not
+the copy the server last ran with (a restore, a file put in place by hand, a lost sidecar): it
+gets a new epoch, and every cursor from before is `410 sync_reset`. Because the token changes
+after each backup, no backup shares the live token. Copying the live file while the server runs
+and putting it back later is not detected; the docs already forbid copying the live file.
+
+Device binding. A device key speaks for one app device id: the one it registered with
+`PUT /cloud/devices/{id}`, else the `client_device_id` it signed in with. Pushed items and
+settings naming another id are `rejected` `device_mismatch`; registering another id from a bound
+key, or an id bound to another live key, is `403 device_mismatch`. Predecessors must be the
+user's own devices (registered, or the `client_device_id` of one of their installs), so nobody
+can claim ownership through someone else's device.
 
 Every push item gets `accepted`, `duplicate`, `conflict` (with the copy that stands) or
 `rejected` (with a reason). A replay is a `duplicate` even with a stale `base_version`, because
@@ -126,7 +145,9 @@ within budget.
 - Easier: adding an entity; backups (cloud tables are in the same database and `VACUUM INTO`);
   deleting a user (cascade).
 - Harder: SQL now lives outside `trackside-core` for these tables; the migration stays in core.
-  Deleting a user with 300k plays is one cascading transaction of a second or so.
+- Deleting a user first purges their cloud rows in transactions of 5000, then deletes the
+  account, whose cascade has little left; the purge is skipped when the delete would be refused
+  (the last admin).
 - Revisit: if an admin ever needs aggregate listening stats, compute them from `plays` in the
   cloud crate without exposing rows.
 

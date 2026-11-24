@@ -422,3 +422,79 @@ pub(crate) fn put_device(
     ])?;
     Ok(())
 }
+
+/// The app device id bound to a signed-in install: the one it registered, else the
+/// `client_device_id` it signed in with.
+pub(crate) fn bound_device(
+    c: &Connection,
+    user: UserKey,
+    server_device: DeviceKey,
+) -> Result<Option<String>, DbError> {
+    if let Some(registered) = registered_to(c, user, server_device)? {
+        return Ok(Some(registered));
+    }
+    Ok(
+        c.prepare_cached("SELECT client_device_id FROM devices WHERE id = ?1 AND user_id = ?2")?
+            .query_row(params![server_device, user], |row| row.get(0))
+            .optional()?,
+    )
+}
+
+/// The cloud device registered by a signed-in install, if any.
+pub(crate) fn registered_to(
+    c: &Connection,
+    user: UserKey,
+    server_device: DeviceKey,
+) -> Result<Option<String>, DbError> {
+    Ok(c.prepare_cached(
+        "SELECT device_id FROM cloud_devices WHERE user_id = ?1 AND server_device = ?2
+         ORDER BY updated_at DESC LIMIT 1",
+    )?
+    .query_row(params![user, server_device], |row| row.get(0))
+    .optional()?)
+}
+
+/// The live (not revoked) install a cloud device is bound to, if any.
+pub(crate) fn live_install_of(
+    c: &Connection,
+    user: UserKey,
+    device_id: &str,
+) -> Result<Option<DeviceKey>, DbError> {
+    Ok(c.prepare_cached(
+        "SELECT s.id FROM cloud_devices d JOIN devices s ON s.id = d.server_device
+         WHERE d.user_id = ?1 AND d.device_id = ?2 AND s.revoked_at IS NULL",
+    )?
+    .query_row(params![user, device_id], |row| row.get(0))
+    .optional()?)
+}
+
+/// Whether `device_id` is one of the user's devices: registered here, or the
+/// `client_device_id` of one of their signed-in installs (revoked ones included).
+pub(crate) fn is_users_device(
+    c: &Connection,
+    user: UserKey,
+    device_id: &str,
+) -> Result<bool, DbError> {
+    Ok(c.prepare_cached(
+        "SELECT EXISTS (SELECT 1 FROM cloud_devices WHERE user_id = ?1 AND device_id = ?2)
+             OR EXISTS (SELECT 1 FROM devices WHERE user_id = ?1 AND client_device_id = ?2)",
+    )?
+    .query_row(params![user, device_id], |row| row.get(0))?)
+}
+
+/// Deletes up to `limit` of the user's records. Returns how many went.
+pub(crate) fn delete_some(c: &Connection, user: UserKey, limit: u32) -> Result<usize, DbError> {
+    Ok(c.prepare_cached(
+        "DELETE FROM cloud_items WHERE id IN (
+             SELECT id FROM cloud_items WHERE user_id = ?1 LIMIT ?2)",
+    )?
+    .execute(params![user, limit])?)
+}
+
+/// Deletes the user's counters, seq and device registry (small).
+pub(crate) fn delete_rest(c: &Connection, user: UserKey) -> Result<(), DbError> {
+    for table in ["cloud_entities", "cloud_devices", "cloud_state"] {
+        c.execute(&format!("DELETE FROM {table} WHERE user_id = ?1"), [user])?;
+    }
+    Ok(())
+}

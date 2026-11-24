@@ -5,8 +5,8 @@ use serde_json::{Map, Value, json};
 use trackside_api::build;
 use trackside_api::wire::{Time, cloud as wire};
 use trackside_cloud::{
-    Body, CloudDevice, Entity, Limits, Page, PushOutcome, PushResult, Record, Reject, Setting,
-    SettingOutcome, SettingResult, SettingsPage, Usage, UsageEntry,
+    Body, CloudDevice, Cursor, Entity, Limits, Page, PushOutcome, PushResult, Record, Reject,
+    Setting, SettingOutcome, SettingResult, SettingsPage, Usage, UsageEntry,
 };
 use trackside_core::{DeviceId, Millis};
 
@@ -14,6 +14,16 @@ use super::{at, id};
 
 const IPHONE: &str = "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C";
 const MAC: &str = "0C7B5E3A-9D1F-4E2B-8A6C-5F4E3D2C1B0A";
+/// The sync epoch the fixtures' cursors and capabilities carry.
+pub const EPOCH: &str = "3f9a0c1d7e2b4a65";
+
+fn cursor(seq: i64) -> Cursor {
+    Cursor {
+        epoch: EPOCH.to_owned(),
+        seq,
+    }
+}
+
 const OLD_IPHONE: &str = "E2D4C6B8-1A3F-4C5E-9B7D-0F2E4D6C8A1B";
 
 fn fields(value: Value) -> Map<String, Value> {
@@ -194,13 +204,13 @@ pub fn fixtures() -> Result<Vec<(&'static str, Value)>, serde_json::Error> {
                 merged_into: Some(play_record().id),
             },
         }],
-        cursor: 918,
+        cursor: cursor(918),
         has_more: false,
     };
     let entries = Page {
         upserts: vec![entry_record()],
         deletes: Vec::new(),
-        cursor: 1204,
+        cursor: cursor(1204),
         has_more: true,
     };
     let settings = SettingsPage {
@@ -223,7 +233,7 @@ pub fn fixtures() -> Result<Vec<(&'static str, Value)>, serde_json::Error> {
             setting("autoAddToPlaylist", json!(true), Millis(0), MAC, 3),
             setting("nearbyKey", nearby_envelope(), at(-600), IPHONE, 412),
         ],
-        cursor: 918,
+        cursor: cursor(918),
     };
     let patch = wire::SettingsPatch {
         settings: [

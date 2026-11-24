@@ -75,6 +75,8 @@ pub enum Reject {
     IdentityMismatch,
     /// A secret setting sent without client-side encryption.
     EncryptionRequired,
+    /// `device_id` is not the device bound to the device key that sent the item.
+    DeviceMismatch,
 }
 
 impl Reject {
@@ -89,6 +91,7 @@ impl Reject {
             Self::Future => "future",
             Self::IdentityMismatch => "identity_mismatch",
             Self::EncryptionRequired => "encryption_required",
+            Self::DeviceMismatch => "device_mismatch",
         }
     }
 }
@@ -127,8 +130,8 @@ pub struct Page {
     pub upserts: Vec<Record>,
     pub deletes: Vec<Record>,
     /// The cursor to send next: the highest version on this page, or the user's current seq
-    /// on the last page.
-    pub cursor: i64,
+    /// on the last page, in the current epoch.
+    pub cursor: crate::epoch::Cursor,
     pub has_more: bool,
 }
 
@@ -160,4 +163,10 @@ pub enum CloudError {
     Invalid(String),
     #[error("too many items")]
     TooMany,
+    /// The device id is not the one bound to the device key that sent it.
+    #[error("the device id is not this device's")]
+    DeviceMismatch,
+    /// A predecessor that is none of the user's devices.
+    #[error("unknown predecessor {0}")]
+    UnknownPredecessor(String),
 }

@@ -155,6 +155,10 @@ impl Backups {
         let target = self.dir.join(backup_name(kind, now));
         db.backup_into(&target)
             .map_err(|e| OpsError::Io(std::io::Error::other(e.to_string())))?;
+        // A restore of this copy must look like a different database to cloud sync.
+        if let Err(e) = trackside_cloud::epoch::rotate(db) {
+            tracing::warn!(error = %e, "cannot rotate the cloud instance token after a backup");
+        }
         // The copy holds password and key hashes and sealed secrets, like the database.
         restrict(&target);
         if let Some(key) = &self.secret_key

@@ -20,6 +20,10 @@ Backups hold your users' synced listening history, so keep them as private as th
 Secrets the apps share between a person's own devices (the nearby-devices key) are encrypted by
 the apps before they reach the server, and neither the server nor a backup can read them.
 
+After a restore the server starts a new cloud sync epoch, and the Tracks apps pull their cloud
+data again and send back what the backup lacked. `trackside.db.cloud-instance`, next to the
+database, is how the server notices; don't copy it along with a database file.
+
 If `secret.key` is lost, app passwords and pending pairing codes stop working and have to be
 made again. Passwords, sessions and device keys keep working, because they're stored as
 hashes.

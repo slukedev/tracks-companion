@@ -6,15 +6,18 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
+use trackside_cloud::epoch;
 use trackside_cloud::store::{self, Registration};
 use trackside_cloud::{
-    Body, CloudError, Entity, Limits, PushItem, PushOutcome, Reject, SettingOutcome, SettingWrite,
+    Body, CloudError, Cursor, Entity, Limits, PushItem, PushOutcome, Reject, SettingOutcome,
+    SettingWrite,
 };
 use trackside_core::db::FilesystemCheck;
+use trackside_core::repo::devices::{self, NewDevice};
 use trackside_core::repo::users::{self, NewUser};
 use trackside_core::testing::TEST_START;
 use trackside_core::{
-    Db, DbOptions, EventBus, Millis, Permissions, Role, ServerEvent, TestClock, UserKey,
+    Db, DbOptions, DeviceKey, EventBus, Millis, Permissions, Role, ServerEvent, TestClock, UserKey,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -91,6 +94,13 @@ fn play(n: usize) -> PushItem {
     )
 }
 
+fn at_seq(seq: i64) -> Cursor {
+    Cursor {
+        epoch: String::from(trackside_cloud::epoch::UNSET),
+        seq,
+    }
+}
+
 fn statuses(results: &[trackside_cloud::PushResult]) -> Vec<&'static str> {
     results
         .iter()
@@ -108,12 +118,20 @@ async fn replaying_a_batch_is_idempotent() -> TestResult {
     let f = open()?;
     let u = user(&f.db, "luke")?;
     let batch: Vec<PushItem> = (0..5).map(play).collect();
-    let first = store::push(&f.db, u, Entity::Plays, batch.clone(), Limits::default()).await?;
+    let first = store::push(
+        &f.db,
+        u,
+        Entity::Plays,
+        batch.clone(),
+        None,
+        Limits::default(),
+    )
+    .await?;
     assert_eq!(statuses(&first), vec!["accepted"; 5]);
     let page = store::pull(&f.db, u, Entity::Plays, None, 100).await?;
-    let again = store::push(&f.db, u, Entity::Plays, batch, Limits::default()).await?;
+    let again = store::push(&f.db, u, Entity::Plays, batch, None, Limits::default()).await?;
     assert_eq!(statuses(&again), vec!["duplicate"; 5]);
-    let after = store::pull(&f.db, u, Entity::Plays, Some(page.cursor), 100).await?;
+    let after = store::pull(&f.db, u, Entity::Plays, Some(page.cursor.clone()), 100).await?;
     assert!(after.upserts.is_empty(), "a replay writes nothing");
     assert_eq!(after.cursor, page.cursor);
     let versions: Vec<i64> = first
@@ -133,7 +151,7 @@ async fn compare_and_set_conflicts_return_the_current_copy() -> TestResult {
     let u = user(&f.db, "luke")?;
     let limits = Limits::default();
     let create = item("pl-1", json!({"name": "Drive"}), 10, "MAC");
-    let created = store::push(&f.db, u, Entity::Playlists, vec![create], limits).await?;
+    let created = store::push(&f.db, u, Entity::Playlists, vec![create], None, limits).await?;
     let PushOutcome::Accepted { version } = created[0].outcome else {
         return Err("not accepted".into());
     };
@@ -146,6 +164,7 @@ async fn compare_and_set_conflicts_return_the_current_copy() -> TestResult {
         u,
         Entity::Playlists,
         vec![rename("Night", version)],
+        None,
         limits,
     )
     .await?;
@@ -155,6 +174,7 @@ async fn compare_and_set_conflicts_return_the_current_copy() -> TestResult {
         u,
         Entity::Playlists,
         vec![rename("Day", version)],
+        None,
         limits,
     )
     .await?;
@@ -182,10 +202,18 @@ async fn tombstones_pull_as_deletes_and_need_an_explicit_undelete() -> TestResul
     let f = open()?;
     let u = user(&f.db, "luke")?;
     let limits = Limits::default();
-    store::push(&f.db, u, Entity::Plays, vec![play(1), play(2)], limits).await?;
+    store::push(
+        &f.db,
+        u,
+        Entity::Plays,
+        vec![play(1), play(2)],
+        None,
+        limits,
+    )
+    .await?;
     let mut merged = delete(&play(2).id, 50, "MAC");
     merged.merged_into = Some(play(1).id);
-    let gone = store::push(&f.db, u, Entity::Plays, vec![merged], limits).await?;
+    let gone = store::push(&f.db, u, Entity::Plays, vec![merged], None, limits).await?;
     assert_eq!(statuses(&gone), vec!["accepted"]);
     let page = store::pull(&f.db, u, Entity::Plays, None, 100).await?;
     assert_eq!(page.upserts.len(), 1);
@@ -197,13 +225,13 @@ async fn tombstones_pull_as_deletes_and_need_an_explicit_undelete() -> TestResul
             merged_into: Some(play(1).id)
         }
     );
-    let back = store::push(&f.db, u, Entity::Plays, vec![play(2)], limits).await?;
+    let back = store::push(&f.db, u, Entity::Plays, vec![play(2)], None, limits).await?;
     assert_eq!(statuses(&back), vec!["deleted"]);
     let undelete = PushItem {
         undelete: true,
         ..play(2)
     };
-    let back = store::push(&f.db, u, Entity::Plays, vec![undelete], limits).await?;
+    let back = store::push(&f.db, u, Entity::Plays, vec![undelete], None, limits).await?;
     assert_eq!(statuses(&back), vec!["accepted"]);
     let delta = store::pull(&f.db, u, Entity::Plays, Some(page.cursor), 100).await?;
     assert_eq!(delta.upserts.len(), 1);
@@ -221,6 +249,7 @@ async fn paging_while_writes_land_loses_and_repeats_nothing() -> TestResult {
         u,
         Entity::Plays,
         (0..300).map(play).collect(),
+        None,
         limits,
     )
     .await?;
@@ -250,12 +279,13 @@ async fn paging_while_writes_land_loses_and_repeats_nothing() -> TestResult {
                 1,
                 "MAC",
             ));
-            store::push(&f.db, u, Entity::Plays, writes, limits).await?;
+            store::push(&f.db, u, Entity::Plays, writes, None, limits).await?;
             store::push(
                 &f.db,
                 u,
                 Entity::Plays,
                 vec![delete(&play(100 + pages).id, 2, "MAC")],
+                None,
                 limits,
             )
             .await?;
@@ -285,26 +315,28 @@ async fn cursors_from_the_future_or_before_pruning_reset() -> TestResult {
     let u = user(&f.db, "luke")?;
     let limits = Limits::default();
     let add = item("abba", json!({"name": "ABBA"}), 10, "MAC");
-    store::push(&f.db, u, Entity::BlockedArtists, vec![add], limits).await?;
+    store::push(&f.db, u, Entity::BlockedArtists, vec![add], None, limits).await?;
     store::push(
         &f.db,
         u,
         Entity::BlockedArtists,
         vec![delete("abba", 20, "MAC")],
+        None,
         limits,
     )
     .await?;
-    store::push(&f.db, u, Entity::Plays, vec![play(1)], limits).await?;
+    store::push(&f.db, u, Entity::Plays, vec![play(1)], None, limits).await?;
     store::push(
         &f.db,
         u,
         Entity::Plays,
         vec![delete(&play(1).id, 30, "MAC")],
+        None,
         limits,
     )
     .await?;
     assert!(matches!(
-        store::pull(&f.db, u, Entity::Plays, Some(999), 10).await,
+        store::pull(&f.db, u, Entity::Plays, Some(at_seq(999)), 10).await,
         Err(CloudError::SyncReset)
     ));
     f.clock.advance(Duration::from_hours(24 * 91));
@@ -314,7 +346,7 @@ async fn cursors_from_the_future_or_before_pruning_reset() -> TestResult {
         "the block, not the play"
     );
     assert!(matches!(
-        store::pull(&f.db, u, Entity::BlockedArtists, Some(1), 10).await,
+        store::pull(&f.db, u, Entity::BlockedArtists, Some(at_seq(1)), 10).await,
         Err(CloudError::SyncReset)
     ));
     let fresh = store::pull(&f.db, u, Entity::BlockedArtists, None, 10).await?;
@@ -346,7 +378,15 @@ async fn stations_upsert_by_their_folded_name() -> TestResult {
         2,
         "MAC",
     );
-    let results = store::push(&f.db, u, Entity::Stations, vec![first, second], limits).await?;
+    let results = store::push(
+        &f.db,
+        u,
+        Entity::Stations,
+        vec![first, second],
+        None,
+        limits,
+    )
+    .await?;
     assert_eq!(statuses(&results), vec!["accepted", "accepted"]);
     assert_eq!(results[0].id, "cafe radio");
     let page = store::pull(&f.db, u, Entity::Stations, None, 10).await?;
@@ -382,7 +422,7 @@ async fn settings_follow_the_decide_rules() -> TestResult {
         setting("forgottenSongs", json!(["b"]), 0),
         setting("macOnly.menuBarStyle", json!({"compact": true}), 0),
     ];
-    let results = store::patch_settings(&f.db, u, seeds, limits).await?;
+    let results = store::patch_settings(&f.db, u, seeds, None, limits).await?;
     assert!(
         results
             .iter()
@@ -395,7 +435,7 @@ async fn settings_follow_the_decide_rules() -> TestResult {
         setting("playlistID", Value::Null, 6_000),
         setting("playlistID", json!("pl.1"), 5_500),
     ];
-    let results = store::patch_settings(&f.db, u, later, limits).await?;
+    let results = store::patch_settings(&f.db, u, later, None, limits).await?;
     let outcomes: Vec<_> = results.iter().map(|r| r.outcome.clone()).collect();
     assert_eq!(
         outcomes,
@@ -439,7 +479,7 @@ async fn nearby_key_is_stored_only_as_an_opaque_envelope() -> TestResult {
         json!("q83vEjRWeJAq83vEjRWeJAq83vEjRWeJAq83vEjRWeJA="),
         1,
     );
-    let results = store::patch_settings(&f.db, u, vec![plain], limits).await?;
+    let results = store::patch_settings(&f.db, u, vec![plain], None, limits).await?;
     assert_eq!(
         results[0].outcome,
         SettingOutcome::Rejected(Reject::EncryptionRequired)
@@ -447,7 +487,7 @@ async fn nearby_key_is_stored_only_as_an_opaque_envelope() -> TestResult {
     let envelope = json!({"$encrypted": {"v": 1, "alg": "chachapoly", "kid": "k1",
         "nonce": "AAAAAAAAAAAAAAAA", "ct": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}});
     let sealed = setting("nearbyKey", envelope.clone(), 2);
-    let results = store::patch_settings(&f.db, u, vec![sealed], limits).await?;
+    let results = store::patch_settings(&f.db, u, vec![sealed], None, limits).await?;
     assert_eq!(results[0].outcome, SettingOutcome::Accepted);
     let all = store::settings(&f.db, u, None).await?;
     assert_eq!(all.settings[0].value, envelope, "returned exactly as sent");
@@ -460,11 +500,12 @@ async fn one_user_never_sees_or_changes_anothers_data() -> TestResult {
     let luke = user(&f.db, "luke")?;
     let nana = user(&f.db, "nana")?;
     let limits = Limits::default();
-    store::push(&f.db, luke, Entity::Plays, vec![play(1)], limits).await?;
+    store::push(&f.db, luke, Entity::Plays, vec![play(1)], None, limits).await?;
     store::patch_settings(
         &f.db,
         luke,
         vec![setting("playlistName", json!("Luke's"), 5)],
+        None,
         limits,
     )
     .await?;
@@ -485,6 +526,7 @@ async fn one_user_never_sees_or_changes_anothers_data() -> TestResult {
         nana,
         Entity::Plays,
         vec![delete(&play(1).id, 9, "X")],
+        None,
         limits,
     )
     .await?;
@@ -504,7 +546,15 @@ async fn quotas_reject_new_items_but_allow_deletes() -> TestResult {
         max_items: 3,
         max_bytes: 1 << 20,
     };
-    let results = store::push(&f.db, u, Entity::Plays, (0..5).map(play).collect(), limits).await?;
+    let results = store::push(
+        &f.db,
+        u,
+        Entity::Plays,
+        (0..5).map(play).collect(),
+        None,
+        limits,
+    )
+    .await?;
     assert_eq!(
         statuses(&results),
         vec![
@@ -520,6 +570,7 @@ async fn quotas_reject_new_items_but_allow_deletes() -> TestResult {
         u,
         Entity::Plays,
         vec![delete(&play(0).id, 5, "MAC")],
+        None,
         limits,
     )
     .await?;
@@ -528,7 +579,15 @@ async fn quotas_reject_new_items_but_allow_deletes() -> TestResult {
         max_items: 100,
         max_bytes: 2_000,
     };
-    let bytes = store::push(&f.db, u, Entity::Plays, (10..20).map(play).collect(), tight).await?;
+    let bytes = store::push(
+        &f.db,
+        u,
+        Entity::Plays,
+        (10..20).map(play).collect(),
+        None,
+        tight,
+    )
+    .await?;
     assert!(statuses(&bytes).contains(&"quota_exceeded"));
     let usage = store::usage(&f.db, u).await?;
     assert!(usage.bytes > 0 && usage.items >= 3);
@@ -538,6 +597,7 @@ async fn quotas_reject_new_items_but_allow_deletes() -> TestResult {
             u,
             Entity::Plays,
             (0..1001).map(play).collect(),
+            None,
             limits
         )
         .await,
@@ -556,6 +616,7 @@ async fn deleting_a_playlist_deletes_its_entries() -> TestResult {
         u,
         Entity::Playlists,
         vec![item("pl", json!({"name": "A"}), 1, "MAC")],
+        None,
         limits,
     )
     .await?;
@@ -570,13 +631,14 @@ async fn deleting_a_playlist_deletes_its_entries() -> TestResult {
             )
         })
         .collect();
-    store::push(&f.db, u, Entity::PlaylistEntries, entries, limits).await?;
+    store::push(&f.db, u, Entity::PlaylistEntries, entries, None, limits).await?;
     let mut events = f.events.subscribe();
     store::push(
         &f.db,
         u,
         Entity::Playlists,
         vec![delete("pl", 9, "MAC")],
+        None,
         limits,
     )
     .await?;
@@ -604,10 +666,23 @@ async fn restored_devices_inherit_sessions() -> TestResult {
         1,
         "OLD",
     );
-    store::push(&f.db, u, Entity::Sessions, vec![session], limits).await?;
+    store::push(&f.db, u, Entity::Sessions, vec![session], None, limits).await?;
     let update = item("s1", json!({"endedAtMs": 2}), 2, "NEW");
-    let refused = store::push(&f.db, u, Entity::Sessions, vec![update.clone()], limits).await?;
+    let refused = store::push(
+        &f.db,
+        u,
+        Entity::Sessions,
+        vec![update.clone()],
+        None,
+        limits,
+    )
+    .await?;
     assert_eq!(statuses(&refused), vec!["not_owner"]);
+    let old = Registration {
+        device_id: String::from("OLD"),
+        ..Registration::default()
+    };
+    store::register_device(&f.db, u, old, None).await?;
     let registration = Registration {
         device_id: String::from("NEW"),
         predecessors: vec![String::from("OLD")],
@@ -616,7 +691,7 @@ async fn restored_devices_inherit_sessions() -> TestResult {
     };
     let device = store::register_device(&f.db, u, registration, None).await?;
     assert_eq!(device.predecessors, vec![String::from("OLD")]);
-    let allowed = store::push(&f.db, u, Entity::Sessions, vec![update], limits).await?;
+    let allowed = store::push(&f.db, u, Entity::Sessions, vec![update], None, limits).await?;
     assert_eq!(statuses(&allowed), vec!["accepted"]);
     Ok(())
 }
@@ -628,11 +703,20 @@ async fn cloud_data_goes_with_its_user_and_into_backups() -> TestResult {
     let nana = user(&f.db, "nana")?;
     let limits = Limits::default();
     for u in [luke, nana] {
-        store::push(&f.db, u, Entity::Plays, (0..10).map(play).collect(), limits).await?;
+        store::push(
+            &f.db,
+            u,
+            Entity::Plays,
+            (0..10).map(play).collect(),
+            None,
+            limits,
+        )
+        .await?;
         store::patch_settings(
             &f.db,
             u,
             vec![setting("playlistName", json!("x"), 1)],
+            None,
             limits,
         )
         .await?;
@@ -677,7 +761,7 @@ async fn a_100k_import_does_not_block_another_user() -> TestResult {
             let mut n = 0;
             while !done.load(std::sync::atomic::Ordering::Relaxed) {
                 let started = Instant::now();
-                store::push(&db, other, Entity::Plays, vec![play(n)], limits).await?;
+                store::push(&db, other, Entity::Plays, vec![play(n)], None, limits).await?;
                 let page = store::pull(&db, other, Entity::Plays, cursor, 100).await?;
                 cursor = Some(page.cursor);
                 waits.push(started.elapsed());
@@ -691,7 +775,7 @@ async fn a_100k_import_does_not_block_another_user() -> TestResult {
     let started = Instant::now();
     for batch in 0..PLAYS / 1000 {
         let items = (batch * 1000..(batch + 1) * 1000).map(play).collect();
-        let results = store::push(&f.db, importer, Entity::Plays, items, limits).await?;
+        let results = store::push(&f.db, importer, Entity::Plays, items, None, limits).await?;
         assert!(
             results
                 .iter()
@@ -724,5 +808,230 @@ async fn a_100k_import_does_not_block_another_user() -> TestResult {
     assert_eq!(pulled, PLAYS);
     assert!(rounds > 10, "the other user kept going during the import");
     assert!(worst < Duration::from_secs(2), "worst wait {worst:?}");
+    Ok(())
+}
+
+fn install(db: &Db, user: UserKey, client: &str) -> Result<DeviceKey, Box<dyn std::error::Error>> {
+    let new = NewDevice {
+        client_device_id: client.to_owned(),
+        name: client.to_owned(),
+        platform: String::from("ios"),
+        model: None,
+        app_name: None,
+        app_version: None,
+    };
+    Ok(db
+        .write_blocking(move |tx| devices::upsert_for_login(tx, user, &new, None))?
+        .key)
+}
+
+#[tokio::test]
+async fn items_must_name_the_device_bound_to_the_key() -> TestResult {
+    let f = open()?;
+    let u = user(&f.db, "luke")?;
+    let limits = Limits::default();
+    let phone = install(&f.db, u, "IPHONE")?;
+    let bound = store::bound_device(&f.db, u, phone).await?;
+    assert_eq!(
+        bound.as_deref(),
+        Some("IPHONE"),
+        "the sign-in id until it registers"
+    );
+    let mut other = play(2);
+    other.device_id = String::from("MAC");
+    let results = store::push(
+        &f.db,
+        u,
+        Entity::Plays,
+        vec![play(1), other],
+        bound.clone(),
+        limits,
+    )
+    .await?;
+    assert_eq!(statuses(&results), vec!["accepted", "device_mismatch"]);
+    let settings = vec![
+        setting("playlistName", json!("x"), 5),
+        SettingWrite {
+            device_id: String::from("IPHONE"),
+            ..setting("playlistID", json!("y"), 5)
+        },
+    ];
+    let results = store::patch_settings(&f.db, u, settings, bound, limits).await?;
+    assert_eq!(
+        results[0].outcome,
+        SettingOutcome::Rejected(Reject::DeviceMismatch)
+    );
+    assert_eq!(results[1].outcome, SettingOutcome::Accepted);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_install_binds_one_device_id_and_claims_only_its_users_predecessors() -> TestResult {
+    let f = open()?;
+    let luke = user(&f.db, "luke")?;
+    let nana = user(&f.db, "nana")?;
+    let phone = install(&f.db, luke, "PHONE-SIGNIN")?;
+    let mac = install(&f.db, luke, "MAC-SIGNIN")?;
+    install(&f.db, nana, "NANA-PHONE")?;
+    let register = |id: &str, predecessors: &[&str]| Registration {
+        device_id: id.to_owned(),
+        predecessors: predecessors.iter().map(|p| (*p).to_owned()).collect(),
+        ..Registration::default()
+    };
+    store::register_device(&f.db, luke, register("A", &[]), Some(phone)).await?;
+    assert_eq!(
+        store::bound_device(&f.db, luke, phone).await?.as_deref(),
+        Some("A")
+    );
+    assert!(matches!(
+        store::register_device(&f.db, luke, register("B", &[]), Some(phone)).await,
+        Err(CloudError::DeviceMismatch)
+    ));
+    assert!(matches!(
+        store::register_device(&f.db, luke, register("A", &[]), Some(mac)).await,
+        Err(CloudError::DeviceMismatch)
+    ));
+    assert!(matches!(
+        store::register_device(&f.db, luke, register("M", &["NANA-PHONE"]), Some(mac)).await,
+        Err(CloudError::UnknownPredecessor(_))
+    ));
+    assert!(matches!(
+        store::register_device(&f.db, luke, register("M", &["NEVER-SEEN"]), Some(mac)).await,
+        Err(CloudError::UnknownPredecessor(_))
+    ));
+    let m = store::register_device(
+        &f.db,
+        luke,
+        register("M", &["A", "PHONE-SIGNIN"]),
+        Some(mac),
+    )
+    .await?;
+    assert_eq!(
+        m.predecessors,
+        vec![String::from("A"), String::from("PHONE-SIGNIN")]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn deleting_a_user_purges_their_cloud_data_in_chunks() -> TestResult {
+    let f = open()?;
+    let luke = user(&f.db, "luke")?;
+    let nana = user(&f.db, "nana")?;
+    let limits = Limits::default();
+    for batch in 0..12 {
+        let items = (batch * 1000..(batch + 1) * 1000).map(play).collect();
+        store::push(&f.db, luke, Entity::Plays, items, None, limits).await?;
+    }
+    store::push(&f.db, nana, Entity::Plays, vec![play(1)], None, limits).await?;
+    store::register_device(
+        &f.db,
+        luke,
+        Registration {
+            device_id: String::from("D"),
+            ..Registration::default()
+        },
+        None,
+    )
+    .await?;
+    let mut events = f.events.subscribe();
+    assert_eq!(store::purge_user(&f.db, luke).await?, 12_000);
+    let mut commits = 0;
+    while events.try_recv().is_ok() {
+        commits += 1;
+    }
+    assert_eq!(commits, 0, "a purge signals nothing");
+    assert_eq!(store::usage(&f.db, luke).await?.items, 0);
+    assert_eq!(store::devices(&f.db, luke).await?, Vec::new());
+    assert_eq!(store::usage(&f.db, nana).await?.items, 1);
+    Ok(())
+}
+
+fn open_at(path: &std::path::Path) -> Result<Db, Box<dyn std::error::Error>> {
+    let mut options = DbOptions::new(path);
+    options.filesystem = FilesystemCheck::AssumeLocal;
+    Ok(Db::open(
+        &options,
+        EventBus::default(),
+        Arc::new(TestClock::new(TEST_START)),
+    )?)
+}
+
+#[tokio::test]
+async fn a_restored_backup_gets_a_new_epoch_and_old_cursors_reset() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("trackside.db");
+    let backup = dir.path().join("backup.db");
+    let limits = Limits::default();
+    let (cursor, first_epoch) = {
+        let db = open_at(&path)?;
+        let started = epoch::reconcile(&db)?;
+        assert!(started.new_epoch, "a first start makes the epoch");
+        let u = user(&db, "luke")?;
+        store::push(
+            &db,
+            u,
+            Entity::Plays,
+            (0..5).map(play).collect(),
+            None,
+            limits,
+        )
+        .await?;
+        db.backup_into(&backup)?;
+        epoch::rotate(&db)?;
+        store::push(
+            &db,
+            u,
+            Entity::Plays,
+            (5..10).map(play).collect(),
+            None,
+            limits,
+        )
+        .await?;
+        let page = store::pull(&db, u, Entity::Plays, None, 100).await?;
+        assert_eq!(page.cursor.epoch, started.epoch);
+        (page.cursor, started.epoch)
+    };
+    // A plain restart keeps the epoch, so cursors keep working.
+    {
+        let db = open_at(&path)?;
+        let again = epoch::reconcile(&db)?;
+        assert_eq!(
+            (again.epoch.as_str(), again.new_epoch),
+            (first_epoch.as_str(), false)
+        );
+        let u = db.read(|c| Ok(users::list(c)?[0].key)).await?;
+        let page = store::pull(&db, u, Entity::Plays, Some(cursor.clone()), 100).await?;
+        assert_eq!(page.upserts, Vec::new());
+    }
+    // Restore the backup (taken before plays 5..10) the way `trackside backup restore` does.
+    for side in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{side}", path.display()));
+    }
+    std::fs::copy(&backup, &path)?;
+    let db = open_at(&path)?;
+    let restored = epoch::reconcile(&db)?;
+    assert!(restored.new_epoch);
+    assert_ne!(restored.epoch, first_epoch);
+    let u = db.read(|c| Ok(users::list(c)?[0].key)).await?;
+    assert!(matches!(
+        store::pull(&db, u, Entity::Plays, Some(cursor), 100).await,
+        Err(CloudError::SyncReset)
+    ));
+    assert!(matches!(
+        store::settings(
+            &db,
+            u,
+            Some(Cursor {
+                epoch: first_epoch,
+                seq: 0
+            })
+        )
+        .await,
+        Err(CloudError::SyncReset)
+    ));
+    let fresh = store::pull(&db, u, Entity::Plays, None, 100).await?;
+    assert_eq!(fresh.upserts.len(), 5);
+    assert_eq!(fresh.cursor.epoch, restored.epoch);
     Ok(())
 }

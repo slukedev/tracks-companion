@@ -12,9 +12,10 @@ use trackside_core::{Db, DbError, DeviceKey, ServerEvent, UserKey, WriteTx};
 
 use crate::devices::{CloudDevice, Registry};
 use crate::entity::{Entity, Rule};
+use crate::epoch::{self, Cursor};
 use crate::limits::{
     CHUNK_ITEMS, CHUNK_TIME, Limits, MAX_BATCH, MAX_DEVICE_ID_BYTES, MAX_DEVICES, MAX_PREDECESSORS,
-    MAX_SETTINGS, TOMBSTONE_DAYS,
+    MAX_SETTINGS, PURGE_CHUNK, TOMBSTONE_DAYS,
 };
 use crate::merge::{self, Decision, Next, Stored};
 use crate::model::{Body, CloudError, Page, PushItem, PushOutcome, PushResult, Reject, Usage};
@@ -53,12 +54,14 @@ impl Budget {
 }
 
 /// Applies a batch for `user`. Every item gets a result, in order; the whole call fails only
-/// when the database does.
+/// when the database does. `device` is the device id bound to the sending device key: an
+/// item naming another is `device_mismatch`. `None` checks nothing (server-side callers).
 pub async fn push(
     db: &Db,
     user: UserKey,
     entity: Entity,
     items: Vec<PushItem>,
+    device: Option<String>,
     limits: Limits,
 ) -> Result<Vec<PushResult>, CloudError> {
     if entity == Entity::Settings {
@@ -74,8 +77,9 @@ pub async fn push(
     while results.len() < items.len() {
         let start = results.len();
         let batch = Arc::clone(&items);
+        let device = device.clone();
         let chunk = db
-            .write(move |tx| apply_chunk(tx, user, entity, &batch[start..], limits))
+            .write(move |tx| apply_chunk(tx, user, entity, &batch[start..], device, limits))
             .await?;
         wrote |= chunk.wrote;
         cascaded |= chunk.cascaded;
@@ -95,6 +99,7 @@ fn apply_chunk(
     user: UserKey,
     entity: Entity,
     items: &[PushItem],
+    device: Option<String>,
     limits: Limits,
 ) -> Result<Chunk, DbError> {
     let started = Instant::now();
@@ -108,6 +113,7 @@ fn apply_chunk(
     let mut state = State {
         user,
         entity,
+        device,
         seq: before,
         budget: Budget {
             limits,
@@ -140,6 +146,7 @@ fn apply_chunk(
 struct State {
     user: UserKey,
     entity: Entity,
+    device: Option<String>,
     seq: i64,
     budget: Budget,
     added_items: i64,
@@ -154,6 +161,14 @@ fn apply_one(
     item: &PushItem,
 ) -> Result<PushResult, DbError> {
     let now = tx.now();
+    if state.device.as_ref().is_some_and(|d| *d != item.device_id) {
+        return Ok(PushResult {
+            id: item.id.clone(),
+            outcome: PushOutcome::Rejected {
+                reason: Reject::DeviceMismatch,
+            },
+        });
+    }
     let id = match check_item(state.entity, item, now) {
         Ok(id) => id,
         Err(reason) => {
@@ -250,10 +265,10 @@ pub async fn pull(
     db: &Db,
     user: UserKey,
     entity: Entity,
-    cursor: Option<i64>,
+    cursor: Option<Cursor>,
     limit: u32,
 ) -> Result<Page, CloudError> {
-    db.read(move |c| page(c, user, entity, cursor, limit))
+    db.read(move |c| page(c, user, entity, cursor.as_ref(), limit))
         .await?
 }
 
@@ -261,21 +276,29 @@ fn page(
     c: &Connection,
     user: UserKey,
     entity: Entity,
-    cursor: Option<i64>,
+    cursor: Option<&Cursor>,
     limit: u32,
 ) -> Result<Result<Page, CloudError>, DbError> {
     let current = repo::seq(c, user)?;
-    let after = cursor.unwrap_or(0);
-    if cursor.is_some() && (after > current || after < repo::pruned_through(c, user, entity)?) {
+    let epoch = epoch::current(c)?;
+    let after = cursor.map_or(0, |c| c.seq);
+    if let Some(cursor) = cursor
+        && (cursor.epoch != epoch
+            || after > current
+            || after < repo::pruned_through(c, user, entity)?)
+    {
         return Ok(Err(CloudError::SyncReset));
     }
     let limit = limit.max(1);
     let mut rows = repo::after(c, user, entity, after, limit + 1)?;
     let has_more = rows.len() > limit as usize;
     rows.truncate(limit as usize);
-    let cursor = match rows.last() {
-        Some(last) if has_more => last.version,
-        _ => current.max(after),
+    let cursor = Cursor {
+        epoch,
+        seq: match rows.last() {
+            Some(last) if has_more => last.version,
+            _ => current.max(after),
+        },
     };
     let (mut upserts, mut deletes) = (Vec::new(), Vec::new());
     for row in rows {
@@ -333,36 +356,42 @@ fn setting(stored: &Stored) -> Setting {
 pub async fn settings(
     db: &Db,
     user: UserKey,
-    cursor: Option<i64>,
+    cursor: Option<Cursor>,
 ) -> Result<SettingsPage, CloudError> {
     db.read(move |c| {
         let current = repo::seq(c, user)?;
-        let after = cursor.unwrap_or(0);
-        if after > current {
+        let epoch = epoch::current(c)?;
+        let after = cursor.as_ref().map_or(0, |c| c.seq);
+        if cursor.is_some_and(|c| c.epoch != epoch || c.seq > current) {
             return Ok(Err(CloudError::SyncReset));
         }
         let limit = u32::try_from(MAX_SETTINGS).unwrap_or(u32::MAX) * 2;
         let rows = repo::after(c, user, Entity::Settings, after, limit)?;
         Ok(Ok(SettingsPage {
             settings: rows.iter().map(setting).collect(),
-            cursor: current.max(after),
+            cursor: Cursor {
+                epoch,
+                seq: current.max(after),
+            },
         }))
     })
     .await?
 }
 
-/// Applies settings changes with the decide rule, in one transaction.
+/// Applies settings changes with the decide rule, in one transaction. `device` as for
+/// [`push`].
 pub async fn patch_settings(
     db: &Db,
     user: UserKey,
     writes: Vec<SettingWrite>,
+    device: Option<String>,
     limits: Limits,
 ) -> Result<Vec<SettingResult>, CloudError> {
     if writes.len() > MAX_BATCH {
         return Err(CloudError::TooMany);
     }
     let (results, wrote) = db
-        .write(move |tx| apply_settings(tx, user, &writes, limits))
+        .write(move |tx| apply_settings(tx, user, &writes, device.as_deref(), limits))
         .await?;
     if wrote {
         signal(db, user, Entity::Settings.as_str());
@@ -374,6 +403,7 @@ fn apply_settings(
     tx: &mut WriteTx<'_>,
     user: UserKey,
     writes: &[SettingWrite],
+    device: Option<&str>,
     limits: Limits,
 ) -> Result<(Vec<SettingResult>, bool), DbError> {
     let entity = Entity::Settings;
@@ -395,6 +425,13 @@ fn apply_settings(
             outcome,
             current: current.map(setting),
         };
+        if device.is_some_and(|d| d != write.device_id) {
+            results.push(result(
+                SettingOutcome::Rejected(Reject::DeviceMismatch),
+                None,
+            ));
+            continue;
+        }
         if let Err(reason) = settings::check(write, now) {
             results.push(result(SettingOutcome::Rejected(reason), None));
             continue;
@@ -474,7 +511,9 @@ pub struct Registration {
 }
 
 /// Registers a device or adds to its predecessors (which only grow: a restore stays a fact).
-/// `server_device` links it to the signed-in install that sent it.
+/// `server_device` links it to the signed-in install that sent it, which binds that install
+/// to this device id: registering another id from it, or this id from another live install,
+/// is `DeviceMismatch`. Every predecessor must be one of the user's own devices.
 pub async fn register_device(
     db: &Db,
     user: UserKey,
@@ -500,8 +539,24 @@ pub async fn register_device(
     let id = device_id.clone();
     let device = db
         .write(move |tx| {
+            if let Some(install) = server_device {
+                let mismatch = match repo::registered_to(tx, user, install)? {
+                    Some(bound) => bound != device_id,
+                    None => repo::live_install_of(tx, user, &device_id)?
+                        .is_some_and(|other| other != install),
+                };
+                if mismatch {
+                    return Ok(Err(CloudError::DeviceMismatch));
+                }
+            }
             let known = repo::devices(tx, user)?;
             let existing = known.iter().find(|d| d.device_id == device_id);
+            for p in &predecessors {
+                let already = existing.is_some_and(|d| d.predecessors.contains(p));
+                if !already && !repo::is_users_device(tx, user, p)? {
+                    return Ok(Err(CloudError::UnknownPredecessor(p.clone())));
+                }
+            }
             if existing.is_none() && known.len() >= MAX_DEVICES {
                 return Ok(Err(CloudError::Invalid(String::from("too many devices"))));
             }
@@ -534,6 +589,36 @@ pub async fn register_device(
         .await??;
     signal(db, user, "devices");
     Ok(device)
+}
+
+/// The device id bound to a signed-in install of `user`: the one it registered, else the
+/// `client_device_id` it signed in with.
+pub async fn bound_device(
+    db: &Db,
+    user: UserKey,
+    server_device: DeviceKey,
+) -> Result<Option<String>, CloudError> {
+    Ok(db
+        .read(move |c| repo::bound_device(c, user, server_device))
+        .await?)
+}
+
+/// Deletes all of a user's cloud data in transactions of [`PURGE_CHUNK`] records, so deleting
+/// a user with 300k plays never holds the writer for long. Run before deleting the user, whose
+/// cascade then has little left to do.
+pub async fn purge_user(db: &Db, user: UserKey) -> Result<usize, CloudError> {
+    let mut total = 0;
+    loop {
+        let gone = db
+            .write(move |tx| repo::delete_some(tx, user, PURGE_CHUNK))
+            .await?;
+        total += gone;
+        if gone < PURGE_CHUNK as usize {
+            break;
+        }
+    }
+    db.write(move |tx| repo::delete_rest(tx, user)).await?;
+    Ok(total)
 }
 
 /// What the user stores: totals and per entity. Numbers only, for quotas and admins.

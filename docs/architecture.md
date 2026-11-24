@@ -1092,7 +1092,9 @@ as the app's JSON, keyed by user, entity and client id, with its `version`), `cl
 (items, bytes and the pruned-through version per user and entity) and `cloud_devices` (the
 apps' device ids and what each was restored from). All cascade from `users`. They are separate
 from `change_log`: cloud writes never wake library `/sync` clients, and the cloud cursor is the
-user's own seq. api.md section 19 has the API and ADR 0012 the merge rules.
+user's own seq plus a sync epoch that changes when the database is restored or replaced (the
+`<database>.cloud-instance` sidecar file next to the database tells the server which copy it last
+ran). api.md section 19 has the API and ADR 0012 the merge rules.
 
 ---
 
