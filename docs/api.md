@@ -400,7 +400,7 @@ No auth. Only while `setup_required`. Rate-limited per IP.
 {"setup_token": "7KQ2M9XD...", "username": "luke", "display_name": "Luke", "password": "..."}
 ```
 
-`display_name` is optional and defaults to the username. Passwords are 8 to 1024 bytes. `201`
+`display_name` is optional and defaults to the username. Passwords are 1 to 1024 bytes. `201`
 with the user (section 7 shape) and a session cookie. Errors: `401 unauthenticated` for a wrong
 token, `409 conflict` once an admin exists.
 
@@ -995,7 +995,8 @@ caller can see, in sync as well.
 | `session` | `{"reason": "revoked"}` | the credential was revoked; the stream ends |
 
 `id` of each event is the seq at the time. Each event type is sent only to callers allowed to see
-it. Clients connect only while in the foreground.
+it. Clients connect only while in the foreground. A user may have 16 streams open at once; a
+17th is `429 rate_limited` with `Retry-After: 5`.
 
 ---
 
@@ -1549,7 +1550,7 @@ a measured zero. Responses are `Cache-Control: no-store`. Out-of-range parameter
 | `getTopSongs` with `id` | yes | `topSongsByArtistId` extension |
 | `getAlbumList`, `getAlbumList2` | yes | all types: random, newest, highest, frequent, recent, alphabeticalByName, alphabeticalByArtist, starred, byYear, byGenre |
 | `getRandomSongs`, `getSongsByGenre` | yes | |
-| `getNowPlaying` | yes | from now-playing and `reportPlayback` |
+| `getNowPlaying` | yes | from now-playing and `reportPlayback`; admins see everyone's, members only their own |
 | `getStarred`, `getStarred2` | yes | |
 | `search`, `search2`, `search3` | yes | library only; all three offset and count pairs honoured; empty `query` returns everything in stable internal-id order (older Tracks builds page all songs this way) |
 | `getPlaylists`, `getPlaylist`, `createPlaylist`, `updatePlaylist`, `deletePlaylist` | yes | |

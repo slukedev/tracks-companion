@@ -393,5 +393,14 @@ mod tests {
             ApiError::from(MediaError::InsufficientStorage).status,
             StatusCode::INSUFFICIENT_STORAGE
         );
+        let offline = ApiError::from(MediaError::LibraryUnavailable).into_response();
+        assert_eq!(offline.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            offline
+                .headers()
+                .get(header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok()),
+            Some("30")
+        );
     }
 }

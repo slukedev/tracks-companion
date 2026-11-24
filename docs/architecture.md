@@ -1212,7 +1212,7 @@ resolved set of visible library ids (all for admins).
 
 | Credential | Used by | Format | Stored as | Lifetime |
 |---|---|---|---|---|
-| Login password | people, at login | chosen by the user, 8 to 1024 bytes | Argon2id PHC (m 19456 KiB, t 2, p 1) | until changed |
+| Login password | people, at login | chosen by the user, 1 to 1024 bytes | Argon2id PHC (m 19456 KiB, t 2, p 1) | until changed |
 | Session | dashboard | 32 random bytes, base64url, `__Host-trackside_session` cookie | SHA-256 | idle 14 days, absolute 90 days |
 | Device key | Tracks and native clients | `tsk_` + 43 base64url chars (256 bits) | SHA-256 | until revoked |
 | API key | OpenSubsonic `apiKey` clients | same format, `kind = api_key` | SHA-256 | until revoked |

@@ -341,6 +341,9 @@ struct Inner {
     pragmas: Pragmas,
     max_idle_readers: usize,
     read_slots: Arc<Semaphore>,
+    /// One async write at a time takes a blocking thread; the rest wait here without one, so
+    /// a long write (or a slow disk) cannot fill the blocking pool with queued writers.
+    write_slot: Arc<Semaphore>,
     events: EventBus,
     clock: Arc<dyn Clock>,
 }
@@ -461,6 +464,7 @@ impl Db {
                 pragmas,
                 max_idle_readers: readers,
                 read_slots: Arc::new(Semaphore::new(readers)),
+                write_slot: Arc::new(Semaphore::new(1)),
                 events,
                 clock,
             }),
@@ -548,8 +552,18 @@ impl Db {
         T: Send + 'static,
         F: FnOnce(&mut WriteTx<'_>) -> Result<T, DbError> + Send + 'static,
     {
+        let permit = Arc::clone(&self.inner.write_slot)
+            .acquire_owned()
+            .await
+            .map_err(|_| DbError::Closed)?;
         let db = self.clone();
-        join(tokio::task::spawn_blocking(move || db.write_blocking(f)).await)
+        let result = tokio::task::spawn_blocking(move || {
+            let result = db.write_blocking(f);
+            drop(permit);
+            result
+        })
+        .await;
+        join(result)
     }
 
     /// Runs a read on the calling thread, in one snapshot. Only for threads that may block.

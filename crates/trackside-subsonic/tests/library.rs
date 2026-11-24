@@ -246,6 +246,32 @@ async fn cover_art_missing_is_404_with_error_70() -> TestResult {
 }
 
 #[tokio::test]
+async fn members_see_only_their_own_now_playing_and_admins_see_all() -> TestResult {
+    let fx = Fixture::start().await?;
+    let id = pid(&fx.halo.id);
+    let now_playing = |key: &str| fx.key_url(key, "getNowPlaying", &[]);
+    fx.ok(&fx.key_url(
+        &fx.admin_key,
+        "scrobble",
+        &[("id", id), ("submission", "false")],
+    ))
+    .await?;
+    let member = fx.ok(&now_playing(&fx.member_key)).await?;
+    assert!(ids_in(&member["nowPlaying"]["entry"]).is_empty());
+    fx.ok(&fx.tracks_url(
+        "scrobble",
+        &[("id", id), ("submission", "false")],
+        true,
+    ))
+    .await?;
+    let member = fx.ok(&now_playing(&fx.member_key)).await?;
+    assert_eq!(ids_in(&member["nowPlaying"]["entry"]), vec![id.to_owned()]);
+    let admin = fx.ok(&now_playing(&fx.admin_key)).await?;
+    assert_eq!(ids_in(&admin["nowPlaying"]["entry"]).len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
 async fn scrobble_submission_counts_once_per_time() -> TestResult {
     let fx = Fixture::start().await?;
     let id = pid(&fx.halo.id);

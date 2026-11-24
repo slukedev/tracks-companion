@@ -57,6 +57,9 @@ pub const CLOCK_SKEW: Duration = Duration::from_secs(5 * 60);
 pub const STREAMS_PER_USER: usize = 8;
 /// Concurrent transcodes per user.
 pub const TRANSCODES_PER_USER: usize = 3;
+/// Concurrent event streams per user: each holds a connection and a broadcast receiver for as
+/// long as it is open, so one account cannot open them without end.
+pub const EVENT_STREAMS_PER_USER: usize = 16;
 
 /// Why authentication or an auth operation failed.
 #[derive(Debug, thiserror::Error)]
@@ -584,6 +587,7 @@ pub struct Auth {
     legacy_subsonic: AtomicBool,
     setup_token_file: Mutex<Option<PathBuf>>,
     streams: limit::Slots,
+    event_streams: limit::Slots,
     transcodes: limit::Slots,
 }
 
@@ -639,6 +643,7 @@ impl Auth {
             legacy_subsonic: AtomicBool::new(config.legacy_subsonic),
             setup_token_file: Mutex::new(None),
             streams: limit::Slots::new(STREAMS_PER_USER),
+            event_streams: limit::Slots::new(EVENT_STREAMS_PER_USER),
             transcodes: limit::Slots::new(TRANSCODES_PER_USER),
             db,
             config: config.clone(),
@@ -768,6 +773,16 @@ impl Auth {
         self.streams
             .try_take(principal.access.user)
             .ok_or(AuthError::rate_limited(Duration::from_secs(1)))
+    }
+
+    /// Takes one of the user's 16 event-stream slots; the slot frees when the stream ends.
+    pub fn event_stream_slot(
+        &self,
+        principal: &Principal,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit, AuthError> {
+        self.event_streams
+            .try_take(principal.access.user)
+            .ok_or(AuthError::rate_limited(Duration::from_secs(5)))
     }
 
     /// Takes one of the user's 3 transcode slots.
