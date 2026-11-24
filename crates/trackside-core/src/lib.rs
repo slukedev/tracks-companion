@@ -1,6 +1,6 @@
 //! Trackside's core: ids, records, the database and its repositories, delta sync, search,
-//! similarity, configuration, the event bus, and the traits the HTTP crates use to reach the
-//! scanner and the acquirer.
+//! similarity and listen-based shelves, configuration, the event bus, and the traits the HTTP
+//! crates use to reach the scanner and the acquirer.
 //!
 //! SQL lives only here. Other crates call repository functions with a `&Connection` from
 //! [`Db::read`] or a [`WriteTx`] from [`Db::write`].
@@ -14,6 +14,7 @@ pub mod events;
 pub mod ids;
 pub mod ingest;
 pub mod now_playing;
+pub mod recommend;
 pub mod records;
 pub mod repo;
 pub mod search;

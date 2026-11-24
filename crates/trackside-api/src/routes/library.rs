@@ -17,7 +17,9 @@ use trackside_core::repo::enrichment as enrichment_repo;
 use trackside_core::repo::songs::{self, SongFilter};
 use trackside_core::repo::{artists, folders, genres, libraries, lyrics};
 use trackside_core::search::{self, SearchKinds, SearchQuery};
-use trackside_core::{AlbumId, ArtistId, FolderId, LibraryId, PublicId, SongId, similar};
+use trackside_core::{
+    AlbumId, ArtistId, FolderId, LibraryId, PublicId, SongId, recommend, similar,
+};
 
 use super::{annotations, cached_json, enrichment, library_etag, read, songs_with_me};
 use crate::error::{ApiError, ApiResult};
@@ -36,6 +38,9 @@ pub(super) fn routes() -> Router<ApiState> {
         .route("/libraries", get(list_libraries))
         .route("/songs", get(songs_by_ids))
         .route("/songs/random", get(random_songs))
+        .route("/songs/top", get(server_top_songs))
+        .route("/me/on-repeat", get(on_repeat))
+        .route("/me/picks", get(picks))
         .route("/songs/{id}", get(song))
         .route("/songs/{id}/similar", get(similar_songs))
         .route("/songs/{id}/lyrics", get(song_lyrics))
@@ -482,11 +487,19 @@ async fn visible_artist(
     .await
 }
 
+#[derive(Debug, Deserialize)]
+struct SimilarArtistsQuery {
+    count: Option<u32>,
+    /// Only artists in the caller's libraries, chosen before the list is cut to `count`.
+    #[serde(default)]
+    in_library: bool,
+}
+
 async fn similar_artists(
     Authed(principal): Authed<LIBRARY>,
     State(state): State<ApiState>,
     Path(id): Path<String>,
-    Query(query): Query<CountQuery>,
+    Query(query): Query<SimilarArtistsQuery>,
 ) -> ApiResult<Response> {
     let id: ArtistId = path_id(&id)?;
     let count = limit(query.count, 15, 100);
@@ -494,7 +507,11 @@ async fn similar_artists(
     enrichment::look_up(&state, vec![enrichment::artist_target(&seed)]).await;
     let access = principal.access.clone();
     let found = read(&state, move |c| {
-        similar::similar_artists(c, &access, &id, count)
+        if query.in_library {
+            similar::similar_artists_in_library(c, &access, &id, count)
+        } else {
+            similar::similar_artists(c, &access, &id, count)
+        }
     })
     .await?;
     let body = SimilarArtists {
@@ -510,6 +527,85 @@ async fn similar_artists(
             .collect(),
     };
     Ok(json_with(StatusCode::OK, &body))
+}
+
+/// `GET /songs/top`: the most played songs on this server (api.md section 8, Shelves).
+async fn server_top_songs(
+    Authed(principal): Authed<LIBRARY>,
+    State(state): State<ApiState>,
+    Query(query): Query<CountQuery>,
+) -> ApiResult<Response> {
+    let count = limit(query.count, 50, 200);
+    let access = principal.access.clone();
+    let found = read(&state, move |c| recommend::top_songs(c, &access, count)).await?;
+    let songs = songs_with_me(&state, &principal.access, found).await?;
+    Ok(json_with(StatusCode::OK, &Songs { songs }))
+}
+
+/// `GET /me/on-repeat`: the caller's own most played songs lately.
+async fn on_repeat(
+    Authed(principal): Authed<LIBRARY>,
+    State(state): State<ApiState>,
+    Query(query): Query<CountQuery>,
+) -> ApiResult<Response> {
+    let count = limit(query.count, 40, 200);
+    let access = principal.access.clone();
+    let now = state.db.clock().now();
+    let found = read(&state, move |c| {
+        recommend::on_repeat(c, &access, now, count)
+    })
+    .await?;
+    let songs = songs_with_me(&state, &principal.access, found).await?;
+    Ok(json_with(StatusCode::OK, &Songs { songs }))
+}
+
+/// `GET /me/picks`: songs like the caller's favourites that they have not played lately, and
+/// for callers who may request, songs like them the server does not have.
+async fn picks(
+    Authed(principal): Authed<LIBRARY>,
+    State(state): State<ApiState>,
+    Query(query): Query<CountQuery>,
+) -> ApiResult<Response> {
+    let count = limit(query.count, 40, 200);
+    let access = principal.access.clone();
+    let now = state.db.clock().now();
+    let external = sees_external(&state, &principal);
+    let (found, missing) = read(&state, move |c| {
+        let picks = recommend::picks(c, &access, now, count)?;
+        let mut missing: Vec<(String, String)> = Vec::new();
+        if external {
+            for seed in &picks.seeds {
+                for pair in
+                    enrichment_repo::missing_similar(c, &access, &seed.song_key, EXTERNAL_MAX)?
+                {
+                    if !missing.contains(&pair) {
+                        missing.push(pair);
+                    }
+                }
+            }
+            missing.truncate(EXTERNAL_MAX as usize);
+        }
+        Ok((picks, missing))
+    })
+    .await?;
+    let targets: Vec<_> = found
+        .seeds
+        .iter()
+        .flat_map(enrichment::song_targets)
+        .collect();
+    if !targets.is_empty() {
+        // Answers at once from what is stored; the next call has what these lookups find.
+        let state = state.clone();
+        tokio::spawn(async move { enrichment::look_up(&state, targets).await });
+    }
+    let songs = songs_with_me(&state, &principal.access, found.songs).await?;
+    Ok(json_with(
+        StatusCode::OK,
+        &SuggestedSongs {
+            songs,
+            external: suggestions(external, missing),
+        },
+    ))
 }
 
 async fn list_genres(

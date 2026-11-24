@@ -1,5 +1,6 @@
-//! Last.fm suggestions over real HTTP: the key as a sealed, write-only dashboard setting, the
-//! status and test endpoints, and not-yet-owned suggestions only for callers who may request.
+//! Suggestions over real HTTP: the Last.fm key as a sealed, write-only dashboard setting, the
+//! status and test endpoints, not-yet-owned suggestions only for callers who may request, and
+//! every shelf (similar, top songs, On Repeat, picks) answering from local signals without it.
 
 use std::net::SocketAddr;
 use std::path::Path;
@@ -599,5 +600,204 @@ async fn suggestions_not_on_the_server_need_acquisition() -> TestResult {
         assert!(lookups.contains(&Target::song("Creep", "Radiohead")));
         assert!(lookups.contains(&Target::artist("Radiohead")));
     }
+    Ok(())
+}
+
+/// Two albums of one genre and a third of another, no Last.fm data.
+fn plain_library(test: &TestDb) -> Result<Vec<SongId>, Box<dyn std::error::Error>> {
+    let library = test.add_library("Music", Path::new("/music"))?;
+    let mut files = Vec::new();
+    for (artist, album, year, genre, titles) in [
+        (
+            "Radiohead",
+            "OK Computer",
+            1997,
+            "Rock",
+            ["Airbag", "Paranoid Android", "Lucky"],
+        ),
+        (
+            "Blur",
+            "Blur",
+            1997,
+            "Rock",
+            ["Beetlebum", "Song 2", "M.O.R."],
+        ),
+        (
+            "Portishead",
+            "Dummy",
+            1994,
+            "Trip Hop",
+            ["Roads", "Glory Box", "Numb"],
+        ),
+    ] {
+        for title in titles {
+            let mut file = scanned(&format!("{title}.flac"), title, artist, Some(album));
+            file.tags.year = Some(year);
+            file.tags.genres = vec![genre.to_owned()];
+            files.push(file);
+        }
+    }
+    Ok(test
+        .ingest(library.key, &files)?
+        .iter()
+        .map(|r| r.song().clone())
+        .collect())
+}
+
+fn song_titles(body: &Value) -> Vec<String> {
+    body["songs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| s["title"].as_str().map(str::to_owned))
+        .collect()
+}
+
+async fn listen(
+    server: &Server,
+    key: &str,
+    plays: &[(&SongId, &str)],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let listens: Vec<Value> = plays
+        .iter()
+        .map(|(song, at)| json!({"client_listen_id": format!("{song}-{at}"), "song_id": song.to_string(), "started_at": at}))
+        .collect();
+    let response = server
+        .http
+        .post(server.url("/listens"))
+        .bearer_auth(key)
+        .json(&json!({ "listens": listens }))
+        .send()
+        .await?;
+    assert_eq!(response.status(), 200);
+    Ok(())
+}
+
+#[tokio::test]
+async fn every_shelf_answers_without_last_fm() -> TestResult {
+    let server = start(Arc::new(FakeAcquireControl::new()), false).await?;
+    server.setup_admin().await?;
+    let key = server.device_key().await?;
+    let ids = plain_library(&server.test)?;
+    let (airbag, paranoid, roads) = (&ids[0], &ids[1], &ids[6]);
+
+    let similar = get_json(&server, &key, &format!("/songs/{paranoid}/similar")).await?;
+    let found = song_titles(&similar);
+    assert_eq!(&found[..2], ["Airbag", "Lucky"], "{found:?}");
+    assert!(found.contains(&String::from("Song 2")), "{found:?}");
+    let song = get_json(&server, &key, &format!("/songs/{paranoid}")).await?;
+    let radiohead = song["artist_id"].as_str().ok_or("no artist id")?.to_owned();
+    let artists = get_json(&server, &key, &format!("/artists/{radiohead}/similar")).await?;
+    assert_eq!(artists["artists"][0]["name"], "Blur", "{artists}");
+    let top = get_json(&server, &key, &format!("/artists/{radiohead}/top-songs")).await?;
+    assert_eq!(song_titles(&top).len(), 3);
+
+    assert_eq!(
+        get_json(&server, &key, "/songs/top").await?,
+        json!({"songs": []})
+    );
+    assert_eq!(
+        get_json(&server, &key, "/me/on-repeat").await?,
+        json!({"songs": []})
+    );
+    let picks = get_json(&server, &key, "/me/picks").await?;
+    assert!(!song_titles(&picks).is_empty(), "{picks}");
+    assert!(picks.get("external").is_none());
+
+    listen(
+        &server,
+        &key,
+        &[
+            (roads, "2026-11-14T08:00:00.000Z"),
+            (roads, "2026-11-13T08:00:00.000Z"),
+            (airbag, "2026-11-14T08:05:00.000Z"),
+        ],
+    )
+    .await?;
+    let on_repeat = get_json(&server, &key, "/me/on-repeat?count=10").await?;
+    assert_eq!(song_titles(&on_repeat), ["Roads"]);
+    assert_eq!(on_repeat["songs"][0]["me"]["play_count"], 2);
+    let top = get_json(&server, &key, "/songs/top").await?;
+    assert_eq!(song_titles(&top), ["Roads", "Airbag"]);
+    let picks = get_json(&server, &key, "/me/picks").await?;
+    let found = song_titles(&picks);
+    assert!(found.contains(&String::from("Glory Box")), "{found:?}");
+    assert!(
+        !found.contains(&String::from("Roads")),
+        "played lately: {found:?}"
+    );
+    assert!(
+        !found.contains(&String::from("Airbag")),
+        "played lately: {found:?}"
+    );
+    let lookups = server.enrich.lookups.lock().unwrap().clone();
+    assert!(
+        lookups.contains(&Target::artist("Portishead")),
+        "{lookups:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn picks_merge_last_fm_and_in_library_artists_come_first_when_asked() -> TestResult {
+    let server = start(Arc::new(OpenAcquisition), false).await?;
+    server.setup_admin().await?;
+    let key = server.device_key().await?;
+    let creep = seed(&server.test)?;
+    listen(&server, &key, &[(&creep, "2026-11-14T08:00:00.000Z")]).await?;
+    let picks = get_json(&server, &key, "/me/picks").await?;
+    assert_eq!(song_titles(&picks), ["Roads"]);
+    assert_eq!(
+        picks["external"],
+        json!([{"title": "Glory Box", "artist": "Portishead"}])
+    );
+
+    let elsewhere: Vec<Related> = (0..5)
+        .map(|i| Related {
+            title: String::new(),
+            artist: format!("Nobody Here {i}"),
+            score: 0.95,
+        })
+        .collect();
+    server.test.db.write_blocking(move |tx| {
+        store::store_artist(
+            tx,
+            "radiohead",
+            "Radiohead",
+            &ArtistFacts {
+                similar: [
+                    elsewhere,
+                    vec![Related {
+                        title: String::new(),
+                        artist: String::from("Portishead"),
+                        score: 0.5,
+                    }],
+                ]
+                .concat(),
+                top: Vec::new(),
+                bio: None,
+            },
+            86_400_000,
+        )
+    })?;
+    let song: Value = get_json(&server, &key, &format!("/songs/{creep}")).await?;
+    let artist = song["artist_id"].as_str().ok_or("no artist id")?.to_owned();
+    let all = get_json(&server, &key, &format!("/artists/{artist}/similar?count=3")).await?;
+    assert!(
+        all["artists"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .all(|a| a["in_library"] == false),
+        "{all}"
+    );
+    let ours = get_json(
+        &server,
+        &key,
+        &format!("/artists/{artist}/similar?count=3&in_library=true"),
+    )
+    .await?;
+    assert_eq!(ours["artists"].as_array().map(Vec::len), Some(1), "{ours}");
+    assert_eq!(ours["artists"][0]["name"], "Portishead");
     Ok(())
 }

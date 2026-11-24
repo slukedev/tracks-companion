@@ -743,9 +743,12 @@ one library.
 | `GET /artists?limit&cursor` | `{"artists": [Artist], "next_cursor"}` by sort name |
 | `GET /artists/{id}` | `{"artist": Artist, "albums": [Album], "appears_on": [Album], "top_songs": [Song], "bio"?}` |
 | `GET /artists/{id}/top-songs?count=20` | `{"songs": [Song], "external"?: [Suggestion]}`, ranked below |
-| `GET /artists/{id}/similar?count=15` | `{"artists": [{"artist": Artist?, "name", "identity", "score", "in_library": bool}]}` |
+| `GET /artists/{id}/similar?count=15&in_library` | `{"artists": [{"artist": Artist?, "name", "identity", "score", "in_library": bool}]}`; `in_library=true` keeps only artists in the caller's libraries, chosen before the list is cut to `count` |
 | `GET /songs/{id}/similar?count=20` | `{"songs": [Song], "external"?: [Suggestion]}`, ranked below |
 | `GET /songs/random?count=40&genre&year_from&year_to` | `{"songs": [Song]}` |
+| `GET /songs/top?count=50` (max 200) | `{"songs": [Song]}`, the most played songs on this server (Shelves below) |
+| `GET /me/on-repeat?count=40` (max 200) | `{"songs": [Song]}`, the caller's own most played songs lately (Shelves below) |
+| `GET /me/picks?count=40` (max 200) | `{"songs": [Song], "external"?: [Suggestion]}`, songs like the caller's favourites (Shelves below) |
 | `GET /genres` | `{"genres": [{"name", "song_count", "album_count"}]}` |
 | `GET /songs/{id}/lyrics` | section 11 |
 | `GET /folders/{id}` | `{"folder": {"id","name","parent_id"}, "folders": [...], "songs": [Song]}` |
@@ -755,8 +758,11 @@ plays), `random`, `alphabetical`, `alphabetical_by_artist`, `starred`, `year`, `
 (caller's rating). `random` ignores `cursor` and takes `seed` for repeatable pages.
 
 Suggestions (similar songs, similar artists, top songs, the artist's `bio`) come from local
-signals (shared credits, genres, decade, co-listening in this server's listens, co-occurrence in
-playlists) and, when the admin sets a Last.fm API key (section 16, Suggestions), from Last.fm. The
+signals (shared credits, the same album, genres, decade, co-listening in this server's listens,
+co-occurrence in playlists) and, when the admin sets a Last.fm API key (section 16, Suggestions),
+from Last.fm. Similar artists use shared credits, co-listening and shared genres, so a library
+without genre tags still gets them once people listen. Everything but `bio` answers without the
+key; Last.fm data, once stored, is merged into the same ranking. The
 key is one for the whole server: nobody needs a Last.fm account, and the server only calls Last.fm's
 public read methods with artist and track names. Last.fm data is fetched in the background,
 most played artists and songs first, and kept for 30 days. A request for something not looked up
@@ -772,6 +778,34 @@ none.
 objects `{"title", "artist"}`, best first, at most 20. It is present only when `/me` has
 `features.acquisition` and the credential has the `request` scope, and then may be empty. A
 client offers to request one with `POST /acquisitions` (section 15.3). Nothing names the source.
+
+#### Shelves
+
+Three lists made from listens (section 12) and the library alone, for a client's home shelves.
+Each holds library songs the caller can see, one per `song_key`, each with the caller's `me`.
+Listens sent by title and artist without `song_id` count toward the song with the same
+`song_key`.
+
+- **On Repeat**, `GET /me/on-repeat`: songs the caller played at least twice in the last 30 days,
+  best first, each play counting less as it ages (half as much after 10 days). Only the caller's
+  own listens; empty until they have some.
+- **Top songs**, `GET /songs/top`: the most played songs on this server. The caller's plays count
+  twice. Other people's plays of a song count only when at least two people other than the
+  caller played it, so the list never shows what one other person plays. Ties go to the most
+  recently played. Empty while nobody has played anything.
+- **Picks**, `GET /me/picks`: songs like the ones the caller plays, by way of similar songs
+  (above). It starts from up to 5 songs by different artists: the caller's most played in the
+  last 90 days, then their starred songs, then this server's top songs, then songs picked at
+  random, so a new server and a new listener get picks too. It takes from each in turn and leaves
+  out the starting songs and anything the caller played in the last 30 days. `external` is as
+  above, from Last.fm's similar songs for the starting songs; lookups for them start in the
+  background and the answer never waits for Last.fm.
+
+A client shows On Repeat from `/me/on-repeat`, a Most Played shelf from `/songs/top`, picks and
+new music from `/me/picks`, songs like one song from `/songs/{id}/similar`, and artists to
+explore from `/artists/{id}/similar` (with `in_library=true` when it can show only artists the
+server has). Fixtures: `on-repeat.json`, `top-songs.json`, `picks.json`, `similar-songs.json`,
+`similar-artists.json`.
 
 ---
 
@@ -1656,10 +1690,10 @@ a measured zero. Responses are `Cache-Control: no-store`. Out-of-range parameter
 | `getMusicDirectory` | yes | real folders (folder ids `f...`), plus artist and album ids for clients that pass those |
 | `getGenres` | yes | |
 | `getArtists`, `getArtist`, `getAlbum`, `getSong` | yes | `musicFolderId` honoured |
-| `getArtistInfo`, `getArtistInfo2` | yes | similar artists from local signals and Last.fm; `biography` from Last.fm; no images |
+| `getArtistInfo`, `getArtistInfo2` | yes | similar artists in the caller's libraries, from local signals and Last.fm, chosen before `count` cuts the list; `biography` from Last.fm; no images |
 | `getAlbumInfo`, `getAlbumInfo2` | yes | notes empty unless enrichment |
 | `getSimilarSongs`, `getSimilarSongs2` | yes | `id` may be a song, album or artist id (Tracks passes a song id) |
-| `getTopSongs` | yes | by artist name, as the spec says |
+| `getTopSongs` | yes | by artist name, as the spec says; ranked as the native artist top songs (section 8) |
 | `getTopSongs` with `id` | yes | `topSongsByArtistId` extension |
 | `getAlbumList`, `getAlbumList2` | yes | all types: random, newest, highest, frequent, recent, alphabeticalByName, alphabeticalByArtist, starred, byYear, byGenre |
 | `getRandomSongs`, `getSongsByGenre` | yes | |

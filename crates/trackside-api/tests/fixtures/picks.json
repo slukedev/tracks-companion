@@ -1,0 +1,84 @@
+{
+  "external": [
+    {
+      "artist": "Beyoncé",
+      "title": "Irreplaceable"
+    }
+  ],
+  "songs": [
+    {
+      "added_at": "2026-10-15T09:30:00.000Z",
+      "album": "I Am... Sasha Fierce",
+      "album_artist": "Beyoncé",
+      "album_id": "a3pqh4wnvzkjak75rxbft",
+      "artist": "Beyoncé",
+      "artist_id": "rgtm6gw8kzkjyq611mzzp",
+      "artists": [
+        {
+          "id": "rgtm6gw8kzkjyq611mzzp",
+          "name": "Beyoncé",
+          "role": "main"
+        }
+      ],
+      "artwork_id": "ca81rcgy3d9pfg6saekwd",
+      "disc_number": 1,
+      "duration_ms": 193200,
+      "format": {
+        "bit_depth": 16,
+        "bitrate_kbps": 998,
+        "channels": 2,
+        "codec": "flac",
+        "container": "flac",
+        "content_type": "audio/flac",
+        "lossless": true,
+        "sample_rate": 44100,
+        "size": 24100000
+      },
+      "genres": [
+        "Pop"
+      ],
+      "has_lyrics": false,
+      "id": "skskbcsede1n6haz492vm",
+      "library_id": "ldhmwjvv1e9320kfeh1mp",
+      "missing": false,
+      "release_date": "2008-11-12",
+      "song_key": "single ladies (put a ring on it)\u001fbeyonce",
+      "title": "Single Ladies (Put a Ring on It)",
+      "track_number": 1,
+      "updated_at": "2026-10-15T09:30:00.000Z",
+      "year": 2008
+    },
+    {
+      "added_at": "2026-10-15T09:30:00.000Z",
+      "artist": "Queen",
+      "artist_id": "rr9ggkqfxn21ftg3fy1vy",
+      "artists": [
+        {
+          "id": "rr9ggkqfxn21ftg3fy1vy",
+          "name": "Queen",
+          "role": "main"
+        }
+      ],
+      "disc_number": 1,
+      "duration_ms": 209000,
+      "format": {
+        "bitrate_kbps": 256,
+        "channels": 2,
+        "codec": "aac",
+        "container": "m4a",
+        "content_type": "audio/mp4",
+        "lossless": false,
+        "sample_rate": 44100,
+        "size": 6700000
+      },
+      "has_lyrics": false,
+      "id": "sqfnw07xdpvnbah038cz8",
+      "library_id": "ldhmqjvv1b5320gf8gstm",
+      "missing": false,
+      "song_key": "don't stop me now\u001fqueen",
+      "title": "Don't Stop Me Now",
+      "track_number": 12,
+      "updated_at": "2026-10-15T09:30:00.000Z"
+    }
+  ]
+}

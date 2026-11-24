@@ -753,3 +753,50 @@ async fn mp3_transcodes_stream_then_serve_ranges_from_the_cache() -> TestResult 
     assert_eq!(fx.count("SELECT count(*) FROM listens").await?, 0);
     Ok(())
 }
+
+/// Last.fm's similar artists the server does not have must not push out the ones it has:
+/// `similarArtist` only lists artists in the caller's libraries.
+#[tokio::test]
+async fn similar_artists_in_the_library_are_not_crowded_out() -> TestResult {
+    use repo::enrichment::{ArtistFacts, Related};
+
+    let fx = Fixture::start().await?;
+    let related = |artist: &str, score: f64| Related {
+        title: String::new(),
+        artist: artist.to_owned(),
+        score,
+    };
+    let mut similar: Vec<Related> = (0..5)
+        .map(|i| related(&format!("Nobody Here {i}"), 0.95))
+        .collect();
+    similar.push(related("Florence + the Machine", 0.5));
+    fx.server.test.db.write_blocking(move |tx| {
+        repo::enrichment::store_artist(
+            tx,
+            "beyonce",
+            "Beyoncé",
+            &ArtistFacts {
+                similar,
+                top: Vec::new(),
+                bio: None,
+            },
+            86_400_000,
+        )
+    })?;
+    let artist = fx.halo.artist.as_ref().ok_or("no artist")?;
+    let info = fx
+        .ok(&fx.tracks_url(
+            "getArtistInfo2",
+            &[("id", pid(artist)), ("count", "3")],
+            true,
+        ))
+        .await?;
+    let names: Vec<&str> = info["artistInfo2"]["similarArtist"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|a| a["name"].as_str())
+        .collect();
+    assert_eq!(names, ["Florence + the Machine"]);
+    Ok(())
+}

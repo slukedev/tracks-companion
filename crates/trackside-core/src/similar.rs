@@ -34,6 +34,9 @@ mod weight {
     pub const DECADE: f64 = 0.5;
     pub const PLAYLIST: f64 = 1.5;
     pub const LISTENED_NEAR: f64 = 1.0;
+    /// On the seed's album. With [`SAME_ALBUM`] it nets below other albums by the same artist,
+    /// and lets a compilation's other artists in as a last resort.
+    pub const ALBUM: f64 = 1.0;
     pub const SAME_ALBUM: f64 = -1.5;
     /// The caller starred the candidate.
     pub const STARRED: f64 = 1.5;
@@ -155,6 +158,16 @@ fn song_signals(c: &Connection, seed: &Seed) -> Result<HashMap<i64, f64>, DbErro
             )?,
         );
     }
+    if let Some(album) = seed.album {
+        add(
+            &mut scores,
+            scored(
+                c,
+                "SELECT id, ?2 FROM songs WHERE album_id = ?1 LIMIT ?3",
+                &[&album, &weight::ALBUM, &PER_SIGNAL],
+            )?,
+        );
+    }
     add(
         &mut scores,
         scored(
@@ -211,7 +224,8 @@ fn song_signals(c: &Connection, seed: &Seed) -> Result<HashMap<i64, f64>, DbErro
     Ok(scores)
 }
 
-/// Library songs only, best first: songs by the same and related artists, songs other users
+/// Library songs only, best first: songs by the same and related artists, songs on the same
+/// album, songs other users
 /// listened to around it or put in the same playlists, songs sharing its genres and decade, and
 /// stored enrichment data, each candidate raised by the caller's own stars and plays.
 /// `NotFound` when the seed is not visible.
@@ -329,6 +343,31 @@ fn artist_signals(
         }
     }
     {
+        // Artists people played within half an hour of the seed's songs, counted over everyone's
+        // listens: an aggregate, never one person's history.
+        let mut statement = c.prepare_cached(
+            "SELECT r.identity, r.name, count(*) FROM (
+                 SELECT l.user_id, l.started_at FROM songs s
+                 JOIN listens l ON l.song_pid = s.pid
+                 WHERE s.artist_id = ?1 ORDER BY l.started_at DESC LIMIT 200) l1
+             JOIN listens l2 ON l2.user_id = l1.user_id
+                 AND l2.started_at BETWEEN l1.started_at - ?2 AND l1.started_at + ?2
+                 AND l2.song_pid IS NOT NULL
+             JOIN songs s2 ON s2.pid = l2.song_pid
+             JOIN artists r ON r.id = s2.artist_id
+             WHERE r.id != ?1 GROUP BY r.id ORDER BY 3 DESC LIMIT 50",
+        )?;
+        let mut rows = statement.query(rusqlite::params![seed_key, LISTENED_NEAR_MS])?;
+        while let Some(row) = rows.next()? {
+            let together: i64 = row.get(2)?;
+            merge(
+                row.get(0)?,
+                row.get(1)?,
+                (together as f64 / 5.0).min(1.0) * 0.5,
+            );
+        }
+    }
+    {
         let genres: Vec<i64> = c
             .prepare_cached(
                 "SELECT sg.genre_id FROM song_artists sa JOIN song_genres sg ON sg.song_id = sa.song_id
@@ -385,7 +424,8 @@ fn artist_affinity(
 }
 
 /// Similar artists from stored data (enrichment and earlier local results) and from local
-/// signals: artists credited together, and artists sharing the seed's main genres, raised a
+/// signals: artists credited together, artists played around the seed's songs, and artists
+/// sharing the seed's main genres, raised a
 /// little by the caller's stars and plays. Artists not in the caller's libraries are included
 /// with `in_library: false`. `NotFound` when the seed is not visible.
 pub fn similar_artists(
@@ -394,7 +434,31 @@ pub fn similar_artists(
     seed: &ArtistId,
     count: u32,
 ) -> Result<Vec<SimilarArtist>, DbError> {
-    let count = count.clamp(1, 100);
+    let mut out = ranked_artists(c, a, seed)?;
+    out.truncate(count.clamp(1, 100) as usize);
+    Ok(out)
+}
+
+/// [`similar_artists`] in the caller's libraries only, chosen before the list is cut to
+/// `count`, so artists from elsewhere cannot crowd them out.
+pub fn similar_artists_in_library(
+    c: &Connection,
+    a: &Access,
+    seed: &ArtistId,
+    count: u32,
+) -> Result<Vec<SimilarArtist>, DbError> {
+    let mut out = ranked_artists(c, a, seed)?;
+    out.retain(|s| s.in_library);
+    out.truncate(count.clamp(1, 100) as usize);
+    Ok(out)
+}
+
+/// Every similar artist, best first.
+fn ranked_artists(
+    c: &Connection,
+    a: &Access,
+    seed: &ArtistId,
+) -> Result<Vec<SimilarArtist>, DbError> {
     let Some((seed_key, seed_artist)) =
         repo::artists::load_keyed(c, a, None, "r.pid = ?1", &[seed])?
             .into_iter()
@@ -437,6 +501,5 @@ pub fn similar_artists(
             .then(b.in_library.cmp(&a.in_library))
             .then_with(|| a.identity.cmp(&b.identity))
     });
-    out.truncate(count as usize);
     Ok(out)
 }

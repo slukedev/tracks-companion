@@ -1125,15 +1125,27 @@ Last.fm, and sends nothing about users.
   latest error is shown in the dashboard until the next success.
 - **On demand.** Similar songs, top songs, similar artists and the Subsonic equivalents ask for
   their seed song and artist first in line and wait at most 1.5 s (`ON_DEMAND_WAIT`), then
-  answer from what is stored. The artist page never waits.
+  answer from what is stored. The artist page and picks never wait; picks start lookups for
+  their starting songs in the background.
 - **Ranking.** `core::similar` adds Last.fm rows to the local signals: a similar song is worth
   4 times its match, a song by a similar artist 2 times. The caller's own star (1.5) and plays
   (0.3 each, up to 5) raise a candidate, so the same seed gives each user their own order.
   Similar artists get up to 0.2 from the caller's star and plays. Top songs score plays on the
   server, the caller's plays again, 5 for the caller's star and `20 / (1 + rank)` for Last.fm's
   rank.
+- **Without Last.fm.** Every list but the biography answers from local signals alone. Similar
+  songs: same artist (3), co-credited artists (1.5), playlists (1.5 each, up to 3), listened
+  within 30 minutes of the seed by the same person (1 each, up to 3), each shared genre (1), the
+  same album (1, less 1.5 for being the same album), the same decade (0.5). Similar artists:
+  shared credits (up to 0.7), co-listening (up to 0.5), shared main genres (up to 0.3).
+- **Shelves.** `core::recommend` builds On Repeat (the caller's own listens in 30 days, two plays
+  or more, halving every 10 days), server top songs (from `play_stats`; other people's plays
+  count only for a song at least two other people played) and picks (similar songs for up to 5
+  seeds by different artists: the caller's plays in 90 days, their stars, the server's top
+  songs, then random songs; leaving out what they played in 30 days). Listens without a song id
+  are matched to a visible song by `song_key`. See api.md section 8, Shelves.
 - **Access.** Library results come from repository reads filtered by `Principal.libraries`, as
-  everywhere. Songs Last.fm suggests that the caller cannot see are returned only by name, in
+  everywhere. Co-listening signals add up everyone's listens and never name a listener. Songs Last.fm suggests that the caller cannot see are returned only by name, in
   the native API's `external` list, and only to callers with `features.acquisition` and the
   `request` scope. Nothing on the wire names Last.fm.
 

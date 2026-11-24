@@ -301,10 +301,11 @@ pub async fn artist_info(call: &Call<'_>, element: &'static str) -> Result<Reply
     look_up(call, vec![artist_target(&artist)]).await;
     let node = call
         .read(move |c, a| {
-            let similar: Vec<Artist> = similar::similar_artists(c, a, &artist.id, count)?
-                .into_iter()
-                .filter_map(|s| s.artist)
-                .collect();
+            let similar: Vec<Artist> =
+                similar::similar_artists_in_library(c, a, &artist.id, count)?
+                    .into_iter()
+                    .filter_map(|s| s.artist)
+                    .collect();
             let refs: Vec<&Artist> = similar.iter().collect();
             let notes = notes(c, a.user, &[], &[], &refs)?;
             let mut node = Node::new();
@@ -395,7 +396,7 @@ fn similar_to(c: &Connection, a: &Access, id: AnyId, count: u32) -> Result<Vec<S
             }
             let mut artists = vec![id.clone()];
             artists.extend(
-                similar::similar_artists(c, a, &id, 10)?
+                similar::similar_artists_in_library(c, a, &id, 10)?
                     .into_iter()
                     .filter_map(|s| s.artist.map(|ar| ar.id)),
             );
