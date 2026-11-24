@@ -506,6 +506,7 @@ pub async fn run_with(
         request_timeout: config.server.request_timeout,
         playback: Arc::clone(local.playback()),
         hsts: matches!(config.tls.mode, TlsMode::Acme | TlsMode::Files),
+        base_path: base_path.clone(),
     };
     let inner = Router::new()
         .merge(trackside_api::router(api))

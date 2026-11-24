@@ -113,6 +113,8 @@ pub struct WebState {
     /// Whether responses on TLS listeners carry `Strict-Transport-Security`: with a
     /// certificate browsers trust (`acme` or `files`), never a self-signed one.
     pub hsts: bool,
+    /// `server.base_path`, normalised (`""` or `"/music"`), stripped before routes are matched.
+    pub base_path: String,
 }
 
 impl std::fmt::Debug for WebState {
@@ -121,20 +123,32 @@ impl std::fmt::Debug for WebState {
     }
 }
 
-/// Paths whose handlers may legitimately take longer than the request timeout before the
-/// first byte: downloads that wait for a transcode, uploads, backups.
-fn exempt_from_timeout(path: &str) -> bool {
-    [
-        "/download",
-        "/uploads",
-        "/backups/",
-        "/rest/download",
-        "/rest/stream",
-        "/events",
-        "/listens/export",
-    ]
-    .iter()
-    .any(|p| path.contains(p))
+/// Routes whose handlers may legitimately take longer than the request timeout before the
+/// first byte: downloads that wait for a transcode, uploads, backups, the event stream. Matched
+/// exactly, segment by segment after the base path, so no other route opts out by having one
+/// of these words somewhere in its path.
+fn exempt_from_timeout(base_path: &str, path: &str) -> bool {
+    let Some(rest) = path.strip_prefix(base_path) else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix('/') else {
+        return false;
+    };
+    let segments: Vec<&str> = rest.split('/').collect();
+    let one = |s: &str| !s.is_empty();
+    match segments.as_slice() {
+        ["api", "v1", "songs", id, "download"] => one(id),
+        ["api", "v1", "uploads"] | ["api", "v1", "events"] | ["api", "v1", "me", "listens", "export"] => {
+            true
+        }
+        ["api", "v1", "uploads", id] | ["api", "v1", "uploads", id, "complete"] => one(id),
+        ["api", "v1", "admin", "backups", name] => one(name),
+        ["rest", endpoint] => {
+            let name = endpoint.strip_suffix(".view").unwrap_or(endpoint);
+            name.eq_ignore_ascii_case("download") || name.eq_ignore_ascii_case("stream")
+        }
+        _ => false,
+    }
 }
 
 /// Request id, HTTPS marker, timeout, log line and metrics for every request.
@@ -165,7 +179,7 @@ pub async fn context(State(web): State<WebState>, mut request: Request, next: Ne
     request = Request::from_parts(parts, body);
     let media = is_media_path(&path);
     let guard = media.then(|| web.playback.start());
-    let mut response = if exempt_from_timeout(&path) {
+    let mut response = if exempt_from_timeout(&web.base_path, &path) {
         next.run(request).await
     } else {
         match tokio::time::timeout(web.request_timeout, next.run(request)).await {
@@ -604,6 +618,40 @@ pub fn dashboard_router() -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_listed_routes_skip_the_request_timeout() {
+        for path in [
+            "/api/v1/songs/s1/download",
+            "/api/v1/uploads",
+            "/api/v1/uploads/u1",
+            "/api/v1/uploads/u1/complete",
+            "/api/v1/admin/backups/trackside-1.db",
+            "/api/v1/events",
+            "/api/v1/me/listens/export",
+            "/rest/stream",
+            "/rest/download.view",
+            "/rest/Stream.view",
+        ] {
+            assert!(exempt_from_timeout("", path), "{path}");
+            assert!(exempt_from_timeout("/music", &format!("/music{path}")), "{path}");
+        }
+        for path in [
+            "/api/v1/search/download",
+            "/api/v1/songs/s1/download/extra",
+            "/api/v1/playlists/events",
+            "/api/v1/admin/backups",
+            "/api/v1/admin/events",
+            "/rest/getSong.view",
+            "/rest/stream/extra",
+            "/dashboard/download",
+            "/x/api/v1/events",
+        ] {
+            assert!(!exempt_from_timeout("", path), "{path}");
+        }
+        assert!(!exempt_from_timeout("/music", "/api/v1/events"));
+        assert!(!exempt_from_timeout("/music", "/musicapi/v1/events"));
+    }
 
     #[test]
     fn dashboard_paths_map_to_their_pages() {
