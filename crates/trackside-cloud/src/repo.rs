@@ -23,13 +23,24 @@ pub(crate) fn seq(c: &Connection, user: UserKey) -> Result<i64, DbError> {
     )
 }
 
+/// Moves the user's seq on, and counts the change in the server-wide `cloud_meta.issued`.
 pub(crate) fn set_seq(c: &Connection, user: UserKey, seq: i64) -> Result<(), DbError> {
     c.prepare_cached(
         "INSERT INTO cloud_state (user_id, seq) VALUES (?1, ?2)
          ON CONFLICT (user_id) DO UPDATE SET seq = excluded.seq",
     )?
     .execute(params![user, seq])?;
+    c.prepare_cached("UPDATE cloud_meta SET issued = issued + 1 WHERE id = 1")?
+        .execute([])?;
     Ok(())
+}
+
+/// How many seq changes were ever committed, across users.
+pub(crate) fn issued(c: &Connection) -> Result<i64, DbError> {
+    Ok(c.prepare_cached("SELECT issued FROM cloud_meta WHERE id = 1")?
+        .query_row([], |row| row.get(0))
+        .optional()?
+        .unwrap_or(0))
 }
 
 pub(crate) fn pruned_at(c: &Connection, user: UserKey) -> Result<Millis, DbError> {
@@ -246,17 +257,20 @@ pub(crate) fn after(
 }
 
 /// The live records whose parent is `parent` (a playlist's entries).
+/// Up to `limit` live records under `parent`.
 pub(crate) fn live_children(
     c: &Connection,
     user: UserKey,
     entity: Entity,
     parent: &str,
+    limit: usize,
 ) -> Result<Vec<Stored>, DbError> {
     let mut statement = c.prepare_cached(&format!(
         "SELECT {COLUMNS} FROM cloud_items
-         WHERE user_id = ?1 AND entity = ?2 AND parent = ?3 AND deleted_at IS NULL"
+         WHERE user_id = ?1 AND entity = ?2 AND parent = ?3 AND deleted_at IS NULL LIMIT ?4"
     ))?;
-    let rows = statement.query_map(params![user, entity.as_str(), parent], map_row)?;
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+    let rows = statement.query_map(params![user, entity.as_str(), parent, limit], map_row)?;
     rows.map(|row| finish(row?)).collect()
 }
 

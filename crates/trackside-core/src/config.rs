@@ -253,6 +253,9 @@ pub struct ServerConfig {
     /// ranges, such as a LAN's global IPv6 prefix: their clients may send passwords and keys
     /// over plain HTTP.
     pub local_networks: Vec<ipnet::IpNet>,
+    /// Whether 100.64.0.0/10 counts as local. Tailscale gives out addresses there, but so
+    /// do some ISPs for carrier-grade NAT, where it is the internet.
+    pub tailscale_is_local: bool,
     pub max_connections: u32,
     #[serde(deserialize_with = "duration", serialize_with = "ser::duration")]
     pub header_timeout: Duration,
@@ -628,6 +631,7 @@ impl Config {
                 public_urls: Vec::new(),
                 trusted_proxies: Vec::new(),
                 local_networks: Vec::new(),
+                tailscale_is_local: true,
                 max_connections: 1024,
                 header_timeout: Duration::from_secs(30),
                 request_timeout: Duration::from_secs(60),

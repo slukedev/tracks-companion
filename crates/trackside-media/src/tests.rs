@@ -944,6 +944,41 @@ async fn a_complete_hls_run_caches_a_file_transcode_with_its_edit_list() -> Test
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_run_still_finishing_after_its_last_segment_is_not_stopped() -> TestResult {
+    let f = fixture()?;
+    f.fake.hold();
+    f.fake.set_hls(FakeHls::ProduceThenLinger(3));
+    let song = hls_song(&f, "a.flac", 15_000)?;
+    let job = f
+        .media
+        .start_hls(
+            HlsInput::File(song.clone()),
+            Profile::Aac256,
+            Priority::Interactive,
+            HlsOwner::default(),
+        )
+        .await?;
+    let seg = f
+        .media
+        .hls_part(&job, HlsPart::Segment(2), &get(&[]))
+        .await?;
+    assert_eq!(body(seg).await?, &b"segment 2"[..]);
+    // Many polls see every segment while the encoder is still running.
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    f.fake.release(tokio::sync::Semaphore::MAX_PERMITS / 2);
+    let mut cached = None;
+    for _ in 0..100 {
+        cached = f.media.cached(&song, Profile::Aac256).await;
+        if cached.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    cached.ok_or("the finished run was not cached")?;
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
 async fn idle_hls_jobs_expire() -> TestResult {
     let f = fixture()?;
     f.fake.set_hls(FakeHls::Manual);

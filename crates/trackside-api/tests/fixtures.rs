@@ -674,6 +674,8 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             valid: true,
             role: String::from("member"),
             expires_at: at(7 * 86_400).into(),
+            invited_by: Some(String::from("Luke")),
+            note: Some(String::from("For Mum")),
         },
     )?;
     put("user.json", &map::user(&s.user))?;
@@ -1424,6 +1426,7 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
                 bytes: 790_000_000,
                 has_key: true,
             }],
+            next_at: Some(at(64_800).into()),
         },
     )?;
     let settings: wire::admin::Settings = BTreeMap::from([

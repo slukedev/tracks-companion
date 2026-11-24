@@ -3,11 +3,17 @@
 //!
 //! The database keeps the epoch (`cloud.epoch`) and an instance token (`cloud.instance`) that
 //! changes at every start and after every backup. A sidecar file next to the database
-//! (`<db>.cloud-instance`) holds the token the server last wrote. At start, a database whose
-//! token differs from the sidecar's is a different copy (a restored backup, a file put in
-//! place by hand) and gets a new epoch; every client then pulls again from an empty cursor.
+//! (`<db>.cloud-instance`) holds the token the server last wrote, and the highest count of
+//! changes (`cloud_meta.issued`) it has seen committed. At start, a database whose token
+//! differs from the sidecar's is a different copy (a restored backup, a file put in place by
+//! hand), and one whose count is below the sidecar's was rolled back underneath the server
+//! (a Litestream restore keeps the token): either gets a new epoch, and every client then
+//! pulls again from an empty cursor. Restoring the whole data folder restores the sidecar
+//! too, so that restore must delete the sidecar; the ops docs say so.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use rusqlite::Connection;
 use trackside_core::repo::settings;
@@ -69,10 +75,29 @@ fn sidecar(db: &Db) -> Option<PathBuf> {
     })
 }
 
-fn write_sidecar(path: &Path, token: &str) -> std::io::Result<()> {
+/// What a sidecar holds: the instance token and the highest `issued` count seen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Sidecar {
+    token: String,
+    issued: i64,
+}
+
+/// The sidecars this process keeps up to date, by path, and the lock every write takes, so
+/// a token rotated after a backup and a count noted after a push never overwrite each other.
+static SIDECARS: Mutex<Option<HashMap<PathBuf, Sidecar>>> = Mutex::new(None);
+
+fn read_sidecar(path: &Path) -> Option<Sidecar> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut lines = text.lines().map(str::trim);
+    let token = lines.next().filter(|t| !t.is_empty())?.to_owned();
+    let issued = lines.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+    Some(Sidecar { token, issued })
+}
+
+fn write_sidecar(path: &Path, sidecar: &Sidecar) -> std::io::Result<()> {
     let mut partial = path.as_os_str().to_owned();
     partial.push(".partial");
-    std::fs::write(&partial, token)?;
+    std::fs::write(&partial, format!("{}\n{}\n", sidecar.token, sidecar.issued))?;
     std::fs::rename(&partial, path)
 }
 
@@ -85,21 +110,20 @@ pub struct Reconciled {
 }
 
 /// Run once at start, before serving. Gives the database a new epoch when it is not the copy
-/// the server last ran with, then a new instance token.
+/// the server last ran with, or was rolled back, then a new instance token.
 pub fn reconcile(db: &Db) -> Result<Reconciled, DbError> {
     let path = sidecar(db);
-    let on_disk = path
-        .as_ref()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|t| t.trim().to_owned());
+    let mut sidecars = SIDECARS.lock().unwrap_or_else(PoisonError::into_inner);
+    let on_disk = path.as_deref().and_then(read_sidecar);
     let token = fresh();
     let written = token.clone();
-    let reconciled = db.write_blocking(move |tx| {
+    let (reconciled, issued) = db.write_blocking(move |tx| {
         let epoch: Option<String> = settings::get(tx, EPOCH_KEY)?;
         let instance: Option<String> = settings::get(tx, INSTANCE_KEY)?;
+        let issued = crate::repo::issued(tx)?;
         let replaced = match (&on_disk, &instance) {
             (None, None) => false,
-            (Some(file), Some(stored)) => file != stored,
+            (Some(file), Some(stored)) => file.token != *stored || file.issued > issued,
             _ => true,
         };
         let (epoch, new_epoch) = match epoch {
@@ -108,10 +132,12 @@ pub fn reconcile(db: &Db) -> Result<Reconciled, DbError> {
         };
         settings::put(tx, EPOCH_KEY, &epoch)?;
         settings::put(tx, INSTANCE_KEY, &written)?;
-        Ok(Reconciled { epoch, new_epoch })
+        Ok((Reconciled { epoch, new_epoch }, issued))
     })?;
     if let Some(path) = path {
-        write_sidecar(&path, &token)?;
+        let sidecar = Sidecar { token, issued };
+        write_sidecar(&path, &sidecar)?;
+        sidecars.get_or_insert_default().insert(path, sidecar);
     }
     Ok(reconciled)
 }
@@ -122,11 +148,52 @@ pub fn rotate(db: &Db) -> Result<(), DbError> {
     let Some(path) = sidecar(db) else {
         return Ok(());
     };
+    let mut sidecars = SIDECARS.lock().unwrap_or_else(PoisonError::into_inner);
     let token = fresh();
     let written = token.clone();
-    db.write_blocking(move |tx| settings::put(tx, INSTANCE_KEY, &written))?;
-    write_sidecar(&path, &token)?;
+    let issued = db.write_blocking(move |tx| {
+        settings::put(tx, INSTANCE_KEY, &written)?;
+        crate::repo::issued(tx)
+    })?;
+    let known = sidecars.get_or_insert_default();
+    let issued = known.get(&path).map_or(issued, |s| s.issued.max(issued));
+    let sidecar = Sidecar { token, issued };
+    write_sidecar(&path, &sidecar)?;
+    known.insert(path, sidecar);
     Ok(())
+}
+
+/// Run after a write that issued seqs has committed: raises the sidecar's count to what the
+/// database now holds. Only for a database [`reconcile`] has seen; a failure is logged and
+/// costs only the detection of a later rollback.
+pub async fn note_issued(db: &Db) {
+    let Some(path) = sidecar(db) else { return };
+    let tracked = SIDECARS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+        .is_some_and(|known| known.contains_key(&path));
+    if !tracked {
+        return;
+    }
+    let issued = match db.read(crate::repo::issued).await {
+        Ok(issued) => issued,
+        Err(e) => {
+            tracing::debug!(error = %e, "cannot read the cloud change count");
+            return;
+        }
+    };
+    let mut sidecars = SIDECARS.lock().unwrap_or_else(PoisonError::into_inner);
+    let Some(sidecar) = sidecars.as_mut().and_then(|known| known.get_mut(&path)) else {
+        return;
+    };
+    if issued <= sidecar.issued {
+        return;
+    }
+    sidecar.issued = issued;
+    if let Err(e) = write_sidecar(&path, sidecar) {
+        tracing::warn!(error = %e, "cannot write the cloud instance file");
+    }
 }
 
 #[cfg(test)]

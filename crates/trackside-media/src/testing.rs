@@ -17,6 +17,9 @@ pub enum FakeHls {
     /// Write the init section and every segment from the start number up to this count,
     /// then exit.
     Produce(u32),
+    /// Write like `Produce`, then exit only once the gate has a permit, like ffmpeg still
+    /// finishing up after its last segment.
+    ProduceThenLinger(u32),
     /// Write nothing and run until stopped; the test writes segments itself.
     Manual,
 }
@@ -173,6 +176,10 @@ impl TranscodeProcess for FakeProcess {
                     dir, start_number, ..
                 } => match this.hls {
                     FakeHls::Produce(count) => write_hls(dir, *start_number, count).await?,
+                    FakeHls::ProduceThenLinger(count) => {
+                        write_hls(dir, *start_number, count).await?;
+                        let _permit = this.gate.acquire().await;
+                    }
                     FakeHls::Manual => std::future::pending::<()>().await,
                 },
                 TranscodeOutput::Stdout | TranscodeOutput::Null => {

@@ -80,10 +80,10 @@ function proxyProblem(ready) {
  * title and help are kept for anything not listed here.
  */
 function explain(p, ctx, overview) {
-  const offlineLibrary = () => overview.libraries.find((l) => l.state === 'unavailable' && (p.title || p.message || '').includes(l.name));
+  const target = p.target?.kind === 'library' ? overview.libraries.find((l) => l.id === p.target.id) : null;
   switch (p.code) {
     case 'library_unavailable': {
-      const lib = offlineLibrary();
+      const lib = target;
       return {
         title: p.title,
         help: p.help || p.message,
@@ -99,10 +99,10 @@ function explain(p, ctx, overview) {
     case 'proxy_untrusted':
       return {
         title: 'Everyone shares one address',
-        help: 'Requests come through a proxy Trackside does not trust yet, so sign-in limits and the activity log see one address for everyone. Add the proxy\'s address to this setting in the config file:',
+        help: 'Requests come through a proxy Trackside does not trust yet, so sign-in limits and the activity log see one address for everyone, and signing in or pairing through it is refused. Add the proxy\'s address to this setting in the config file:',
         fix: codeLine('server.trusted_proxies', 'Copy setting name'),
       };
-    case 'ffmpeg_missing':
+    case 'no_ffmpeg':
       return {
         title: 'Songs play only in their original format',
         help: 'Trackside cannot find ffmpeg, so it cannot convert songs for mobile data or older apps. Use the standard image, or install ffmpeg and restart Trackside.',

@@ -697,7 +697,10 @@ async fn streams_transcodes_listens_and_a_scan_run_together() -> anyhow::Result<
     let library = env.library_id().await?;
     let started = Instant::now();
     let mut tasks = tokio::task::JoinSet::new();
-    for player in 0..8usize {
+    // One account is one person, allowed 8 streams at once: 4 players and the 4 downloads
+    // below fill them. The 4 downloads of one transcode share one encoder and so take one
+    // transcode slot of 3.
+    for player in 0..4usize {
         let (c, key, id, original) = (
             env.client.clone(),
             env.key.clone(),

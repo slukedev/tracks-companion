@@ -90,6 +90,9 @@ impl IntoResponse for AuthError {
         };
         let body = serde_json::json!({"error": {"code": code, "message": message}});
         let mut response = (status, axum::Json(body)).into_response();
+        if matches!(self, Self::HttpsRequired) {
+            clear_plain_cookie(&mut response);
+        }
         if let Self::RateLimited { retry_after } = self
             && let Ok(value) =
                 http::HeaderValue::from_str(&retry_after.as_secs().max(1).to_string())
@@ -99,6 +102,16 @@ impl IntoResponse for AuthError {
                 .insert(http::header::RETRY_AFTER, value);
         }
         response
+    }
+}
+
+/// Clears the plain session cookie, which `https_required` refuses: the browser stops sending
+/// a session over plain HTTP that the server will not accept there.
+pub fn clear_plain_cookie(response: &mut Response) {
+    if let Ok(value) = http::HeaderValue::from_str(&crate::SessionCookie::clear_cookie(false)) {
+        response
+            .headers_mut()
+            .append(http::header::SET_COOKIE, value);
     }
 }
 

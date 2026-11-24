@@ -95,9 +95,12 @@ fn host_part(authority: &str) -> &str {
 
 /// Private, loopback, link-local, unique-local or Tailscale's 100.64.0.0/10.
 pub fn is_nearby_address(ip: IpAddr) -> bool {
-    let ip = crate::proxy::canonical(ip);
-    crate::proxy::is_local_address(ip)
-        || matches!(ip, IpAddr::V4(v4) if v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64)
+    crate::proxy::is_local_address(ip) || is_tailscale_address(ip)
+}
+
+/// 100.64.0.0/10: Tailscale's addresses, and also carrier-grade NAT's.
+pub fn is_tailscale_address(ip: IpAddr) -> bool {
+    matches!(crate::proxy::canonical(ip), IpAddr::V4(v4) if v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64)
 }
 
 /// Whether an address names something only reachable nearby: a private, link-local or
@@ -144,7 +147,7 @@ impl Auth {
     /// Whether a client is on a nearby network and reached the server directly or through
     /// a trusted proxy that named it: the condition for proving a nearby address.
     pub fn is_nearby_client(&self, headers: &http::HeaderMap, client: IpAddr) -> bool {
-        is_nearby_address(client)
+        self.is_nearby(client)
             && (!crate::proxy::has_forwarding(headers) || !self.trusted_proxies.is_empty())
     }
 }

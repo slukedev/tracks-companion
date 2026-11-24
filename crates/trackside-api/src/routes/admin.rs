@@ -187,6 +187,7 @@ pub fn library_problems_for(
                     "Check that the disk or share is mounted at {}. Its songs stay in the library until it is back.",
                     library.root.display()
                 )),
+                target: Some(library_target(library)),
             });
         } else if status.is_some_and(|s| s.watching == trackside_core::control::WatchMode::Polling)
         {
@@ -198,10 +199,18 @@ pub fn library_problems_for(
                 help: Some(String::from(
                     "Raise fs.inotify.max_user_watches to 524288 on the host so new files appear within seconds.",
                 )),
+                target: Some(library_target(library)),
             });
         }
     }
     out
+}
+
+fn library_target(library: &Library) -> crate::wire::admin::ProblemTarget {
+    crate::wire::admin::ProblemTarget {
+        kind: String::from("library"),
+        id: library.id.to_string(),
+    }
 }
 
 /// "<name> <what>", keeping the title to six words by shortening a long name.
@@ -1871,7 +1880,8 @@ async fn list_backups(
     State(state): State<ApiState>,
 ) -> ApiResult<Response> {
     let backups = state.ops.backups().await.map_err(ops_error)?;
-    Ok(json_with(StatusCode::OK, &Backups { backups }))
+    let next_at = state.ops.next_backup().map(Into::into);
+    Ok(json_with(StatusCode::OK, &Backups { backups, next_at }))
 }
 
 async fn create_backup(

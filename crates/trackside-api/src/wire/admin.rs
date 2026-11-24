@@ -132,6 +132,17 @@ pub struct Problem {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub help: Option<String>,
+    /// What the problem is about, when it is one thing the dashboard can link to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<ProblemTarget>,
+}
+
+/// The record a problem is about: `{"kind": "library", "id": "..."}`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProblemTarget {
+    /// `library` for now; clients ignore kinds they do not know.
+    pub kind: String,
+    pub id: String,
 }
 
 /// A user as other records name them.
@@ -585,6 +596,9 @@ pub struct Backup {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Backups {
     pub backups: Vec<Backup>,
+    /// When the next scheduled backup runs; absent while scheduled backups are off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_at: Option<Time>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

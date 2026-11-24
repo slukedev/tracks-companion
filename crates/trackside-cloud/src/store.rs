@@ -35,7 +35,8 @@ fn signal(db: &Db, user: UserKey, entity: &'static str) {
 struct Chunk {
     results: Vec<PushResult>,
     wrote: bool,
-    cascaded: bool,
+    /// Deleted playlists whose entries are still to be deleted.
+    deleted_playlists: Vec<String>,
 }
 
 /// The user's running totals inside one chunk.
@@ -73,7 +74,8 @@ pub async fn push(
     prune(db, user, false).await?;
     let items = Arc::new(items);
     let mut results = Vec::with_capacity(items.len());
-    let (mut wrote, mut cascaded) = (false, false);
+    let mut wrote = false;
+    let mut deleted_playlists = Vec::new();
     while results.len() < items.len() {
         let start = results.len();
         let batch = Arc::clone(&items);
@@ -82,8 +84,15 @@ pub async fn push(
             .write(move |tx| apply_chunk(tx, user, entity, &batch[start..], device, limits))
             .await?;
         wrote |= chunk.wrote;
-        cascaded |= chunk.cascaded;
+        deleted_playlists.extend(chunk.deleted_playlists);
         results.extend(chunk.results);
+    }
+    let mut cascaded = false;
+    for playlist in deleted_playlists {
+        cascaded |= cascade(db, user, playlist).await?;
+    }
+    if wrote || cascaded {
+        epoch::note_issued(db).await;
     }
     if wrote {
         signal(db, user, entity.as_str());
@@ -122,7 +131,7 @@ fn apply_chunk(
         },
         added_items: 0,
         added_bytes: 0,
-        cascaded: false,
+        deleted_playlists: Vec::new(),
     };
     let mut results = Vec::new();
     for item in items {
@@ -139,7 +148,7 @@ fn apply_chunk(
     Ok(Chunk {
         results,
         wrote: state.seq != before,
-        cascaded: state.cascaded,
+        deleted_playlists: state.deleted_playlists,
     })
 }
 
@@ -151,7 +160,7 @@ struct State {
     budget: Budget,
     added_items: i64,
     added_bytes: i64,
-    cascaded: bool,
+    deleted_playlists: Vec<String>,
 }
 
 fn apply_one(
@@ -203,7 +212,7 @@ fn apply_one(
                 state.added_bytes += more_bytes;
                 let version = state.seq;
                 if state.entity == Entity::Playlists && next.fields.is_none() {
-                    cascade(tx, state, &id, &next, &item.device_id)?;
+                    state.deleted_playlists.push(id.clone());
                 }
                 PushOutcome::Accepted { version }
             } else {
@@ -215,6 +224,11 @@ fn apply_one(
         Decision::Duplicate { touch } => {
             if let Some((meta, at)) = touch {
                 repo::touch(tx, state.user, state.entity, &id, &meta, at)?;
+            }
+            // A replayed delete finishes a cascade that a restart cut short.
+            if state.entity == Entity::Playlists && stored.as_ref().is_some_and(|s| s.fields.is_none())
+            {
+                state.deleted_playlists.push(id.clone());
             }
             PushOutcome::Duplicate {
                 version: stored.as_ref().map_or(0, |s| s.version),
@@ -228,18 +242,41 @@ fn apply_one(
     Ok(PushResult { id, outcome })
 }
 
-/// A deleted playlist takes its entries with it, as tombstones the clients pull.
-fn cascade(
-    tx: &WriteTx<'_>,
-    state: &mut State,
+/// A deleted playlist takes its entries with it, as tombstones the clients pull. In
+/// transactions of [`CHUNK_ITEMS`] entries, like a push, so a playlist of 50k songs never
+/// holds the writer for long; each one stops if the playlist was brought back meanwhile.
+/// True when any entry was deleted.
+async fn cascade(db: &Db, user: UserKey, playlist: String) -> Result<bool, CloudError> {
+    let mut any = false;
+    loop {
+        let playlist = playlist.clone();
+        let deleted = db
+            .write(move |tx| cascade_some(tx, user, &playlist, CHUNK_ITEMS))
+            .await?;
+        any |= deleted > 0;
+        if deleted < CHUNK_ITEMS {
+            return Ok(any);
+        }
+    }
+}
+
+fn cascade_some(
+    tx: &mut WriteTx<'_>,
+    user: UserKey,
     playlist: &str,
-    tombstone: &Next,
-    device_id: &str,
-) -> Result<(), DbError> {
+    limit: usize,
+) -> Result<usize, DbError> {
+    let Some(tombstone) = repo::load(tx, user, Entity::Playlists, playlist)?
+        .filter(|p| p.fields.is_none())
+    else {
+        return Ok(0);
+    };
     let entity = Entity::PlaylistEntries;
     let now = tx.now();
+    let entries = repo::live_children(tx, user, entity, playlist, limit)?;
+    let mut seq = repo::seq(tx, user)?;
     let mut bytes = 0;
-    for entry in repo::live_children(tx, state.user, entity, playlist)? {
+    for entry in &entries {
         let next = Next {
             fields: None,
             meta: merge::Meta::default(),
@@ -249,15 +286,25 @@ fn cascade(
             merged_into: None,
         };
         let encoded = repo::encode(&entry.id, &next)?;
-        state.seq += 1;
+        seq += 1;
         repo::put(
-            tx, state.user, entity, &entry.id, state.seq, device_id, &next, &encoded, now,
+            tx,
+            user,
+            entity,
+            &entry.id,
+            seq,
+            &tombstone.device_id,
+            &next,
+            &encoded,
+            now,
         )?;
         bytes += encoded.bytes - entry.bytes;
-        state.cascaded = true;
     }
-    state.budget.bytes += bytes;
-    repo::add_usage(tx, state.user, entity, 0, bytes)
+    if !entries.is_empty() {
+        repo::set_seq(tx, user, seq)?;
+        repo::add_usage(tx, user, entity, 0, bytes)?;
+    }
+    Ok(entries.len())
 }
 
 /// Pages through `entity` after `cursor` (`None` for a full snapshot from the start).
@@ -394,6 +441,7 @@ pub async fn patch_settings(
         .write(move |tx| apply_settings(tx, user, &writes, device.as_deref(), limits))
         .await?;
     if wrote {
+        epoch::note_issued(db).await;
         signal(db, user, Entity::Settings.as_str());
     }
     Ok(results)

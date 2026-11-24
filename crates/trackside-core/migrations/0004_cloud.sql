@@ -11,6 +11,15 @@ CREATE TABLE cloud_state (
     pruned_at  INTEGER NOT NULL DEFAULT 0        -- when expired tombstones were last pruned
 ) STRICT;
 
+-- How many changes have been written to anyone's cloud data, ever. It only grows, and a copy
+-- of the sidecar file keeps the highest value seen, so a database rolled back underneath the
+-- server (a Litestream restore) is spotted at start even though its instance token matches.
+CREATE TABLE cloud_meta (
+    id      INTEGER PRIMARY KEY CHECK (id = 1),
+    issued  INTEGER NOT NULL
+) STRICT;
+INSERT INTO cloud_meta (id, issued) VALUES (1, 0);
+
 -- Every synced record: plays, sessions, stations, settings, playlists and the rest, keyed by
 -- the client's id. A tombstone keeps its row with fields NULL and deleted_at set.
 CREATE TABLE cloud_items (

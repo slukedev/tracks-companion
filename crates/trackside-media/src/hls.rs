@@ -388,7 +388,10 @@ async fn poll(job: &HlsJob) {
         if !alive {
             run.scanned_after_exit = true;
             changed = true;
-        } else if next >= run.stop {
+        } else if next >= run.stop && run.stop < job.count() {
+            // Cut short where a later run took over. A run that goes to the end is left to
+            // exit by itself: stopping it after its last segment, while ffmpeg finishes up,
+            // would record it as stopped and the song would never be cached.
             run.cancel.cancel();
         }
     }

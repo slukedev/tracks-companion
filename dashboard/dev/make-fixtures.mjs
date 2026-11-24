@@ -49,8 +49,8 @@ const overview = {
   users: { count: 4, devices: 7 },
   backups: { last: { name: 'trackside-20261114T033000Z.db', at: '2026-11-14T03:30:00.000Z', bytes: 790000000 }, next_at: '2026-11-15T03:30:00.000Z' },
   problems: [
-    { severity: 'warning', code: 'library_unavailable', title: 'NAS Archive offline', message: 'NAS Archive has been unavailable since 08:00.', help: 'Check that the NAS is on and its share is mounted at /mnt/nas/music. Its songs stay in the library until it is back.' },
-    { severity: 'warning', code: 'inotify_limit', title: 'Music not watched live', message: 'Watching Music for changes fell back to polling.', help: 'Raise fs.inotify.max_user_watches to 524288 on the host so new files appear within seconds.' },
+    { severity: 'warning', code: 'library_unavailable', title: 'NAS Archive offline', message: 'NAS Archive has been unavailable since 08:00.', help: 'Check that the NAS is on and its share is mounted at /mnt/nas/music. Its songs stay in the library until it is back.', target: { kind: 'library', id: LIB.nas.id } },
+    { severity: 'warning', code: 'inotify_limit', title: 'Music not watched live', message: 'Watching Music for changes fell back to polling.', help: 'Raise fs.inotify.max_user_watches to 524288 on the host so new files appear within seconds.', target: { kind: 'library', id: LIB.music.id } },
   ],
 };
 w('admin-overview', overview);
@@ -61,7 +61,7 @@ w('readyz', {
   checks: { database: 'ok', ffmpeg: 'ok', libraries: 'degraded', migrations: 'ok' },
   notes: [
     `Library ${LIB.nas.id} is unavailable`,
-    'Requests arrive through a proxy that is not in server.trusted_proxies. Add it so each client is limited and logged by its own address.',
+    'Requests arrive through a proxy that is not in server.trusted_proxies. Add it so each client is limited and logged by its own address, and so passwords and keys are accepted through it.',
   ],
 });
 
@@ -77,7 +77,7 @@ const fresh = {
   media: { ffmpeg: { found: false }, transcodes: { running: 0, queued: 0 }, transcode_cache_bytes: 0 },
   users: { count: 1, devices: 0 },
   backups: { next_at: '2026-11-15T03:30:00.000Z' },
-  problems: [{ severity: 'info', code: 'ffmpeg_missing', title: 'No ffmpeg', message: 'ffmpeg was not found, so songs play only in their original format.', help: 'Use the standard image, or install ffmpeg and restart Trackside.' }],
+  problems: [{ severity: 'info', code: 'no_ffmpeg', title: 'ffmpeg not found', message: 'ffmpeg was not found, so songs play only in their original format.', help: 'Use the standard image, or install ffmpeg and restart Trackside.' }],
 };
 w('admin-overview-fresh', fresh);
 
@@ -115,7 +115,7 @@ const invites = [
 ];
 w('admin-invites', { invites });
 w('admin-invite-created', { ...invites[0], id: 'v9k2l5z8x1c4v7b0n3m6', note: '', created_at: '2026-11-14T10:00:00.000Z', expires_at: '2026-11-21T10:00:00.000Z', url: 'http://192.168.1.20:4747/invite/preview-invite-token-7KQ2M9XD', qr_svg_url: '/api/v1/admin/invites/v9k2l5z8x1c4v7b0n3m6/qr.svg' });
-w('invite-info', { valid: true, role: 'member', expires_at: '2026-11-21T09:15:20.000Z' });
+w('invite-info', { valid: true, role: 'member', expires_at: '2026-11-21T09:15:20.000Z', invited_by: 'Luke', note: 'For Mum' });
 
 const adminLib = (l, o) => ({ ...l, enabled: true, writable: false, watch: true, quick_scan_interval_s: 1800, watching: 'events', uploads_target: false, acquire_target: false, ...o });
 w('admin-libraries', { libraries: [
@@ -220,7 +220,7 @@ w('admin-backups', { backups: [
   { name: 'trackside-20261112T214500Z.db', kind: 'manual', at: '2026-11-12T21:45:00.000Z', bytes: 785100000, has_key: true },
   { name: 'trackside-20261112T033000Z.db', kind: 'scheduled', at: '2026-11-12T03:30:00.000Z', bytes: 784900000, has_key: true },
   { name: 'trackside-20261111T080000Z-pre-migrate-2.db', kind: 'pre_migrate', at: '2026-11-11T08:00:00.000Z', bytes: 781000000, has_key: false },
-] });
+], next_at: '2026-11-15T03:30:00.000Z' });
 
 w('admin-audit', { entries: [
   { at: '2026-11-14T09:42:10.000Z', actor: 'luke', ip: '192.168.1.41', action: 'pairing.approve', target: 'Living Room Mac', detail: 'macos' },

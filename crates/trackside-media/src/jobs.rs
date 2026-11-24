@@ -78,6 +78,20 @@ pub(crate) fn start_job(
     profile: Profile,
     priority: Priority,
 ) -> Result<Arc<FileJob>, MediaError> {
+    start_job_admitting(shared, file, profile, priority, || Ok::<_, MediaError>(()))
+        .map(|(job, ())| job)
+}
+
+/// [`start_job`], calling `admit` only when no job for this transcode is running, under the
+/// same lock that registers the new one: so of many callers asking at once, exactly one is
+/// admitted (and holds what `admit` returns) and the rest join its job.
+pub(crate) fn start_job_admitting<G: Default, E: From<MediaError>>(
+    shared: &Arc<Shared>,
+    file: &SongFile,
+    profile: Profile,
+    priority: Priority,
+    admit: impl FnOnce() -> Result<G, E>,
+) -> Result<(Arc<FileJob>, G), E> {
     let cache = shared.cache.as_ref().ok_or(MediaError::NoTranscoder)?;
     let key = CacheKey::of(file, profile);
     let mut jobs = shared.jobs.lock().unwrap_or_else(PoisonError::into_inner);
@@ -89,8 +103,9 @@ pub(crate) fn start_job(
             }
             raise
         });
-        return Ok(job.clone());
+        return Ok((job.clone(), G::default()));
     }
+    let admitted = admit()?;
     let (priority_tx, priority_rx) = watch::channel(priority);
     let job = Arc::new(FileJob {
         part: cache.part_path(&key, Route::Direct),
@@ -107,7 +122,7 @@ pub(crate) fn start_job(
         file.clone(),
         priority_rx,
     ));
-    Ok(job)
+    Ok((job, admitted))
 }
 
 async fn run_job(
@@ -321,6 +336,32 @@ pub(crate) async fn ensure_cached(
     }
     let job = start_job(shared, file, profile, priority)?;
     wait_job(&job, priority).await
+}
+
+/// [`ensure_cached`], where starting a new encoder needs `admit` (the caller's transcode
+/// slot, say), held until the transcode is done. Waiting for a cached or running transcode
+/// needs nothing.
+pub(crate) async fn ensure_cached_admitting<G: Default, E: From<MediaError>>(
+    shared: &Arc<Shared>,
+    file: &SongFile,
+    profile: Profile,
+    priority: Priority,
+    admit: impl FnOnce() -> Result<G, E>,
+) -> Result<CachedTranscode, E> {
+    let cache = shared.cache.as_ref().ok_or(MediaError::NoTranscoder)?;
+    if !shared.profiles.contains(&profile) {
+        return Err(MediaError::Unsupported(format!("profile {}", profile.as_str())).into());
+    }
+    if let Some(done) = cache.get(file, profile) {
+        return Ok(done);
+    }
+    if shared.is_failing(file) {
+        return Err(MediaError::Process("this song failed to transcode recently".into()).into());
+    }
+    let (job, held) = start_job_admitting(shared, file, profile, priority, admit)?;
+    let done = wait_job(&job, priority).await;
+    drop(held);
+    Ok(done?)
 }
 
 pub(crate) fn prepare(

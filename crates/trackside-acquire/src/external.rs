@@ -725,7 +725,7 @@ impl Inner {
     /// folder without a whole `entry.json`, or whose file is missing or the wrong size. At
     /// start, and on the janitor's round in case the folder was unreachable before.
     pub(crate) async fn load_external(&self) {
-        let starting = self.external_start.lock().await;
+        let starting = Arc::clone(&self.external_start).lock_owned().await;
         let (known, first) = {
             let cache = lock(&self.external);
             let known: HashSet<CandidateToken> = cache.entries.keys().cloned().collect();
@@ -733,19 +733,28 @@ impl Inner {
         };
         let dir = self.external_dir.clone();
         let deadline = self.timing.space_check_deadline * 10;
-        let scan = tokio::task::spawn_blocking(move || reconcile(&dir, &known, first));
-        let found = match tokio::time::timeout(deadline, scan).await {
-            Ok(Ok(Ok(found))) => found,
-            Ok(Ok(Err(e))) => {
-                tracing::warn!(error = %e, dir = %self.external_dir.display(), "could not read the play cache; trying again later");
-                return;
-            }
+        // The scan owns the start lock: if it outlives the deadline it keeps new fetches from
+        // starting until it ends, so it never removes a folder they create from a stale
+        // `known`.
+        let scan = tokio::task::spawn_blocking(move || {
+            let found = reconcile(&dir, &known, first);
+            (found, starting)
+        });
+        let (found, starting) = match tokio::time::timeout(deadline, scan).await {
+            Ok(Ok((found, starting))) => (found, starting),
             Ok(Err(e)) => {
                 tracing::warn!(error = %e, "reading the play cache failed");
                 return;
             }
             Err(_) => {
                 tracing::warn!(dir = %self.external_dir.display(), "reading the play cache timed out; trying again later");
+                return;
+            }
+        };
+        let found = match found {
+            Ok(found) => found,
+            Err(e) => {
+                tracing::warn!(error = %e, dir = %self.external_dir.display(), "could not read the play cache; trying again later");
                 return;
             }
         };
@@ -787,6 +796,10 @@ fn reconcile(
     known: &HashSet<CandidateToken>,
     first: bool,
 ) -> std::io::Result<Vec<(CandidateToken, PathBuf, Manifest)>> {
+    #[cfg(test)]
+    if root.join(".test-slow-scan").exists() {
+        std::thread::sleep(std::time::Duration::from_millis(600));
+    }
     if first {
         std::fs::create_dir_all(root)?;
         std::fs::write(root.join(MARKER), b"")?;

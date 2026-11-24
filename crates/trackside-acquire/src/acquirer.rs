@@ -298,7 +298,7 @@ pub(crate) struct Inner {
     pub update: Mutex<UpdateStatus>,
     pub external: Mutex<crate::external::ExternalCache>,
     /// Held while a play without keeping starts, so two plays of one song start one fetch.
-    pub external_start: tokio::sync::Mutex<()>,
+    pub external_start: Arc<tokio::sync::Mutex<()>>,
     pub external_dir: PathBuf,
 }
 
@@ -428,7 +428,7 @@ impl Acquirer {
             disk_paused: AtomicBool::new(false),
             update: Mutex::new(UpdateStatus::default()),
             external: Mutex::default(),
-            external_start: tokio::sync::Mutex::new(()),
+            external_start: Arc::new(tokio::sync::Mutex::new(())),
             external_dir,
         });
         let runner = Arc::clone(&inner);

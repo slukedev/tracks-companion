@@ -654,6 +654,50 @@ fn a_followed_link_to_a_vanished_folder_keeps_its_songs() -> TestResult {
 }
 
 #[test]
+fn entries_whose_type_cannot_be_read_are_kept() -> TestResult {
+    let mut h = Harness::new()?;
+    put_wav(&h.root, "Album/1.wav", 1)?;
+    put_wav(&h.root, "Album/Disc 2/2.wav", 2)?;
+    for i in 3..8 {
+        put_wav(&h.root, &format!("Local/{i}.wav"), i)?;
+    }
+    h.scan(ScanKind::Full)?;
+    assert_eq!(h.catalog.present(h.key()).len(), 7);
+    // The network share fails the lstat that a missing d_type needs.
+    h.settings.untyped = vec![b"Album/1.wav".to_vec(), b"Album/Disc 2".to_vec()];
+    let report = h.scan(ScanKind::Full)?;
+    assert_eq!(report.state, ScanState::Done);
+    assert_eq!(h.catalog.missing(h.key()), 0);
+    assert!(
+        h.catalog
+            .lock()
+            .folders
+            .get(&(h.key(), b"Album/Disc 2".to_vec()))
+            .is_some_and(|f| f.unreadable)
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_to_a_deleted_song_is_missing() -> TestResult {
+    let mut h = Harness::new()?;
+    h.settings.follow_symlinks = true;
+    let share = h.root.with_file_name("share");
+    put_wav(&share, "solo.wav", 1)?;
+    for i in 2..8 {
+        put_wav(&h.root, &format!("Local/{i}.wav"), i)?;
+    }
+    std::os::unix::fs::symlink(share.join("solo.wav"), h.root.join("solo.wav"))?;
+    h.scan(ScanKind::Full)?;
+    assert_eq!(h.catalog.present(h.key()).len(), 7);
+    std::fs::remove_file(share.join("solo.wav"))?;
+    h.scan(ScanKind::Full)?;
+    assert_eq!(h.catalog.missing(h.key()), 1);
+    Ok(())
+}
+
+#[test]
 fn a_library_going_unavailable_stops_its_running_scan() -> TestResult {
     let s = service(&scanner_config(), &ScannerOptions::manual(), false)?;
     for i in 0..3 {

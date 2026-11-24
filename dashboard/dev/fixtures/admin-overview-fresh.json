@@ -39,8 +39,8 @@
   "problems": [
     {
       "severity": "info",
-      "code": "ffmpeg_missing",
-      "title": "No ffmpeg",
+      "code": "no_ffmpeg",
+      "title": "ffmpeg not found",
       "message": "ffmpeg was not found, so songs play only in their original format.",
       "help": "Use the standard image, or install ffmpeg and restart Trackside."
     }

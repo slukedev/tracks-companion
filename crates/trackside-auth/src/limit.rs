@@ -28,6 +28,8 @@ pub const ACCOUNT_HOURLY_CEILING: usize = 100;
 /// How long a success from an address keeps that address past the hourly ceiling, so guesses
 /// from elsewhere cannot lock the owner out from where they usually sign in.
 pub const KNOWN_ADDRESS_FOR: Duration = Duration::from_hours(30 * 24);
+/// Addresses remembered per account: a phone, a laptop and a few networks they roam on.
+pub(crate) const KNOWN_PER_ACCOUNT: usize = 16;
 const HOUR: Duration = Duration::from_secs(3600);
 /// Failed attempts an IP may make at once before its rate applies.
 pub(crate) const IP_BURST: u32 = 5;
@@ -221,7 +223,8 @@ pub(crate) struct Backoff {
     streaks: Mutex<HashMap<(Account, IpKey), Streak>>,
     hourly: Mutex<HashMap<Account, VecDeque<Millis>>>,
     /// The last success per account and address, which exempts that pair from the ceiling.
-    known: Mutex<HashMap<(Account, IpKey), Millis>>,
+    /// At most [`KNOWN_PER_ACCOUNT`] per account, the oldest going first.
+    known: Mutex<HashMap<Account, Vec<(IpKey, Millis)>>>,
     clock: Arc<dyn Clock>,
 }
 
@@ -236,9 +239,11 @@ impl Backoff {
     }
 
     fn known(&self, pair: &(Account, IpKey), now: Millis) -> bool {
-        lock(&self.known)
-            .get(pair)
-            .is_some_and(|at| *at <= now && now.since(*at) < KNOWN_ADDRESS_FOR)
+        lock(&self.known).get(&pair.0).is_some_and(|addresses| {
+            addresses.iter().any(|(ip, at)| {
+                *ip == pair.1 && *at <= now && now.since(*at) < KNOWN_ADDRESS_FOR
+            })
+        })
     }
 
     /// The delay owed after `failures` consecutive failures.
@@ -316,14 +321,36 @@ impl Backoff {
         let pair = (account.clone(), IpKey::from(ip));
         lock(&self.streaks).remove(&pair);
         let now = self.clock.now();
+        let fresh = |at: &Millis| *at <= now && now.since(*at) < KNOWN_ADDRESS_FOR;
         let mut known = lock(&self.known);
-        if known.len() >= MAX_TRACKED && !known.contains_key(&pair) {
-            known.retain(|_, at| *at <= now && now.since(*at) < KNOWN_ADDRESS_FOR);
-            if known.len() >= MAX_TRACKED {
-                known.clear();
+        if known.len() >= MAX_TRACKED && !known.contains_key(account) {
+            known.retain(|_, addresses| {
+                addresses.retain(|(_, at)| fresh(at));
+                !addresses.is_empty()
+            });
+            // Still full of live entries: the account that signed in longest ago goes, so a
+            // flood of new accounts cannot wipe out everyone's exemption at once.
+            if known.len() >= MAX_TRACKED
+                && let Some(stalest) = known
+                    .iter()
+                    .min_by_key(|(_, addresses)| addresses.iter().map(|(_, at)| *at).max())
+                    .map(|(account, _)| account.clone())
+            {
+                known.remove(&stalest);
             }
         }
-        known.insert(pair, now);
+        let addresses = known.entry(account.clone()).or_default();
+        addresses.retain(|(ip, at)| *ip != pair.1 && fresh(at));
+        if addresses.len() >= KNOWN_PER_ACCOUNT
+            && let Some(oldest) = addresses
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, (_, at))| *at)
+                .map(|(i, _)| i)
+        {
+            addresses.swap_remove(oldest);
+        }
+        addresses.push((pair.1, now));
     }
 }
 
@@ -471,6 +498,29 @@ mod tests {
         }
         clock.advance(Duration::from_secs(1));
         assert!(backoff.check(&luke, A).is_err());
+    }
+
+    #[test]
+    fn known_addresses_keep_the_newest_per_account() {
+        let clock = clock();
+        let backoff = Backoff::new(clock.clone());
+        let luke = Account::User(UserKey(1));
+        backoff.succeed(&luke, A);
+        for i in 0..KNOWN_PER_ACCOUNT {
+            clock.advance(Duration::from_secs(1));
+            let ip = IpAddr::V4(std::net::Ipv4Addr::from(0x0a00_0000 + i as u32));
+            backoff.succeed(&luke, ip);
+        }
+        let now = clock.now();
+        let pair = |ip| (luke.clone(), IpKey::from(ip));
+        assert!(!backoff.known(&pair(A), now), "the oldest went first");
+        let newest = IpAddr::V4(std::net::Ipv4Addr::from(
+            0x0a00_0000 + KNOWN_PER_ACCOUNT as u32 - 1,
+        ));
+        assert!(backoff.known(&pair(newest), now));
+        // Signing in again from an address refreshes it instead of adding another.
+        backoff.succeed(&luke, newest);
+        assert_eq!(lock(&backoff.known).get(&luke).map(Vec::len), Some(KNOWN_PER_ACCOUNT));
     }
 
     #[test]

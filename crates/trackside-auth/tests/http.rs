@@ -342,18 +342,24 @@ async fn secrets_need_https_unless_the_client_is_nearby() -> TestResult {
         false,
     )?;
     assert!(!allowed(&spoofed));
-    // A LAN proxy that isn't trusted, forwarding the internet over plain HTTP, is refused;
-    // one that says the client used HTTPS, or forwards a LAN client, is not.
+    // A LAN proxy that isn't trusted is judged by its own address, and since it forwards
+    // (perhaps for the internet) nothing it says is believed: it is refused until the admin
+    // adds it to `server.trusted_proxies`, whatever proto or client it names.
     let lan_proxy = |headers| arrived("192.168.1.2:1", headers, false);
-    assert!(!allowed(&lan_proxy(&[
-        ("x-forwarded-for", "203.0.113.7"),
-        ("x-forwarded-proto", "http"),
-    ])?));
-    assert!(allowed(&lan_proxy(&[
-        ("x-forwarded-for", "203.0.113.7"),
-        ("x-forwarded-proto", "https"),
-    ])?));
-    assert!(allowed(&lan_proxy(&[("x-forwarded-for", "192.168.1.30")])?));
+    for headers in [
+        &[
+            ("x-forwarded-for", "203.0.113.7"),
+            ("x-forwarded-proto", "http"),
+        ][..],
+        &[
+            ("x-forwarded-for", "203.0.113.7"),
+            ("x-forwarded-proto", "https"),
+        ][..],
+        &[("x-forwarded-for", "192.168.1.30")][..],
+        &[("x-forwarded-proto", "https")][..],
+    ] {
+        assert!(!allowed(&lan_proxy(headers)?), "{headers:?}");
+    }
 
     let trusted = harness_with(common::config(), vec!["10.9.0.0/16".parse()?])?;
     let via_proxy = |headers| arrived("10.9.0.2:1", headers, false);
@@ -372,6 +378,12 @@ async fn secrets_need_https_unless_the_client_is_nearby() -> TestResult {
     ])?));
     assert!(!ok(&via_proxy(&[("x-forwarded-for", "203.0.113.7")])?));
     assert!(ok(&via_proxy(&[("x-forwarded-for", "192.168.4.4")])?));
+    // nginx appends the real client to X-Forwarded-For and passes the client's own
+    // `Forwarded` through: that one is not believed.
+    assert!(!ok(&via_proxy(&[
+        ("forwarded", "for=192.168.1.5;proto=https"),
+        ("x-forwarded-for", "203.0.113.7"),
+    ])?));
 
     // `server.local_networks` adds a LAN's global prefix.
     let lan_v6 = trackside_auth::Auth::new(
@@ -390,6 +402,31 @@ async fn secrets_need_https_unless_the_client_is_nearby() -> TestResult {
         "2001:db8:1::7".parse()?
     ));
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn tailscale_addresses_can_be_treated_as_the_internet() -> TestResult {
+    let h = harness()?;
+    let tailnet = arrived("100.64.0.9:1", &[], false)?;
+    assert!(h.auth.secrets_allowed(&tailnet), "nearby by default");
+    let cgnat = trackside_auth::Auth::new(
+        h.db.db.clone(),
+        &common::config(),
+        trackside_auth::SecretKey::from_bytes([1; 32]),
+        Vec::new(),
+        h.db.clock.clone(),
+    )
+    .with_tailscale_is_local(false);
+    assert!(!cgnat.secrets_allowed(&tailnet));
+    assert!(!cgnat.is_nearby_client(&http::HeaderMap::new(), "100.64.0.9".parse()?));
+    assert!(cgnat.secrets_allowed(&arrived("192.168.1.20:1", &[], false)?));
+    Ok(())
+}
+
+#[tokio::test]
+async fn keys_and_the_plain_session_cookie_need_https_from_afar() -> TestResult {
+    let h = harness()?;
     // A key over plain HTTP from the internet is refused before it is looked up.
     let parts = arrived(
         "203.0.113.7:1",
@@ -407,6 +444,45 @@ async fn secrets_need_https_unless_the_client_is_nearby() -> TestResult {
     assert!(matches!(
         error,
         Err(trackside_auth::AuthError::HttpsRequired)
+    ));
+    // The plain session cookie is only for nearby clients: over plain HTTP to a public
+    // address (split-horizon DNS) it is refused, and the refusal clears it.
+    let cookie = [("cookie", "trackside_session=whatever")];
+    let public = arrived("203.0.113.7:1", &cookie, false)?;
+    let error = h
+        .auth
+        .authenticate(
+            &public,
+            "203.0.113.7".parse()?,
+            trackside_auth::RouteClass::Api,
+        )
+        .await;
+    let Err(error) = error else {
+        return Err("a plain cookie from the internet was accepted".into());
+    };
+    assert!(matches!(error, trackside_auth::AuthError::HttpsRequired));
+    let response = axum::response::IntoResponse::into_response(error);
+    let cleared = response
+        .headers()
+        .get(http::header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    assert!(
+        cleared.starts_with("trackside_session=;") && cleared.contains("Max-Age=0"),
+        "{cleared}"
+    );
+    let nearby = arrived("192.168.1.20:1", &cookie, false)?;
+    let error = h
+        .auth
+        .authenticate(
+            &nearby,
+            "192.168.1.20".parse()?,
+            trackside_auth::RouteClass::Api,
+        )
+        .await;
+    assert!(matches!(
+        error,
+        Err(trackside_auth::AuthError::Unauthenticated)
     ));
     Ok(())
 }

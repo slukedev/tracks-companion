@@ -3554,6 +3554,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tracing",
  "tracks-model",
  "trackside-core",
  "uuid",

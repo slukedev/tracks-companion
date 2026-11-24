@@ -347,7 +347,8 @@ pub async fn run_with(
             config.server.trusted_proxies.clone(),
             Arc::clone(&clock),
         )
-        .with_local_networks(config.server.local_networks.clone()),
+        .with_local_networks(config.server.local_networks.clone())
+        .with_tailscale_is_local(config.server.tailscale_is_local),
     );
     trackside_api::build::apply_stored_auth(&db, &auth, &report).await;
     let transcoder: Arc<dyn Transcoder> =
@@ -471,6 +472,7 @@ pub async fn run_with(
     });
     let ops = Arc::new(Ops {
         backups: Arc::clone(&backups),
+        status: Arc::clone(&backup_status),
         db: db.clone(),
         http: reqwest::Client::builder()
             .timeout(Duration::from_secs(3))

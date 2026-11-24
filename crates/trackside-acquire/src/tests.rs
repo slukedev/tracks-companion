@@ -2226,3 +2226,24 @@ async fn playing_without_keeping_needs_a_source_that_streams() {
         Err(AcquireError::Disabled)
     ));
 }
+
+// Real time: the scan sleeps on a blocking thread.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_play_cache_scan_that_times_out_keeps_new_fetches_waiting() {
+    let world = World::new().await;
+    let acquirer = world.start_timed(
+        Vec::new(),
+        Timing {
+            space_check_deadline: Duration::from_millis(10),
+            ..World::timing()
+        },
+    );
+    acquirer.inner.load_external().await;
+    std::fs::write(external_dir(&world).join(".test-slow-scan"), b"").unwrap();
+    acquirer.inner.load_external().await;
+    // The scan outlived its 100 ms deadline and still runs on a stale view of the folder:
+    // a fetch must not start (and make a folder it could remove) until it ends.
+    assert!(acquirer.inner.external_start.try_lock().is_err());
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert!(acquirer.inner.external_start.try_lock().is_ok());
+}

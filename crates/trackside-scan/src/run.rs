@@ -51,6 +51,9 @@ pub struct RunSettings {
     /// cannot make a folder unreadable.
     #[cfg(test)]
     pub deny: Vec<Vec<u8>>,
+    /// Entries whose type cannot be read, as when an lstat fails on network storage.
+    #[cfg(test)]
+    pub untyped: Vec<Vec<u8>>,
 }
 
 impl RunSettings {
@@ -64,6 +67,8 @@ impl RunSettings {
             extensions: ExtensionSet::new(&config.extensions),
             #[cfg(test)]
             deny: Vec::new(),
+            #[cfg(test)]
+            untyped: Vec::new(),
         }
     }
 }
@@ -595,13 +600,20 @@ fn classify(
     };
     for (name, entry) in names {
         let path = entry.path();
-        let file_type = match entry.file_type() {
+        #[cfg(test)]
+        let typed = if ctx.settings.untyped.contains(&child_rel(rel, name)) {
+            Err(std::io::Error::other("Input/output error"))
+        } else {
+            entry.file_type()
+        };
+        #[cfg(not(test))]
+        let typed = entry.file_type();
+        let file_type = match typed {
             Ok(t) => t,
             Err(e) => {
-                send(
-                    msgs,
-                    Msg::Error(error_row(&child_rel(rel, name), &e.to_string())),
-                )?;
+                // Without d_type the type takes an lstat, which fails on flaky network
+                // storage like any other stat: the entry may still be there.
+                stat_failed(ctx, rel, name, None, &e, msgs)?;
                 continue;
             }
         };
@@ -616,7 +628,7 @@ fn classify(
         let meta = match stat {
             Ok(m) => m,
             Err(e) => {
-                stat_failed(ctx, rel, name, file_type, &e, msgs)?;
+                stat_failed(ctx, rel, name, Some(file_type), &e, msgs)?;
                 continue;
             }
         };
@@ -642,29 +654,47 @@ fn classify(
 /// An entry that could not be stat'ed. Its songs must not be marked missing: an audio file
 /// counts as seen, and a folder (or a followed link to one, such as a share mounted elsewhere
 /// that went away) is unreadable. A link the index never had a folder for is just broken.
+/// An entry that could not be read. An audio file (and a known folder) is kept as seen,
+/// since the storage may only be failing for now; one that is gone (a link whose target was
+/// deleted, a file removed since the listing) is not, so it can be marked missing.
+/// `file_type` is `None` when even the entry's type could not be read.
 fn stat_failed(
     ctx: &WalkCtx,
     rel: &[u8],
     name: &[u8],
-    file_type: std::fs::FileType,
+    file_type: Option<std::fs::FileType>,
     error: &std::io::Error,
     msgs: &SyncSender<Msg>,
 ) -> Result<(), WalkStop> {
     let child = child_rel(rel, name);
+    let gone = error.kind() == std::io::ErrorKind::NotFound;
+    let is_link = file_type.is_some_and(|t| t.is_symlink());
     if ctx.settings.extensions.matches(name) {
+        if gone {
+            let message = if is_link {
+                format!("broken link: {error}")
+            } else {
+                error.to_string()
+            };
+            return send(msgs, Msg::Error(error_row(&child, &message)));
+        }
         send(msgs, Msg::Seen(vec![child.clone()]))?;
         return send(msgs, Msg::Error(error_row(&child, &error.to_string())));
     }
-    let known_folder = file_type.is_dir()
-        || (file_type.is_symlink() && ctx.catalog.folder_state(ctx.library, &child)?.is_some());
+    let known_folder = file_type.is_some_and(|t| t.is_dir())
+        || (!file_type.is_some_and(|t| t.is_file())
+            && ctx.catalog.folder_state(ctx.library, &child)?.is_some());
     if known_folder {
         return send(msgs, Msg::Unreadable(error_row(&child, &error.to_string())));
     }
-    if file_type.is_symlink() {
+    if is_link {
         return send(
             msgs,
             Msg::Error(error_row(&child, &format!("broken link: {error}"))),
         );
+    }
+    if file_type.is_none() {
+        return send(msgs, Msg::Error(error_row(&child, &error.to_string())));
     }
     Ok(())
 }

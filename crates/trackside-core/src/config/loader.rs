@@ -86,6 +86,11 @@ pub const KEYS: &[KeyInfo] = &[
         List,
     ),
     key(
+        "server.tailscale_is_local",
+        "TRACKSIDE_SERVER__TAILSCALE_IS_LOCAL",
+        Bool,
+    ),
+    key(
         "server.max_connections",
         "TRACKSIDE_SERVER__MAX_CONNECTIONS",
         Integer,

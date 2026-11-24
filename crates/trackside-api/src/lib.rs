@@ -149,6 +149,8 @@ impl std::error::Error for OpsError {}
 pub trait ServerOps: Send + Sync + 'static {
     /// Every backup, newest first.
     fn backups(&self) -> BoxFuture<'_, Result<Vec<wire::admin::Backup>, OpsError>>;
+    /// When the next scheduled backup runs, if one is scheduled.
+    fn next_backup(&self) -> Option<Millis>;
     /// Starts a manual backup in the background. `Busy` while one runs.
     fn start_backup(&self) -> BoxFuture<'_, Result<(), OpsError>>;
     /// The file of a backup by name, when it exists. Names never contain a separator.
@@ -165,6 +167,10 @@ pub struct NoOps;
 impl ServerOps for NoOps {
     fn backups(&self) -> BoxFuture<'_, Result<Vec<wire::admin::Backup>, OpsError>> {
         Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn next_backup(&self) -> Option<Millis> {
+        None
     }
 
     fn start_backup(&self) -> BoxFuture<'_, Result<(), OpsError>> {

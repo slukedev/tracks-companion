@@ -709,6 +709,20 @@ impl Media {
         jobs::ensure_cached(&self.shared, file, profile, priority).await
     }
 
+    /// [`Self::ensure_cached`], calling `admit` (to take the caller's transcode slot, say)
+    /// only when this request starts the encoder, and holding what it returns until the
+    /// transcode is done. Callers who join a cached or running transcode need no slot, and of
+    /// several asking at once exactly one is admitted.
+    pub async fn ensure_cached_admitting<G: Default, E: From<MediaError>>(
+        &self,
+        file: &SongFile,
+        profile: Profile,
+        priority: Priority,
+        admit: impl FnOnce() -> Result<G, E>,
+    ) -> Result<CachedTranscode, E> {
+        jobs::ensure_cached_admitting(&self.shared, file, profile, priority, admit).await
+    }
+
     /// Starts prefetch-priority transcodes for at most 5 songs. Songs that cannot be
     /// transcoded at all are left out.
     #[expect(

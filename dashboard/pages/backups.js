@@ -11,14 +11,12 @@ export function scheduleText(schedule) {
 }
 
 export async function render(ctx) {
-  const [{ backups }, settings, overview] = await Promise.all([
+  const [{ backups, next_at: nextAt }, settings] = await Promise.all([
     call('GET /admin/backups'),
     call('GET /admin/settings').catch(() => ({})),
-    call('GET /admin/overview').catch(() => null),
   ]);
   const schedule = settings['backup.schedule']?.value;
   const keep = settings['backup.keep']?.value;
-  const nextAt = overview?.backups?.next_at;
 
   const now = button('Back up now', { kind: 'primary', iconName: 'backups' });
   now.addEventListener('click', () => busy(now, async () => {

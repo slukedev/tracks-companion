@@ -595,8 +595,14 @@ Five wrong codes per session per 10 minutes, then `429`.
   invite, otherwise:
 
   ```json
-  {"valid": true, "role": "member", "expires_at": "2026-11-21T09:30:00.000Z"}
+  {"valid": true, "role": "member", "expires_at": "2026-11-21T09:30:00.000Z",
+   "invited_by": "Luke", "note": "For Mum"}
   ```
+
+  `invited_by` is the display name of the admin who made the invite, left out once their
+  account is gone. `note` is the admin's own note on who the invite is for, left out when they
+  wrote none. Whoever holds the link sees both, so an admin should not put anything in the note
+  they would not tell the invitee.
 
 - `POST /api/v1/invites/{token}/accept` (no auth): `{"username", "display_name"?, "password"}`;
   `201` with the user and a session cookie. The new account gets the invite's role,
@@ -1311,7 +1317,8 @@ fixtures in `dashboard/dev/fixtures/` use the same shapes.
               "next_at": "2026-11-15T03:30:00.000Z"},
   "problems": [{"severity": "warning", "code": "library_unavailable", "title": "Music offline",
                 "message": "Music is unavailable.",
-                "help": "Check that the disk or share is mounted at /music. Its songs stay in the library until it is back."}]
+                "help": "Check that the disk or share is mounted at /music. Its songs stay in the library until it is back.",
+                "target": {"kind": "library", "id": "ldhmwjvv1e9320kfeh1mp"}}]
 }
 ```
 
@@ -1328,8 +1335,11 @@ fixtures in `dashboard/dev/fixtures/` use the same shapes.
   when the acquirer cannot tell.
 - `backups.last`, `backups.next_at` and `backups.last_error` are left out when there is none.
 - A problem has `severity` (`info`, `warning` or `error`), a stable `code` (`library_unavailable`,
-  `inotify_limit`), a `title` of six words or fewer
+  `inotify_limit`, `low_disk`, `no_ffmpeg`, `backup_failed`), a `title` of six words or fewer
   for its heading, a `message`, and an optional `help` that says what to do.
+- A problem about one record has `target`, `{"kind", "id"}`, so a client can link to it without
+  matching names: `library_unavailable` and `inotify_limit` name their library with
+  `{"kind": "library", "id": "..."}`. Other kinds may come later; ignore ones you don't know.
 
 ### Users
 
@@ -1486,7 +1496,8 @@ The Last.fm API key is the setting `enrichment.lastfm_api_key` above, also setta
 ### Backups
 
 - `GET /admin/backups`: `{"backups": [{"name", "kind": "scheduled" | "manual" | "pre_migrate",
-  "at", "bytes", "has_key": true}]}`
+  "at", "bytes", "has_key": true}], "next_at"?}`. `next_at` is when the next scheduled backup
+  runs, the same as the overview's `backups.next_at`; left out while scheduled backups are off.
 - `POST /admin/backups`: `202 {}`, then the new backup appears in the list; `409` with
   `details.reason = "running"` if one is running.
 - `GET /admin/backups/{name}`: downloads the file (`application/vnd.sqlite3`); recent password.

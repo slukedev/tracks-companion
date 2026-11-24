@@ -568,6 +568,8 @@ async fn admin_endpoints_need_a_session_and_csrf() -> TestResult {
         .json()
         .await?;
     assert_eq!(info.role, "member");
+    assert_eq!(info.note.as_deref(), Some("For Nana"));
+    assert!(info.invited_by.is_some(), "the admin's display name");
     Ok(())
 }
 

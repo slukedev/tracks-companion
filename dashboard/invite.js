@@ -47,11 +47,16 @@ async function main() {
     }
   });
 
+  // The note is the inviter's own line on who the invite is for, shown as they wrote it.
+  const who = invite.invited_by ? `${invite.invited_by} invited you` : 'You are invited';
   frame({
     title: `Join ${name}`,
-    text: `You are invited to listen to the music on ${name}. Make an account here, then connect the Tracks app on your phone.`,
+    text: `${who} to listen to the music on ${name}. Make an account here, then connect the Tracks app on your phone.`,
     body: form,
-    foot: invite.expires_at ? `This invite works until ${date(invite.expires_at)}.` : null,
+    foot: [
+      invite.note ? `Invite note: \u201c${invite.note}\u201d.` : null,
+      invite.expires_at ? `This invite works until ${date(invite.expires_at)}.` : null,
+    ].filter(Boolean).join(' ') || null,
   });
   display.focus();
 }

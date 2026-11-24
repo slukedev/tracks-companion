@@ -656,6 +656,54 @@ async fn deleting_a_playlist_deletes_its_entries() -> TestResult {
 }
 
 #[tokio::test]
+async fn a_large_playlist_is_deleted_in_chunks() -> TestResult {
+    let f = open()?;
+    let u = user(&f.db, "luke")?;
+    let limits = Limits::default();
+    store::push(
+        &f.db,
+        u,
+        Entity::Playlists,
+        vec![item("pl", json!({"name": "Everything"}), 1, "MAC")],
+        None,
+        limits,
+    )
+    .await?;
+    const ENTRIES: usize = 700;
+    for batch in 0..ENTRIES / 100 {
+        let entries = (batch * 100..(batch + 1) * 100)
+            .map(|n| {
+                item(
+                    &format!("e{n}"),
+                    json!({"playlistID": "pl", "order": format!("a{n:04}"),
+                           "track": {"title": "Halo", "artist": "Beyoncé"}}),
+                    1,
+                    "MAC",
+                )
+            })
+            .collect();
+        store::push(&f.db, u, Entity::PlaylistEntries, entries, None, limits).await?;
+    }
+    // More entries than one transaction takes.
+    store::push(
+        &f.db,
+        u,
+        Entity::Playlists,
+        vec![delete("pl", 9, "MAC")],
+        None,
+        limits,
+    )
+    .await?;
+    let page = store::pull(&f.db, u, Entity::PlaylistEntries, None, 1000).await?;
+    assert_eq!(page.deletes.len(), ENTRIES);
+    assert!(page.upserts.is_empty());
+    // Every entry got its own version, after the playlist's.
+    let versions: HashSet<i64> = page.deletes.iter().map(|r| r.version).collect();
+    assert_eq!(versions.len(), ENTRIES);
+    Ok(())
+}
+
+#[tokio::test]
 async fn restored_devices_inherit_sessions() -> TestResult {
     let f = open()?;
     let u = user(&f.db, "luke")?;
@@ -1045,6 +1093,51 @@ fn open_at(path: &std::path::Path) -> Result<Db, Box<dyn std::error::Error>> {
         EventBus::default(),
         Arc::new(TestClock::new(TEST_START)),
     )?)
+}
+
+#[tokio::test]
+async fn a_database_rolled_back_under_the_same_token_gets_a_new_epoch() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("trackside.db");
+    let early = dir.path().join("early.db");
+    let limits = Limits::default();
+    let first_epoch = {
+        let db = open_at(&path)?;
+        let started = epoch::reconcile(&db)?;
+        let u = user(&db, "luke")?;
+        store::push(&db, u, Entity::Plays, (0..5).map(play).collect(), None, limits).await?;
+        // Litestream's replica: the same file, token included, a little behind.
+        db.backup_into(&early)?;
+        store::push(&db, u, Entity::Plays, (5..10).map(play).collect(), None, limits).await?;
+        started.epoch
+    };
+    {
+        let db = open_at(&path)?;
+        let again = epoch::reconcile(&db)?;
+        assert_eq!((again.epoch, again.new_epoch), (first_epoch.clone(), false));
+    }
+    let token: String = {
+        let db = open_at(&path)?;
+        db.read(|c| {
+            Ok(trackside_core::repo::settings::get(c, epoch::INSTANCE_KEY)?.unwrap_or_default())
+        })
+        .await?
+    };
+    for side in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{side}", path.display()));
+    }
+    std::fs::copy(&early, &path)?;
+    {
+        // Give the copy the live token, as a replica restored after the restart has.
+        let db = open_at(&path)?;
+        db.write(move |tx| trackside_core::repo::settings::put(tx, epoch::INSTANCE_KEY, &token))
+            .await?;
+    }
+    let db = open_at(&path)?;
+    let restored = epoch::reconcile(&db)?;
+    assert!(restored.new_epoch, "fewer changes than the server has seen");
+    assert_ne!(restored.epoch, first_epoch);
+    Ok(())
 }
 
 #[tokio::test]

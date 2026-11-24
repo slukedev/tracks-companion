@@ -696,12 +696,23 @@ async fn invite_info(
     Path(token): Path<String>,
 ) -> ApiResult<Response> {
     let invite = state.auth.invite_info(&token).await?;
+    let invited_by = match invite.created_by {
+        Some(key) => read(&state, move |c| users::get(c, key))
+            .await?
+            .map(|u| u.display_name),
+        None => None,
+    };
     Ok(json_with(
         StatusCode::OK,
         &InviteInfo {
             valid: true,
             role: invite.role.as_str().to_owned(),
             expires_at: invite.expires_at.into(),
+            invited_by,
+            note: invite
+                .note
+                .map(|n| n.trim().to_owned())
+                .filter(|n| !n.is_empty()),
         },
     ))
 }

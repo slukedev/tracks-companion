@@ -1885,6 +1885,7 @@ The server starts with no file at all: data in the platform default directory, l
 | `server.public_urls` **D** | `TRACKSIDE_SERVER__PUBLIC_URLS` | `[]` | extra candidate URLs for pairing |
 | `server.trusted_proxies` | `TRACKSIDE_SERVER__TRUSTED_PROXIES` | `[]` | CIDRs whose forwarding headers are believed |
 | `server.local_networks` | `TRACKSIDE_SERVER__LOCAL_NETWORKS` | `[]` | CIDRs that count as your own network besides the private, link-local and Tailscale ranges, such as your LAN's global IPv6 prefix: passwords and keys are accepted from them over plain HTTP |
+| `server.tailscale_is_local` | `TRACKSIDE_SERVER__TAILSCALE_IS_LOCAL` | `true` | whether Tailscale's 100.64.0.0/10 counts as your own network; turn it off if your ISP puts your server behind carrier-grade NAT in that range, where it is the internet |
 | `server.max_connections` | `TRACKSIDE_SERVER__MAX_CONNECTIONS` | `1024` | open connections at once, across listeners; more are closed at once |
 | `server.header_timeout` | `TRACKSIDE_SERVER__HEADER_TIMEOUT` | `"30s"` | time to receive request headers; also how long an idle HTTP/1 keep-alive connection stays open |
 | `server.request_timeout` | `TRACKSIDE_SERVER__REQUEST_TIMEOUT` | `"60s"` | non-streaming handlers |

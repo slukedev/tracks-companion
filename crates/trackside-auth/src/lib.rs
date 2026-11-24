@@ -577,6 +577,8 @@ pub struct Auth {
     /// `server.local_networks`: more networks that count as nearby, beside the private,
     /// loopback, link-local and Tailscale ranges.
     local_networks: Vec<ipnet::IpNet>,
+    /// `server.tailscale_is_local`: whether 100.64.0.0/10 counts as nearby.
+    tailscale_is_local: bool,
     clock: Arc<dyn Clock>,
     hasher: password::Hasher,
     ip_failures: limit::FailureLimiter<limit::IpKey>,
@@ -657,6 +659,7 @@ impl Auth {
             config: config.clone(),
             trusted_proxies,
             local_networks: Vec::new(),
+            tailscale_is_local: true,
             clock,
         }
     }
@@ -669,9 +672,20 @@ impl Auth {
         self
     }
 
-    /// Private, loopback, link-local, unique-local, Tailscale, or in `server.local_networks`.
-    fn is_nearby(&self, ip: IpAddr) -> bool {
-        proof::is_nearby_address(ip) || proxy::is_trusted(&self.local_networks, ip)
+    /// Sets `server.tailscale_is_local`. Off, Tailscale's 100.64.0.0/10 counts as the
+    /// internet, as it is where an ISP uses it for carrier-grade NAT.
+    #[must_use]
+    pub fn with_tailscale_is_local(mut self, on: bool) -> Self {
+        self.tailscale_is_local = on;
+        self
+    }
+
+    /// Private, loopback, link-local, unique-local, Tailscale (unless turned off), or in
+    /// `server.local_networks`.
+    pub(crate) fn is_nearby(&self, ip: IpAddr) -> bool {
+        is_local_address(ip)
+            || (self.tailscale_is_local && proof::is_tailscale_address(ip))
+            || proxy::is_trusted(&self.local_networks, ip)
     }
 
     /// Whether a password or key may be accepted on this request: over HTTPS (directly, or
@@ -693,17 +707,11 @@ impl Auth {
             return proxy::forwarded_https(headers)
                 || self.is_nearby(proxy::client_ip(&self.trusted_proxies, headers, peer));
         }
-        if !self.is_nearby(peer.ip()) {
-            return false;
-        }
-        if !proxy::has_forwarding(headers) {
-            return true;
-        }
-        // A nearby proxy that is not in `server.trusted_proxies`: only someone on this network
-        // could forge its headers, and they may use plain HTTP anyway, so its word is taken
-        // for this one question. An internet client it forwards over plain HTTP is refused.
-        let hop = [ipnet::IpNet::from(proxy::canonical(peer.ip()))];
-        proxy::forwarded_https(headers) || self.is_nearby(proxy::client_ip(&hop, headers, peer))
+        // A peer that is not in `server.trusted_proxies` is judged by its own address only:
+        // its forwarding headers could name anyone. A nearby proxy that forwards (and so may
+        // forward clients from the internet over plain HTTP) is refused until the admin adds
+        // it to `server.trusted_proxies`; the warning in [`Auth::client_ip`] says so.
+        self.is_nearby(peer.ip()) && !proxy::has_forwarding(headers)
     }
 
     /// [`Auth::secrets_allowed`] as an error: [`AuthError::HttpsRequired`].
@@ -727,7 +735,7 @@ impl Auth {
         {
             tracing::warn!(
                 peer = %peer.ip(),
-                "requests arrive through a proxy that is not in server.trusted_proxies: every client shares its address for rate limits, and none counts as local"
+                "requests arrive through a proxy that is not in server.trusted_proxies: every client shares its address for rate limits, none counts as local, and passwords and keys over plain HTTP through it are refused (https_required); add the proxy to server.trusted_proxies"
             );
         }
         proxy::client_ip(&self.trusted_proxies, &parts.headers, peer)

@@ -49,6 +49,40 @@ pub(crate) fn hls_owner(state: &ApiState, principal: &Principal) -> ApiResult<Hl
     })
 }
 
+/// Why a transcode that may need one of the caller's slots did not finish.
+#[derive(Debug)]
+enum Admit {
+    Media(MediaError),
+    Refused(ApiError),
+}
+
+impl From<MediaError> for Admit {
+    fn from(error: MediaError) -> Self {
+        Self::Media(error)
+    }
+}
+
+impl From<Admit> for ApiError {
+    fn from(error: Admit) -> Self {
+        match error {
+            Admit::Media(e) => e.into(),
+            Admit::Refused(e) => e,
+        }
+    }
+}
+
+/// One of the caller's transcode slots, for a request that starts the encoder.
+fn transcode_slot(
+    state: &ApiState,
+    principal: &Principal,
+) -> Result<Option<tokio::sync::OwnedSemaphorePermit>, Admit> {
+    state
+        .auth
+        .transcode_slot(principal)
+        .map(Some)
+        .map_err(|e| Admit::Refused(e.into()))
+}
+
 /// An HLS job may be read only by the user it was made for (or an admin), and only while
 /// they can still see its song.
 pub(crate) async fn check_hls_job(
@@ -226,11 +260,13 @@ async fn decide(
     if let Decision::Hls { profile, reason } = decision
         && !client.hls
     {
-        let _slot = state.auth.transcode_slot(&principal)?;
         let transcode = state
             .media
-            .ensure_cached(&file, profile, Priority::Interactive)
-            .await?;
+            .ensure_cached_admitting(&file, profile, Priority::Interactive, || {
+                transcode_slot(&state, &principal)
+            })
+            .await
+            .map_err(ApiError::from)?;
         decision = Decision::File { transcode, reason };
     }
     tracing::debug!(
@@ -409,37 +445,46 @@ async fn download(
     }
     let profile = parse_profile(query.profile.as_deref())?;
     let (song, file) = song_and_file(&state, &principal, id).await?;
-    let slot = state.auth.stream_slot(&principal)?;
     let (parts, _) = request.into_parts();
     let response = match profile {
         None => {
+            let slot = state.auth.stream_slot(&principal)?;
             let disposition = Disposition::Attachment {
                 file_name: download_name(&song, file.format.container),
             };
-            state
+            let response = state
                 .media
                 .serve_file(&file, &parts, disposition)
                 .await
-                .map_err(|e| changed_file(&state, &song, e))
+                .map_err(|e| changed_file(&state, &song, e))?;
+            trackside_media::hold(response, slot)
         }
         Some(profile) => {
-            let transcoding = state.auth.transcode_slot(&principal)?;
+            // Only a request that starts the encoder takes a transcode slot: a household's
+            // phones downloading the same album share one job each song.
             let transcode = state
                 .media
-                .ensure_cached(&file, profile, Priority::Download)
+                .ensure_cached_admitting(&file, profile, Priority::Download, || {
+                    transcode_slot(&state, &principal)
+                })
                 .await
-                .map_err(|e| changed_file(&state, &song, e))?;
-            drop(transcoding);
+                .map_err(|e| match e {
+                    Admit::Media(e) => changed_file(&state, &song, e),
+                    Admit::Refused(e) => e,
+                })?;
+            // The stream slot is for sending bytes, so it is taken once the file is ready.
+            let slot = state.auth.stream_slot(&principal)?;
             let disposition = Disposition::Attachment {
                 file_name: download_name(&song, profile.output().0),
             };
-            Ok(state
+            let response = state
                 .media
                 .serve_transcode(&transcode, &parts, disposition)
-                .await?)
+                .await?;
+            trackside_media::hold(response, slot)
         }
-    }?;
-    Ok(trackside_media::hold(response, slot))
+    };
+    Ok(response)
 }
 
 /// `?mt=...` from the request, carried onto each segment URL of a playlist.
