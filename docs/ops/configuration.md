@@ -293,3 +293,18 @@ secret key and never shown again; a key from this file or the environment shows 
 
 This page follows the key table in `crates/trackside-core/src/config/loader.rs`. If
 `trackside config show` and this page disagree, the server is right; please open an issue.
+
+## Trackside Cloud (dashboard only)
+
+The Tracks apps can sync their own data (listening history, sessions, stations, app settings,
+blocked artists, playlists, likes) to your server instead of iCloud. Three dashboard settings
+control it; they are not configuration keys:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `cloud.enabled` | `true` | off makes every cloud route answer `404` and hides it from `capabilities` |
+| `cloud.quota_items` | `2000000` | records per user, deletes included; new records past it are refused |
+| `cloud.quota_bytes` | `"1GiB"` | bytes per user, the same way |
+
+Each person sees only their own synced data. Admins see how many records and bytes a user keeps
+on that user's page, never the records themselves, and the dashboard has no view of them.

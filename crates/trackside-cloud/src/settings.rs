@@ -86,7 +86,10 @@ pub fn is_union(key: &str) -> bool {
 fn text_list(value: &Value) -> Option<BTreeSet<String>> {
     match value {
         Value::Null => Some(BTreeSet::new()),
-        Value::Array(items) => items.iter().map(|v| v.as_str().map(str::to_owned)).collect(),
+        Value::Array(items) => items
+            .iter()
+            .map(|v| v.as_str().map(str::to_owned))
+            .collect(),
         _ => None,
     }
 }
@@ -125,7 +128,8 @@ pub fn decide(stored: Option<&Setting>, write: &SettingWrite) -> Verdict {
         if serde_json::to_string(&value).map_or(usize::MAX, |s| s.len()) > MAX_SETTING_BYTES {
             return Verdict::Reject(Reject::TooLarge);
         }
-        let modified_at = stored.map_or(write.modified_at, |s| s.modified_at.max(write.modified_at));
+        let modified_at =
+            stored.map_or(write.modified_at, |s| s.modified_at.max(write.modified_at));
         return match stored {
             Some(s) if s.value == value && s.modified_at == modified_at => Verdict::Duplicate,
             _ => Verdict::Store { value, modified_at },
@@ -177,26 +181,50 @@ mod tests {
         let s = stored("playlistName", json!("Tracks"), 100);
         assert_eq!(
             decide(Some(&s), &write("playlistName", json!("Mine"), 200)),
-            Verdict::Store { value: json!("Mine"), modified_at: Millis(200) }
+            Verdict::Store {
+                value: json!("Mine"),
+                modified_at: Millis(200)
+            }
         );
-        assert_eq!(decide(Some(&s), &write("playlistName", json!("Mine"), 100)), Verdict::Conflict);
-        assert_eq!(decide(Some(&s), &write("playlistName", json!("Mine"), 50)), Verdict::Conflict);
-        assert_eq!(decide(Some(&s), &write("playlistName", json!("Tracks"), 50)), Verdict::Duplicate);
+        assert_eq!(
+            decide(Some(&s), &write("playlistName", json!("Mine"), 100)),
+            Verdict::Conflict
+        );
+        assert_eq!(
+            decide(Some(&s), &write("playlistName", json!("Mine"), 50)),
+            Verdict::Conflict
+        );
+        assert_eq!(
+            decide(Some(&s), &write("playlistName", json!("Tracks"), 50)),
+            Verdict::Duplicate
+        );
     }
 
     #[test]
     fn seeds_never_replace_a_value_and_lose_ties_to_the_first_seed() {
         let real = stored("autoAddToPlaylist", json!(true), 1_000);
-        assert_eq!(decide(Some(&real), &write("autoAddToPlaylist", json!(false), 0)), Verdict::Conflict);
+        assert_eq!(
+            decide(Some(&real), &write("autoAddToPlaylist", json!(false), 0)),
+            Verdict::Conflict
+        );
         let seed = stored("autoAddToPlaylist", json!(true), 0);
-        assert_eq!(decide(Some(&seed), &write("autoAddToPlaylist", json!(false), 0)), Verdict::Conflict);
+        assert_eq!(
+            decide(Some(&seed), &write("autoAddToPlaylist", json!(false), 0)),
+            Verdict::Conflict
+        );
         assert_eq!(
             decide(Some(&seed), &write("autoAddToPlaylist", json!(false), 5)),
-            Verdict::Store { value: json!(false), modified_at: Millis(5) }
+            Verdict::Store {
+                value: json!(false),
+                modified_at: Millis(5)
+            }
         );
         assert_eq!(
             decide(None, &write("autoAddToPlaylist", json!(false), 0)),
-            Verdict::Store { value: json!(false), modified_at: Millis(0) }
+            Verdict::Store {
+                value: json!(false),
+                modified_at: Millis(0)
+            }
         );
     }
 
@@ -205,11 +233,20 @@ mod tests {
         let s = stored("playlistID", json!("pl.1"), 100);
         assert_eq!(
             decide(Some(&s), &write("playlistID", Value::Null, 200)),
-            Verdict::Store { value: Value::Null, modified_at: Millis(200) }
+            Verdict::Store {
+                value: Value::Null,
+                modified_at: Millis(200)
+            }
         );
         let cleared = stored("playlistID", Value::Null, 200);
-        assert_eq!(decide(Some(&cleared), &write("playlistID", json!("pl.1"), 150)), Verdict::Conflict);
-        assert_eq!(decide(Some(&cleared), &write("playlistID", json!("old"), 0)), Verdict::Conflict);
+        assert_eq!(
+            decide(Some(&cleared), &write("playlistID", json!("pl.1"), 150)),
+            Verdict::Conflict
+        );
+        assert_eq!(
+            decide(Some(&cleared), &write("playlistID", json!("old"), 0)),
+            Verdict::Conflict
+        );
     }
 
     #[test]
@@ -217,16 +254,28 @@ mod tests {
         let s = stored("forgottenSongs", json!(["b", "a"]), 200);
         assert_eq!(
             decide(Some(&s), &write("forgottenSongs", json!(["c", "a"]), 100)),
-            Verdict::Store { value: json!(["a", "b", "c"]), modified_at: Millis(200) }
+            Verdict::Store {
+                value: json!(["a", "b", "c"]),
+                modified_at: Millis(200)
+            }
         );
         let sorted = stored("forgottenSongs", json!(["a", "b"]), 200);
-        assert_eq!(decide(Some(&sorted), &write("forgottenSongs", json!(["a"]), 100)), Verdict::Duplicate);
+        assert_eq!(
+            decide(Some(&sorted), &write("forgottenSongs", json!(["a"]), 100)),
+            Verdict::Duplicate
+        );
         assert_eq!(
             decide(Some(&sorted), &write("forgottenSongs", Value::Null, 300)),
-            Verdict::Store { value: json!(["a", "b"]), modified_at: Millis(300) },
+            Verdict::Store {
+                value: json!(["a", "b"]),
+                modified_at: Millis(300)
+            },
             "nothing un-forgets a song"
         );
-        assert_eq!(check(&write("forgottenSongs", json!("a"), 1), Millis(10)), Err(Reject::Invalid));
+        assert_eq!(
+            check(&write("forgottenSongs", json!("a"), 1), Millis(10)),
+            Err(Reject::Invalid)
+        );
     }
 
     #[test]
@@ -241,7 +290,11 @@ mod tests {
             json!({"$encrypted": {"alg": "none", "ct": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}),
             1,
         );
-        assert_eq!(check(&disguised, now), Err(Reject::Invalid), "32 bytes is a raw key");
+        assert_eq!(
+            check(&disguised, now),
+            Err(Reject::Invalid),
+            "32 bytes is a raw key"
+        );
         let sealed = write(
             "nearbyKey",
             json!({"$encrypted": {"v": 1, "alg": "chachapoly", "ct":
@@ -250,6 +303,9 @@ mod tests {
         );
         assert_eq!(check(&sealed, now), Ok(()));
         assert_eq!(check(&write("nearbyKey", Value::Null, 1), now), Ok(()));
-        assert_eq!(check(&write("macOnlySetting", json!({"x": 1}), 1), now), Ok(()));
+        assert_eq!(
+            check(&write("macOnlySetting", json!({"x": 1}), 1), now),
+            Ok(())
+        );
     }
 }

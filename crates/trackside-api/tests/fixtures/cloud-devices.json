@@ -1,0 +1,25 @@
+{
+  "devices": [
+    {
+      "current": true,
+      "device_id": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C",
+      "name": "Luke's iPhone",
+      "platform": "ios",
+      "predecessors": [
+        "E2D4C6B8-1A3F-4C5E-9B7D-0F2E4D6C8A1B"
+      ],
+      "registered_at": "2026-11-11T09:30:00.000Z",
+      "server_device_id": "dchjkb9k3cnapjw0kmhq6",
+      "updated_at": "2026-11-13T09:30:00.000Z"
+    },
+    {
+      "current": false,
+      "device_id": "0C7B5E3A-9D1F-4E2B-8A6C-5F4E3D2C1B0A",
+      "name": "Mac Studio",
+      "platform": "macos",
+      "predecessors": [],
+      "registered_at": "2026-10-15T09:30:00.000Z",
+      "updated_at": "2026-10-15T09:30:00.000Z"
+    }
+  ]
+}

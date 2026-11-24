@@ -93,10 +93,7 @@ impl Entity {
             Self::Stations | Self::ExcludedStations | Self::BlockedArtists => Key::FoldedName,
             Self::ForgottenSongs | Self::Likes => Key::SongIdentity,
             Self::Settings => Key::SettingName,
-            Self::Plays
-            | Self::Sessions
-            | Self::Playlists
-            | Self::PlaylistEntries => Key::ClientId,
+            Self::Plays | Self::Sessions | Self::Playlists | Self::PlaylistEntries => Key::ClientId,
         }
     }
 }

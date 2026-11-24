@@ -1,5 +1,5 @@
 //! Trackside Cloud (api.md section 19): per-user sync of the apps' own data. The envelope is
-//! snake_case like the rest of the API; `fields` is the app's own object, stored and returned
+//! `snake_case` like the rest of the API; `fields` is the app's own object, stored and returned
 //! as sent, so its names are the app's.
 
 use std::collections::BTreeMap;

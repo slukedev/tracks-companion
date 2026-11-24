@@ -13,18 +13,21 @@ use trackside_core::{Db, DbError, DeviceKey, ServerEvent, UserKey, WriteTx};
 use crate::devices::{CloudDevice, Registry};
 use crate::entity::{Entity, Rule};
 use crate::limits::{
-    CHUNK_ITEMS, CHUNK_TIME, Limits, MAX_BATCH, MAX_DEVICE_ID_BYTES, MAX_DEVICES,
-    MAX_PREDECESSORS, MAX_SETTINGS, TOMBSTONE_DAYS,
+    CHUNK_ITEMS, CHUNK_TIME, Limits, MAX_BATCH, MAX_DEVICE_ID_BYTES, MAX_DEVICES, MAX_PREDECESSORS,
+    MAX_SETTINGS, TOMBSTONE_DAYS,
 };
 use crate::merge::{self, Decision, Next, Stored};
 use crate::model::{Body, CloudError, Page, PushItem, PushOutcome, PushResult, Reject, Usage};
 use crate::repo;
-use crate::settings::{self, Setting, SettingOutcome, SettingResult, SettingWrite, SettingsPage, Verdict};
+use crate::settings::{
+    self, Setting, SettingOutcome, SettingResult, SettingWrite, SettingsPage, Verdict,
+};
 use crate::validate::{check_item, is_label};
 
 /// The `cloud` event for `entity`: tells the user's clients to pull it. Never carries data.
 fn signal(db: &Db, user: UserKey, entity: &'static str) {
-    db.events().publish(ServerEvent::CloudChanged { user, entity });
+    db.events()
+        .publish(ServerEvent::CloudChanged { user, entity });
 }
 
 /// What one chunk did.
@@ -306,7 +309,8 @@ pub async fn prune(db: &Db, user: UserKey, force: bool) -> Result<usize, CloudEr
             .write(move |tx| repo::prune(tx, user, entity, before, 5_000))
             .await?;
     }
-    db.write(move |tx| repo::set_pruned_at(tx, user, now)).await?;
+    db.write(move |tx| repo::set_pruned_at(tx, user, now))
+        .await?;
     Ok(pruned)
 }
 
@@ -422,7 +426,17 @@ fn apply_settings(
                     continue;
                 }
                 seq += 1;
-                repo::put(tx, user, entity, &write.key, seq, &write.device_id, &next, &encoded, now)?;
+                repo::put(
+                    tx,
+                    user,
+                    entity,
+                    &write.key,
+                    seq,
+                    &write.device_id,
+                    &next,
+                    &encoded,
+                    now,
+                )?;
                 keys += u64::from(stored.is_none());
                 budget.items += new_items;
                 budget.bytes += more_bytes;
@@ -498,7 +512,9 @@ pub async fn register_device(
                 }
             }
             if merged.len() > MAX_PREDECESSORS {
-                return Ok(Err(CloudError::Invalid(String::from("too many predecessors"))));
+                return Ok(Err(CloudError::Invalid(String::from(
+                    "too many predecessors",
+                ))));
             }
             repo::put_device(
                 tx,
@@ -528,4 +544,3 @@ pub fn usage_in(c: &Connection, user: UserKey) -> Result<Usage, DbError> {
 pub async fn usage(db: &Db, user: UserKey) -> Result<Usage, CloudError> {
     Ok(db.read(move |c| repo::usage(c, user)).await?)
 }
-

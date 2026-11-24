@@ -103,6 +103,8 @@ It reuses `tracks-model` as a git dependency pinned to an exact revision of the 
     trackside-enrich/         read-only Last.fm client and the background enrichment worker
     trackside-subsonic/       /rest router, XML and JSON encoding, Subsonic semantics
     trackside-api/            /api/v1 router (native and admin), wire types, SSE
+    trackside-cloud/          Trackside Cloud: per-user sync of the apps' own data, its
+                              merge rules, storage and paging (ADR 0012)
     trackside-server/         the `trackside` binary: CLI, wiring, TLS, mDNS, scheduler,
                               backups, shutdown, embedded dashboard
   dashboard/                  static HTML, CSS and JavaScript modules, embedded at build time
@@ -111,7 +113,7 @@ It reuses `tracks-model` as a git dependency pinned to an exact revision of the 
   docs/
 ```
 
-Nine shipped crates. Acquisition is its own crate rather than part of `trackside-scan` so that
+Ten shipped crates. Acquisition is its own crate rather than part of `trackside-scan` so that
 its code can be owned by one work package, reviewed on its own, and compiled out with the
 `acquire` cargo feature of `trackside-server` (on by default) by anyone who builds without it.
 
@@ -126,7 +128,8 @@ its code can be owned by one work package, reviewed on its own, and compiled out
 | trackside-acquire | core, media (probes, decode check, stream-through HLS) |
 | trackside-enrich | core |
 | trackside-subsonic | core, auth, media |
-| trackside-api | core, auth, media |
+| trackside-cloud | core |
+| trackside-api | core, auth, media, cloud |
 | trackside-server | all of the above |
 
 Rules:
@@ -141,7 +144,9 @@ Rules:
 - Only `trackside-server` depends on everything. It contains no business logic: config loading,
   construction, routing composition, listeners, the scheduler, signals and the CLI.
 - SQL lives only in `trackside-core` (repositories) and the migrations. Other crates call
-  repository functions with a `&Connection` or a `WriteTx`.
+  repository functions with a `&Connection` or a `WriteTx`. The one exception is
+  `trackside-cloud`, which owns the SQL for the `cloud_*` tables of migration 4 (ADR 0012);
+  the migration itself stays in core.
 
 ### What each crate owns
 
@@ -155,6 +160,7 @@ Rules:
 | enrich | Last.fm requests and parsing, pacing and backoff, what to look up next, the on-demand queue | SQL (calls `core::repo::enrichment`), ranking (in `core::similar`) |
 | subsonic | `/rest/*` parsing (GET and formPost), XML and JSON envelopes, error codes, mapping records to Subsonic shapes | domain logic beyond mapping |
 | api | `/api/v1/*` handlers, wire types (serde), admin endpoints, SSE, fixtures for Tracks | domain logic beyond mapping |
+| cloud | the apps' synced records: merge rules, the per-user change seq, chunked writes, pruning, quotas, the device registry | HTTP, anything outside the `cloud_*` tables |
 | server | CLI, wiring, listeners, TLS, mDNS, scheduler, backups, health endpoints, dashboard asset serving, metrics text | domain logic |
 
 ### Shared code with Tracks
@@ -1078,6 +1084,15 @@ Notes on the schema:
   `410 Gone` with code `sync_reset` and the client takes a new snapshot. The epoch is bumped when a
   user gains or loses a library, when a library is deleted, and after a migration that rewrites
   ids or keys.
+
+### Trackside Cloud
+
+Migration 4 adds `cloud_state` (each user's own change seq), `cloud_items` (every synced record
+as the app's JSON, keyed by user, entity and client id, with its `version`), `cloud_entities`
+(items, bytes and the pruned-through version per user and entity) and `cloud_devices` (the
+apps' device ids and what each was restored from). All cascade from `users`. They are separate
+from `change_log`: cloud writes never wake library `/sync` clients, and the cloud cursor is the
+user's own seq. api.md section 19 has the API and ADR 0012 the merge rules.
 
 ---
 
@@ -2014,6 +2029,8 @@ the source one of `default`, `file`, `environment` or `command line`; then any w
 - Litestream works alongside (WAL mode, no foreign checkpointing); a documented recipe only.
 - `GET /api/v1/me/listens/export` gives a user their listens as JSON Lines in a
   ListenBrainz-compatible shape.
+- Trackside Cloud data is in the same database, so every backup holds it. Encrypted settings
+  (`nearbyKey`) stay encrypted with a key only the user's devices have.
 
 ### Migrations and upgrades
 
@@ -2053,7 +2070,7 @@ the source one of `default`, `file`, `environment` or `command line`; then any w
 ### Assets
 
 The user's music files (read access only, except writable target libraries), listening history and
-playlists, credentials (password hashes, key hashes, sealed app passwords, the secret key), the
+playlists, the apps' synced data in Trackside Cloud, credentials (password hashes, key hashes, sealed app passwords, the secret key), the
 host running the server, and the user's network reputation when acquisition is on.
 
 ### Trust boundaries and actors
@@ -2063,6 +2080,7 @@ host running the server, and the user's network reputation when acquisition is o
 | Someone on the LAN before setup | `/setup` | claiming a new install | setup token from the log or data dir; nothing else is served before setup except health, ping and capabilities |
 | Internet attacker | every public route | credential stuffing, enumeration, DoS | Argon2id, per-IP and per-account backoff, generic auth errors, constant-time comparisons, connection and request limits, header and body size limits, no user enumeration on login or invites |
 | Member | own data, granted libraries | reading others' data or libraries, admin escalation | every query filtered by `Principal.libraries` and `user_id` in repositories (not in handlers), admin routes require an admin session, tests per endpoint for cross-user access |
+| Admin | users, settings, backups | reading members' synced history and settings | no admin route or dashboard view returns Trackside Cloud records (counts only); cloud routes take device keys only, so an admin session cannot reach them; secrets like `nearbyKey` are stored only client-encrypted (ADR 0012). The database file itself is readable by whoever runs the server |
 | Stolen device key | that user's library and data | long-lived access | keys listed with last use and IP, one-click revoke, no admin scope, media tokens bound to the device epoch |
 | Network observer on plain HTTP | traffic | credential and token theft | passwords, keys and setup, invite, reset and pairing secrets are refused over plain HTTP from addresses that aren't nearby (`403 https_required`, api.md section 2); the docs, and Tracks' server form, warn about plain HTTP addresses; media tokens expire; legacy MD5 auth is opt-in |
 | Malicious file in the library | tag parser, image decoder | parser crash, memory exhaustion, hang | lofty and image are pure Rust; per-file timeout and quarantine; `catch_unwind` around parsing; image dimension cap (12k by 12k) before decode |

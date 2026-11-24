@@ -90,11 +90,15 @@ pub fn check_item(entity: Entity, item: &PushItem, now: Millis) -> Result<String
     if !is_label(&item.device_id, MAX_DEVICE_ID_BYTES) {
         return Err(Reject::Invalid);
     }
-    if !not_ahead(item.client_modified_at, now) || item.deleted_at.is_some_and(|at| !not_ahead(at, now))
+    if !not_ahead(item.client_modified_at, now)
+        || item.deleted_at.is_some_and(|at| !not_ahead(at, now))
     {
         return Err(Reject::Future);
     }
-    if item.merged_into.as_ref().is_some_and(|m| !is_label(m, MAX_ID_BYTES))
+    if item
+        .merged_into
+        .as_ref()
+        .is_some_and(|m| !is_label(m, MAX_ID_BYTES))
         || item.base_version.is_some_and(|v| v < 0)
     {
         return Err(Reject::Invalid);
@@ -147,17 +151,28 @@ mod tests {
     fn keyed_entities_derive_and_check_their_ids() {
         let now = Millis(2000);
         assert_eq!(
-            check_item(Entity::Stations, &item("", json!({"name": " Radio Café "})), now),
+            check_item(
+                Entity::Stations,
+                &item("", json!({"name": " Radio Café "})),
+                now
+            ),
             Ok(String::from("radio cafe"))
         );
         assert_eq!(
-            check_item(Entity::Stations, &item("other", json!({"name": "Radio"})), now),
+            check_item(
+                Entity::Stations,
+                &item("other", json!({"name": "Radio"})),
+                now
+            ),
             Err(Reject::IdentityMismatch)
         );
         assert_eq!(
             check_item(
                 Entity::Likes,
-                &item("", json!({"title": "Halo", "artistName": "Beyoncé", "loved": true})),
+                &item(
+                    "",
+                    json!({"title": "Halo", "artistName": "Beyoncé", "loved": true})
+                ),
                 now
             ),
             Ok(String::from("halo\u{1f}beyonce"))
@@ -186,6 +201,9 @@ mod tests {
         assert_eq!(check_item(Entity::Plays, &ahead, now), Err(Reject::Future));
         let mut no_device = item("p1", json!({}));
         no_device.device_id = String::new();
-        assert_eq!(check_item(Entity::Plays, &no_device, now), Err(Reject::Invalid));
+        assert_eq!(
+            check_item(Entity::Plays, &no_device, now),
+            Err(Reject::Invalid)
+        );
     }
 }

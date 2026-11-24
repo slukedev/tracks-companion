@@ -103,7 +103,9 @@ pub enum Decision {
     Write(Next),
     /// Nothing a client sees changes. `touch` carries newer per-field times or a newer
     /// `client_modified_at` to keep without a new version.
-    Duplicate { touch: Option<(Meta, Millis)> },
+    Duplicate {
+        touch: Option<(Meta, Millis)>,
+    },
     /// The stored copy stands.
     Conflict,
     Reject(Reject),
@@ -325,12 +327,7 @@ fn extreme(fields: &mut Fields, name: &str, value: &Value, min: bool) -> bool {
 }
 
 /// Newest wins for one field, by its per-field time.
-fn newest(
-    merged: &mut Merged,
-    name: &str,
-    value: &Value,
-    at: i64,
-) {
+fn newest(merged: &mut Merged, name: &str, value: &Value, at: i64) {
     let current = merged.meta.t.get(name).copied().unwrap_or(i64::MIN);
     let differs = match merged.fields.get(name) {
         None => !value.is_null(),
@@ -431,7 +428,12 @@ fn live(
     }
     if merged.fields == current {
         let touch = (merged.touched && (rule == Rule::LastWriter || merged.meta != stored.meta))
-            .then(|| (merged.meta.clone(), item.client_modified_at.max(stored.modified_at)));
+            .then(|| {
+                (
+                    merged.meta.clone(),
+                    item.client_modified_at.max(stored.modified_at),
+                )
+            });
         return if merged.lost {
             Decision::Conflict
         } else {
@@ -498,7 +500,9 @@ mod tests {
                 merged_into: next.merged_into.clone(),
                 bytes: 0,
             }),
-            Decision::Duplicate { touch: Some((meta, at)) } => stored.map(|mut s| {
+            Decision::Duplicate {
+                touch: Some((meta, at)),
+            } => stored.map(|mut s| {
                 s.meta = meta.clone();
                 s.modified_at = *at;
                 s
@@ -530,7 +534,12 @@ mod tests {
         assert_eq!(fields(s.as_ref())["songKey"], "halo\u{1f}beyonce");
         let (d, s) = run(Entity::Plays, s, &first);
         assert_eq!(d, Decision::Duplicate { touch: None }, "replay");
-        let enrich = push("p1", json!({"catalogID": "123", "scrobbledAt": 5}), 20, "D2");
+        let enrich = push(
+            "p1",
+            json!({"catalogID": "123", "scrobbledAt": 5}),
+            20,
+            "D2",
+        );
         let (d, s) = run(Entity::Plays, s, &enrich);
         assert!(matches!(d, Decision::Write(_)));
         let other = push("p1", json!({"catalogID": "999"}), 30, "D3");
@@ -538,7 +547,10 @@ mod tests {
         assert_eq!(d, Decision::Conflict, "first non-null wins");
         assert_eq!(fields(s.as_ref())["catalogID"], "123");
         let retitle = push("p1", json!({"title": "Halo (Live)"}), 40, "D1");
-        assert_eq!(run(Entity::Plays, s.clone(), &retitle).0, Decision::Conflict);
+        assert_eq!(
+            run(Entity::Plays, s.clone(), &retitle).0,
+            Decision::Conflict
+        );
         let art = push("p1", json!({"artworkURL": "https://a/2"}), 50, "D2");
         let (d, s) = run(Entity::Plays, s, &art);
         assert!(matches!(d, Decision::Write(_)));
@@ -551,11 +563,17 @@ mod tests {
     #[test]
     fn plays_need_their_core_and_not_the_future() {
         let bare = push("p1", json!({"title": "Halo"}), 10, "D1");
-        assert_eq!(run(Entity::Plays, None, &bare).0, Decision::Reject(Reject::Invalid));
+        assert_eq!(
+            run(Entity::Plays, None, &bare).0,
+            Decision::Reject(Reject::Invalid)
+        );
         let mut ahead = play();
         ahead["playedAtMs"] = json!(NOW.0 + 3 * 86_400_000);
         let item = push("p1", ahead, 10, "D1");
-        assert_eq!(run(Entity::Plays, None, &item).0, Decision::Reject(Reject::Future));
+        assert_eq!(
+            run(Entity::Plays, None, &item).0,
+            Decision::Reject(Reject::Future)
+        );
     }
 
     #[test]
@@ -572,9 +590,15 @@ mod tests {
                 merged_into: Some(String::from("p0"))
             })
         );
-        assert_eq!(run(Entity::Plays, s.clone(), &merged).0, Decision::Duplicate { touch: None });
+        assert_eq!(
+            run(Entity::Plays, s.clone(), &merged).0,
+            Decision::Duplicate { touch: None }
+        );
         let again = push("p1", play(), 30, "D2");
-        assert_eq!(run(Entity::Plays, s.clone(), &again).0, Decision::Reject(Reject::Deleted));
+        assert_eq!(
+            run(Entity::Plays, s.clone(), &again).0,
+            Decision::Reject(Reject::Deleted)
+        );
         let undelete = PushItem {
             undelete: true,
             ..again
@@ -593,7 +617,10 @@ mod tests {
             base_version: Some(version + 5),
             ..push("s1", json!({"name": "Evening"}), 20, "D1")
         };
-        assert_eq!(run(Entity::Playlists, s.clone(), &stale).0, Decision::Conflict);
+        assert_eq!(
+            run(Entity::Playlists, s.clone(), &stale).0,
+            Decision::Conflict
+        );
         let fresh_cas = PushItem {
             base_version: Some(version),
             ..push("s1", json!({"name": "Evening"}), 20, "D1")
@@ -601,27 +628,48 @@ mod tests {
         let (d, s) = run(Entity::Playlists, s, &fresh_cas);
         assert!(matches!(d, Decision::Write(_)));
         let (d, _) = run(Entity::Playlists, s, &fresh_cas);
-        assert!(matches!(d, Decision::Duplicate { .. }), "a replay is not a conflict");
+        assert!(
+            matches!(d, Decision::Duplicate { .. }),
+            "a replay is not a conflict"
+        );
         let must_be_new = PushItem {
             base_version: Some(3),
             ..push("s2", json!({"name": "x"}), 10, "D1")
         };
-        assert_eq!(run(Entity::Playlists, None, &must_be_new).0, Decision::Conflict);
+        assert_eq!(
+            run(Entity::Playlists, None, &must_be_new).0,
+            Decision::Conflict
+        );
     }
 
     #[test]
     fn stations_merge_by_extremes_and_first_values() {
-        let first = push("radio x", json!({"name": "Radio X", "firstSeenMs": 100, "lastSeenMs": 200}), 1, "D1");
+        let first = push(
+            "radio x",
+            json!({"name": "Radio X", "firstSeenMs": 100, "lastSeenMs": 200}),
+            1,
+            "D1",
+        );
         let (_, s) = run(Entity::Stations, None, &first);
-        let second = push("radio x", json!({"name": "RADIO X", "firstSeenMs": 50, "lastSeenMs": 150,
-                                       "catalogID": "ra.1"}), 2, "D2");
+        let second = push(
+            "radio x",
+            json!({"name": "RADIO X", "firstSeenMs": 50, "lastSeenMs": 150,
+                                       "catalogID": "ra.1"}),
+            2,
+            "D2",
+        );
         let (d, s) = run(Entity::Stations, s, &second);
         assert!(matches!(d, Decision::Write(_)));
         assert_eq!(
             fields(s.as_ref()),
             json!({"name": "Radio X", "firstSeenMs": 50, "lastSeenMs": 200, "catalogID": "ra.1"})
         );
-        let third = push("radio x", json!({"lastSeenMs": 300, "catalogID": "ra.2"}), 3, "D3");
+        let third = push(
+            "radio x",
+            json!({"lastSeenMs": 300, "catalogID": "ra.2"}),
+            3,
+            "D3",
+        );
         let (_, s) = run(Entity::Stations, s, &third);
         assert_eq!(fields(s.as_ref())["lastSeenMs"], 300);
         assert_eq!(fields(s.as_ref())["catalogID"], "ra.1");
@@ -630,9 +678,21 @@ mod tests {
     #[test]
     fn forgotten_songs_only_grow_and_keep_the_latest_date() {
         let id = "halo\u{1f}beyonce";
-        let (_, s) = run(Entity::ForgottenSongs, None, &push(id, json!({"forgottenAtMs": 10}), 1, "D1"));
-        let (_, s) = run(Entity::ForgottenSongs, s, &push(id, json!({"forgottenAtMs": 30}), 2, "D2"));
-        let (_, s) = run(Entity::ForgottenSongs, s, &push(id, json!({"forgottenAtMs": 20}), 3, "D3"));
+        let (_, s) = run(
+            Entity::ForgottenSongs,
+            None,
+            &push(id, json!({"forgottenAtMs": 10}), 1, "D1"),
+        );
+        let (_, s) = run(
+            Entity::ForgottenSongs,
+            s,
+            &push(id, json!({"forgottenAtMs": 30}), 2, "D2"),
+        );
+        let (_, s) = run(
+            Entity::ForgottenSongs,
+            s,
+            &push(id, json!({"forgottenAtMs": 20}), 3, "D3"),
+        );
         assert_eq!(fields(s.as_ref())["forgottenAtMs"], 30);
         assert_eq!(
             run(Entity::ForgottenSongs, s, &tombstone(id, 4, "D1")).0,
@@ -645,23 +705,46 @@ mod tests {
         let add = push("abba", json!({"name": "ABBA"}), 10, "D1");
         let (_, s) = run(Entity::BlockedArtists, None, &add);
         let late_remove = tombstone("abba", 5, "D2");
-        assert_eq!(run(Entity::BlockedArtists, s.clone(), &late_remove).0, Decision::Conflict);
+        assert_eq!(
+            run(Entity::BlockedArtists, s.clone(), &late_remove).0,
+            Decision::Conflict
+        );
         let (d, s) = run(Entity::BlockedArtists, s, &tombstone("abba", 20, "D2"));
         assert!(matches!(d, Decision::Write(_)));
         assert_eq!(
-            run(Entity::BlockedArtists, s.clone(), &push("abba", json!({"name": "ABBA"}), 15, "D1")).0,
+            run(
+                Entity::BlockedArtists,
+                s.clone(),
+                &push("abba", json!({"name": "ABBA"}), 15, "D1")
+            )
+            .0,
             Decision::Conflict,
             "an add older than the remove loses"
         );
-        let (d, s) = run(Entity::BlockedArtists, s, &push("abba", json!({"name": "ABBA"}), 30, "D1"));
-        assert!(matches!(d, Decision::Write(_)), "a newer add brings it back without undelete");
+        let (d, s) = run(
+            Entity::BlockedArtists,
+            s,
+            &push("abba", json!({"name": "ABBA"}), 30, "D1"),
+        );
+        assert!(
+            matches!(d, Decision::Write(_)),
+            "a newer add brings it back without undelete"
+        );
         assert!(s.is_some_and(|s| s.fields.is_some()));
     }
 
     #[test]
     fn same_value_at_a_newer_time_still_beats_an_older_remove() {
-        let (_, s) = run(Entity::Likes, None, &push("a\u{1f}b", json!({"loved": true}), 10, "D1"));
-        let (d, s) = run(Entity::Likes, s, &push("a\u{1f}b", json!({"loved": true}), 30, "D2"));
+        let (_, s) = run(
+            Entity::Likes,
+            None,
+            &push("a\u{1f}b", json!({"loved": true}), 10, "D1"),
+        );
+        let (d, s) = run(
+            Entity::Likes,
+            s,
+            &push("a\u{1f}b", json!({"loved": true}), 30, "D2"),
+        );
         assert!(matches!(d, Decision::Duplicate { touch: Some(_) }));
         assert_eq!(
             run(Entity::Likes, s, &tombstone("a\u{1f}b", 20, "D3")).0,
@@ -671,7 +754,11 @@ mod tests {
 
     #[test]
     fn playlists_are_newest_wins_per_field() {
-        let (_, s) = run(Entity::Playlists, None, &push("pl", json!({"name": "A", "comment": "x"}), 10, "D1"));
+        let (_, s) = run(
+            Entity::Playlists,
+            None,
+            &push("pl", json!({"name": "A", "comment": "x"}), 10, "D1"),
+        );
         let rename = push("pl", json!({"name": "B"}), 30, "D1");
         let recomment = push("pl", json!({"comment": "y", "name": "Old"}), 20, "D2");
         let (_, s) = run(Entity::Playlists, s, &rename);
@@ -686,16 +773,30 @@ mod tests {
     #[test]
     fn playlist_entries_need_a_playlist_and_keep_it() {
         let bare = push("e1", json!({"order": "a0"}), 1, "D1");
-        assert_eq!(run(Entity::PlaylistEntries, None, &bare).0, Decision::Reject(Reject::Invalid));
-        let entry = push("e1", json!({"playlistID": "pl", "order": "a0",
-                                      "track": {"title": "Halo", "artist": "Beyoncé", "ids": {"appleMusic": "1"}}}), 1, "D1");
+        assert_eq!(
+            run(Entity::PlaylistEntries, None, &bare).0,
+            Decision::Reject(Reject::Invalid)
+        );
+        let entry = push(
+            "e1",
+            json!({"playlistID": "pl", "order": "a0",
+                                      "track": {"title": "Halo", "artist": "Beyoncé", "ids": {"appleMusic": "1"}}}),
+            1,
+            "D1",
+        );
         let (_, s) = run(Entity::PlaylistEntries, None, &entry);
-        assert_eq!(s.as_ref().and_then(|s| s.parent.clone()).as_deref(), Some("pl"));
+        assert_eq!(
+            s.as_ref().and_then(|s| s.parent.clone()).as_deref(),
+            Some("pl")
+        );
         let moved = push("e1", json!({"order": "a1"}), 2, "D2");
         let (d, s) = run(Entity::PlaylistEntries, s, &moved);
         assert!(matches!(d, Decision::Write(_)));
         let elsewhere = push("e1", json!({"playlistID": "other"}), 3, "D2");
-        assert_eq!(run(Entity::PlaylistEntries, s, &elsewhere).0, Decision::Conflict);
+        assert_eq!(
+            run(Entity::PlaylistEntries, s, &elsewhere).0,
+            Decision::Conflict
+        );
     }
 
     #[test]
@@ -704,7 +805,10 @@ mod tests {
         let create = push("s1", json!({"startedAtMs": 1}), 1, "D1");
         let first = decide(Entity::Sessions, None, &create, &registry, NOW);
         let s = apply(None, &first, &create);
-        assert_eq!(s.as_ref().and_then(|s| s.meta.owner.clone()).as_deref(), Some("D1"));
+        assert_eq!(
+            s.as_ref().and_then(|s| s.meta.owner.clone()).as_deref(),
+            Some("D1")
+        );
         let stranger = push("s1", json!({"endedAtMs": 2}), 2, "D3");
         assert_eq!(
             decide(Entity::Sessions, s.as_ref(), &stranger, &registry, NOW),
@@ -716,7 +820,13 @@ mod tests {
             Decision::Write(_)
         ));
         assert_eq!(
-            decide(Entity::Sessions, s.as_ref(), &tombstone("s1", 3, "D3"), &registry, NOW),
+            decide(
+                Entity::Sessions,
+                s.as_ref(),
+                &tombstone("s1", 3, "D3"),
+                &registry,
+                NOW
+            ),
             Decision::Reject(Reject::NotOwner)
         );
     }

@@ -17,18 +17,18 @@ use trackside_auth::{Principal, Scopes, Via};
 use trackside_cloud::limits::{DEFAULT_PAGE, MAX_BATCH, MAX_PAGE};
 use trackside_cloud::store::{self, Registration};
 use trackside_cloud::{
-    Body, CloudDevice, CloudError, Entity, Limits, Page, PushItem, PushOutcome, PushResult,
-    Record, Setting, SettingOutcome, SettingResult, SettingWrite, SettingsPage, Usage,
+    Body, CloudDevice, CloudError, Entity, Limits, Page, PushItem, PushOutcome, PushResult, Record,
+    Setting, SettingOutcome, SettingResult, SettingWrite, SettingsPage, Usage,
 };
-use trackside_core::config::parse_size;
 use trackside_core::DeviceId;
+use trackside_core::config::parse_size;
 
 use super::settings;
+use crate::ApiState;
 use crate::error::{ApiError, ApiResult};
 use crate::extract::{Json, Query, json_with};
-use crate::wire::cloud as wire;
 use crate::wire::Time;
-use crate::ApiState;
+use crate::wire::cloud as wire;
 
 const LIBRARY: u8 = Scopes::LIBRARY.bits();
 const WRITE: u8 = Scopes::WRITE.bits();
@@ -284,7 +284,11 @@ async fn patch_settings(
 ) -> ApiResult<Response> {
     caller(&state, &principal).await?;
     let user = principal.access.user;
-    if let Err(wait) = state.local.cloud_limiter().check(user, patch.settings.len()) {
+    if let Err(wait) = state
+        .local
+        .cloud_limiter()
+        .check(user, patch.settings.len())
+    {
         return Err(ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
             "rate_limited",
@@ -378,11 +382,18 @@ async fn register_device(
         platform: body.platform,
     };
     let server_device = principal.device.as_ref().map(|(key, _)| *key);
-    let device =
-        store::register_device(&state.db, principal.access.user, registration, server_device)
-            .await?;
+    let device = store::register_device(
+        &state.db,
+        principal.access.user,
+        registration,
+        server_device,
+    )
+    .await?;
     let mine = principal.device.as_ref().map(|(_, id)| id.clone());
-    Ok(json_with(StatusCode::OK, &device_body(&device, mine.as_ref())))
+    Ok(json_with(
+        StatusCode::OK,
+        &device_body(&device, mine.as_ref()),
+    ))
 }
 
 async fn usage(
@@ -423,12 +434,8 @@ pub fn usage_body(usage: &Usage, limits: Limits) -> wire::Usage {
 pub fn cloud_info() -> wire::CloudInfo {
     wire::CloudInfo {
         version: 1,
-        entities: Entity::ALL
-            .iter()
-            .map(|e| e.as_str().to_owned())
-            .collect(),
+        entities: Entity::ALL.iter().map(|e| e.as_str().to_owned()).collect(),
         max_batch: MAX_BATCH as u32,
         max_page: MAX_PAGE,
     }
 }
-

@@ -97,13 +97,21 @@ impl Reject {
 #[derive(Clone, Debug, PartialEq)]
 pub enum PushOutcome {
     /// Stored at `version`.
-    Accepted { version: i64 },
+    Accepted {
+        version: i64,
+    },
     /// Already stored; nothing changed. Success for the client.
-    Duplicate { version: i64 },
+    Duplicate {
+        version: i64,
+    },
     /// The stored copy wins, or `base_version` did not match. `current` is the stored copy,
     /// absent when there is none.
-    Conflict { current: Option<Record> },
-    Rejected { reason: Reject },
+    Conflict {
+        current: Option<Record>,
+    },
+    Rejected {
+        reason: Reject,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]

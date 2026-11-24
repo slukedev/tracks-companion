@@ -64,7 +64,10 @@ pub fn check(value: &Value) -> Result<(), &'static str> {
         return Err("ct is not a ciphertext");
     }
     if let Some(nonce) = inner.get("nonce") {
-        let nonce = nonce.as_str().and_then(decode).ok_or("nonce is not base64")?;
+        let nonce = nonce
+            .as_str()
+            .and_then(decode)
+            .ok_or("nonce is not base64")?;
         if nonce.len() > 64 {
             return Err("nonce is too long");
         }
@@ -103,7 +106,8 @@ mod tests {
                          "nonce": b64(12), "ct": b64(48)}});
         assert!(is_envelope(&env));
         assert_eq!(check(&env), Ok(()));
-        let url_safe = json!({"$encrypted": {"alg": "x", "ct": URL_SAFE_NO_PAD.encode([255_u8; 49])}});
+        let url_safe =
+            json!({"$encrypted": {"alg": "x", "ct": URL_SAFE_NO_PAD.encode([255_u8; 49])}});
         assert_eq!(check(&url_safe), Ok(()));
     }
 
@@ -114,7 +118,9 @@ mod tests {
         assert!(check(&json!({"$encrypted": {"ct": b64(48)}})).is_err());
         assert!(check(&json!({"$encrypted": {"alg": "x", "ct": "not base64!"}})).is_err());
         assert!(check(&json!({"$encrypted": {"alg": "x", "ct": b64(48)}, "extra": 1})).is_err());
-        assert!(check(&json!({"$encrypted": {"alg": "x", "ct": b64(48), "aad": {"a": 1}}})).is_err());
+        assert!(
+            check(&json!({"$encrypted": {"alg": "x", "ct": b64(48), "aad": {"a": 1}}})).is_err()
+        );
         assert!(!is_envelope(&json!(b64(32))));
     }
 }

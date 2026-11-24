@@ -15,10 +15,12 @@ fn json_error(e: &serde_json::Error) -> DbError {
 
 /// The user's change seq: the version of their latest change, 0 before any.
 pub(crate) fn seq(c: &Connection, user: UserKey) -> Result<i64, DbError> {
-    Ok(c.prepare_cached("SELECT seq FROM cloud_state WHERE user_id = ?1")?
-        .query_row([user], |row| row.get(0))
-        .optional()?
-        .unwrap_or(0))
+    Ok(
+        c.prepare_cached("SELECT seq FROM cloud_state WHERE user_id = ?1")?
+            .query_row([user], |row| row.get(0))
+            .optional()?
+            .unwrap_or(0),
+    )
 }
 
 pub(crate) fn set_seq(c: &Connection, user: UserKey, seq: i64) -> Result<(), DbError> {
@@ -31,10 +33,12 @@ pub(crate) fn set_seq(c: &Connection, user: UserKey, seq: i64) -> Result<(), DbE
 }
 
 pub(crate) fn pruned_at(c: &Connection, user: UserKey) -> Result<Millis, DbError> {
-    Ok(c.prepare_cached("SELECT pruned_at FROM cloud_state WHERE user_id = ?1")?
-        .query_row([user], |row| row.get(0))
-        .optional()?
-        .unwrap_or(Millis(0)))
+    Ok(
+        c.prepare_cached("SELECT pruned_at FROM cloud_state WHERE user_id = ?1")?
+            .query_row([user], |row| row.get(0))
+            .optional()?
+            .unwrap_or(Millis(0)),
+    )
 }
 
 const COLUMNS: &str = "item_id, version, fields, meta, parent, device_id, modified_at, deleted_at,
@@ -211,7 +215,11 @@ pub(crate) fn add_usage(
 }
 
 /// The highest version whose tombstone was pruned: cursors below it cannot be served.
-pub(crate) fn pruned_through(c: &Connection, user: UserKey, entity: Entity) -> Result<i64, DbError> {
+pub(crate) fn pruned_through(
+    c: &Connection,
+    user: UserKey,
+    entity: Entity,
+) -> Result<i64, DbError> {
     Ok(c.prepare_cached(
         "SELECT pruned_through FROM cloud_entities WHERE user_id = ?1 AND entity = ?2",
     )?
@@ -336,9 +344,7 @@ pub(crate) fn usage(c: &Connection, user: UserKey) -> Result<Usage, DbError> {
 /// Live settings count, for the per-user cap.
 pub(crate) fn live_count(c: &Connection, user: UserKey, entity: Entity) -> Result<u64, DbError> {
     let n: i64 = c
-        .prepare_cached(
-            "SELECT count(*) FROM cloud_items WHERE user_id = ?1 AND entity = ?2",
-        )?
+        .prepare_cached("SELECT count(*) FROM cloud_items WHERE user_id = ?1 AND entity = ?2")?
         .query_row(params![user, entity.as_str()], |row| row.get(0))?;
     Ok(n.max(0) as u64)
 }

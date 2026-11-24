@@ -1,7 +1,8 @@
 # Trackside dashboard
 
-The admin pages for Trackside: setup, users and invites, devices and keys, libraries and scans,
-backups, settings, activity, your own account, and (when the server has it) song requests.
+The admin pages for Trackside: setup, people (with their devices, app keys and web sessions) and
+invites, libraries and scans, backups, settings, activity, your own account, and (when the server
+has it) song requests.
 
 Plain HTML, CSS and JavaScript modules. No build step, no dependencies, no external URLs. The
 server embeds this folder and serves it from `/` (ADR 0007).
@@ -13,21 +14,21 @@ do" before anything else; every other job is one or two clicks from the sidebar.
 
 | Job | Where | How the screen serves it |
 |---|---|---|
-| First run, often on a laptop with the log open | `/setup`, then Overview | Token, name, password, done. The overview then shows Get Started: add music, add your phone, invite someone, each one button. |
-| Invite family | Invites, New Invite | Note, how long it works, access. The link and QR are shown once with a Copy button. |
-| Pair a new phone, often on the couch on a phone | My Account, Add a Device | One button shows a QR and a typed code with a countdown; the page notices the new device by itself. A 6-digit code from the app can be approved in the same box. |
-| "Music stopped working, what's wrong?" | Overview | Needs Attention lists what is broken with the fix and a button. Playback, Last 24 Hours shows failed plays and when they started next to the History that explains them (a NAS went offline at 08:00). |
-| Approve or check requests | Requests | 30-day chart of added and failed, then the list filtered to In Progress, with Details, Try Again and Cancel. |
-| Free disk space | Overview Storage, Settings | Free space trend with an honest projection, database and cache sizes; cache limits in Settings. |
-| Check a backup exists before an upgrade | Overview Backups, Backups | Last and next backup on the overview; Back Up Now and Download (asks for the password again) on Backups. |
-| A family member locked out | Users, a person | Make Reset Link, shown once. |
-| A phone was lost | Devices and Keys | Remove next to every device, with who and when it was last used. |
+| First run, often on a laptop with the log open | `/setup`, then Overview | Token, name, password, done. The overview then shows Get started with progress: add music, connect your phone, invite someone, each one button. |
+| Invite family | Invites, Create an invite | Who it is for, how long it works, access. The whole link and a QR are shown once, with Share (the device's share sheet, where there is one) and Copy link. The invite page says who invited them and what happens next. |
+| Connect a new phone, often on the couch on a phone | My account, Connect a device | One button shows a QR and a typed code with a live countdown; on a phone, Open in Tracks on this device opens the pairing link directly. The page notices the new device by itself. A 6-digit code from the app can be approved in the same box. |
+| "Music stopped working, what's wrong?" | Overview | Needs attention names each problem in plain words with its fix inline: a button named after the action, or the command or setting to copy. Playback shows failed plays and when they started next to Recent activity, which explains them (a NAS went offline at 08:00). |
+| Approve or check requests | Requests | The list filtered to In progress, with Details, Try again and Cancel, and a chart of added, cancelled and failed. Sources and limits is its own tab. |
+| Free disk space | Overview Storage, Settings | Free space of the volume's size, a trend with an honest projection and the month it fills, database and cache sizes; cache limits in Settings. |
+| Check a backup exists before an upgrade | Overview Server, Backups | Last and next backup on the overview; Back up now and Download (asks for the password again) on Backups. |
+| A family member locked out | People, a person | Make a reset link, shown once, with Share and Copy link. |
+| A phone was lost | People, its owner | Remove next to each of their devices, with when and where it was last used. |
 
 ## Files
 
 | Path | What it is |
 |---|---|
-| `index.html`, `app.js` | Sign-in, the sidebar shell and the hash router (`#/users`, `#/libraries/<id>`, ...) |
+| `index.html`, `app.js` | Sign-in, the shell (sidebar on wide screens; a tab bar and a More sheet on phones) and the hash router (`#/people`, `#/libraries/<id>`, ...). `#/users` and `#/devices` redirect to `#/people` |
 | `setup.html`, `setup.js` | First admin account, served at `/setup` |
 | `invite.html`, `invite.js` | Accepting an invite, served at `/invite/<token>` |
 | `reset.html`, `reset.js` | Choosing a new password, served at `/reset/<token>` |
@@ -35,7 +36,7 @@ do" before anything else; every other job is one or two clicks from the sidebar.
 | `api.js` | The only module that calls the server: CSRF header, error codes to messages, route strings |
 | `ui.js` | DOM helpers (text only, control and bidi characters stripped), lists, forms, dialogs, toasts, formatting |
 | `charts.js` | Hand-written SVG bar and line charts with keyboard access, tooltips and a table view |
-| `pages/*.js` | One module per screen; `pages/stats.js` builds the charts from `/admin/stats/*` |
+| `pages/*.js` | One module per screen; `pages/people.js` is People and a person's page (access, devices, app keys, sessions); `pages/stats.js` builds the charts from `/admin/stats/*` |
 | `style.css` | Every style, light and dark through `prefers-color-scheme`, motion tokens, chart roles |
 | `icons/*.svg`, `favicon.svg` | Icons, used as CSS masks so they take the text colour |
 | `dev/` | Preview fixtures and the CI check. Not needed at runtime |
@@ -80,6 +81,10 @@ The fixtures in `dev/fixtures/` are the proposal. In short:
 - Audit entries: `actor` is a username or `system`; `target` is a display string. The overview
   writes them as sentences (`pages/history.js`) and never shows the target or detail of an
   `acquire.*` action outside the Requests page, since those can name a source.
+- `GET /admin/overview`: `acquisition.fetched` is `{songs, keep, bytes, max_bytes, fetching}` for songs
+  played without keeping them; the overview's meter follows the fuller of the two limits.
+- `PATCH /admin/settings` with `acquire.fetched_keep` or `acquire.fetched_max_bytes` answers `400`
+  with a message for the field, which is shown under it.
 - Error `details.reason` values with their own message: `set_by_config`, `last_admin`,
   `username_taken`, `running`.
 
@@ -93,13 +98,19 @@ cd dashboard && python3 -m http.server 8000
 # http://localhost:8000/?preview
 ```
 
-Variants: `?preview=member` (a member's view), `noacq` (no acquisition: Requests disappears),
+Variants: `?preview=member` (Mum's view: her own devices, no admin pages), `noacq` (no acquisition: Requests disappears),
 `nostats` (an older server without `/admin/stats/*`: the charts are simply absent),
 `reauth` (sensitive changes ask for the password again; any password but `wrong` works),
 `ratelimit` (sign-in answers 429 with Retry-After),
-`fresh` (new server: empty lists and the Get Started steps), `signedout` (sign-in page),
+`fresh` (new server: empty lists and the Get started steps), `signedout` (sign-in page),
 `setup` (open `setup.html?preview=setup`), `slow` (1.5 s per call, to see loading states),
-`error` (the overview fails). Invite and reset: `invite.html?preview`, `reset.html?preview`.
+`error` (the overview fails). Invite and reset: `invite.html?preview`, `reset.html?preview`;
+`invite.html` and `reset.html` link their assets with `../`, so a static server needs
+`/dashboard/invite/<token>` and `/dashboard/reset/<token>` rewritten to those files.
+
+Stats fixtures hold the longest range and the preview returns the tail for a shorter one, so the
+range controls work. Setting `acquire.fetched_keep` below 0 or `acquire.fetched_max_bytes` to
+something that is not a size answers 400, to see the field errors.
 
 `node dev/make-fixtures.mjs` regenerates the fixtures from one script so the numbers agree
 across files.
@@ -119,24 +130,59 @@ across files.
 7. CSS uses `transition: all`, `ease-in`, `scale(0)`, or a `:hover` outside the
    `(hover: hover) and (pointer: fine)` block.
 
+## Pages and routes
+
+| Route | Page |
+|---|---|
+| `#/overview` | Status, problems with their fixes, Get started, charts, recent activity, libraries, storage, server facts |
+| `#/people`, `#/people/<id>`, `#/people/new` | Everyone with an account; one person's devices, app keys, web sessions, role and access, and sign-in; add a person. A 6-digit code from Tracks is approved at the bottom of the list |
+| `#/invites`, `#/invites/new` | Invites waiting and earlier ones; create one |
+| `#/libraries`, `#/libraries/<id>`, `#/libraries/add` | Folders, where new songs go, recent uploads (filter and paging), duplicates; one library's scans, problems and settings |
+| `#/requests`, `#/requests/<filter>`, `#/requests/setup` | Requests in progress, failed, finished or all; Sources and limits on its own tab, with the limits for songs played without keeping them |
+| `#/backups`, `#/settings`, `#/activity`, `#/account` | Backups; settings, with the addresses for Tracks first; the audit log; your own account |
+
+A member sees only My account, with no tab bar or menu. On phones (860 px and narrower) an admin
+gets a tab bar with Overview, People, Libraries, Requests (Backups when there are no requests) and
+More, which raises the full navigation as a sheet.
+
+The dashboard never shows anyone's synced data (history, settings, playlists, likes). The
+Listening chart shows plays per person per day as counts only.
+
 ## Charts
 
-| Chart | Where | Why it exists |
-|---|---|---|
-| Listening, plays per day for 30 days, stacked by person (toggle people in the legend) | Overview | "Is anyone using this, and did it break on a day?" A day with no data is marked and named, never drawn as zero. |
-| Playback, last 24 hours: playing at once, converting at once, failed to start, with the conversion limit dashed | Overview | The "music stopped working" answer: when failures started, and whether conversions hit the limit. |
-| Free space over 90 days, with a projection only when the trend is steady | Overview, Storage | Freeing space and planning before it runs out. |
-| Requests per day, added and failed, 30 days | Requests | Is the request system working. |
+| Chart | Where | Range | Why it exists |
+|---|---|---|---|
+| Listening, plays per day stacked by person (toggle people in the legend) | Overview | 7, 30, 90 days | "Is anyone using this, and did it break on a day?" A day with no data is marked and named, never drawn as zero. |
+| Playback: playing at once, converting at once, failed to start, with the conversion limit dashed | Overview | 6, 24, 48 hours | The "music stopped working" answer: when failures started, and whether conversions hit the limit. |
+| Free space, with a projection only when the trend is steady | Overview, Storage | 30, 90, 365 days | Freeing space and planning before it runs out. The headline is the overview's own free space, so the page shows one number. |
+| Requests per day: added, cancelled, failed | Requests | 7, 30, 90 days | Is the request system working. |
 
 Every chart has a figure in words, a legend for two or more series, a table view, and one tab
 stop with arrow keys between points. They come from `GET /admin/stats/*` (spec in the WP7
 report); a 404 or empty data hides only that chart.
 
+Colours are the dataviz reference steps, re-checked with its validator on `--surface` in both
+schemes: people take series 1 to 4 in order (blue, orange, aqua, yellow) and the rest fold into
+Other; Playback and Requests use blue, yellow and the reserved status red, which pass the
+all-pairs checks in both schemes. Axis and figure numbers are the UI sans with tabular figures;
+monospace is kept for paths, commands and codes.
+
 ## Motion
 
 One set of tokens in `style.css`: `--ease-out: cubic-bezier(0.23, 1, 0.32, 1)`,
-`--ease-in-out`, durations 160 ms (press), 150 ms (colour), 200 ms (enter). Only transform and
-opacity move; reduced motion keeps the fades and drops the movement.
+`--ease-in-out`, `--ease-drawer`, durations 160 ms (press), 150 ms (colour), 200 ms (enter),
+140 ms (exit). Pages fade up on a route change, dialogs and the save bar enter with
+`@starting-style` and leave faster than they came, the phone sheet rises with the drawer curve,
+and the pairing countdown bar drains through the Web Animations API, so everything runs on the
+compositor at the display's own rate. Nothing is stepped by a timer. Only transform and opacity
+move; reduced motion keeps the fades and drops the movement.
+
+## Phones
+
+With a coarse pointer every control is at least 44 px (switches, checkboxes, segmented controls
+and links in rows included) and text fields are 16 px, so iOS does not zoom on focus.
+`theme-color` follows the colour at the top of the screen: the graphite bar on the dashboard, the
+page background on sign-in, setup, invite and reset.
 
 ## Security
 
@@ -158,24 +204,26 @@ one pass.
 - [ ] Fresh data directory: open `/setup`, paste the setup token from the log, create the admin.
       The overview shows Get Started.
 - [ ] A wrong setup token says so on the token field.
-- [ ] Invites: create an invite, open its link in a private window, accept it, land on My Account.
+- [ ] Invites: create an invite, open its link in a private window, accept it, land on My account.
       The invite shows as Used. Open the link again: "This invite has ended".
-- [ ] My Account: Show Pairing Code, scan the QR in Tracks. The page notices the new device.
+- [ ] My account: Show pairing code, scan the QR in Tracks. The page notices the new device.
+      On a phone, Open in Tracks on this device opens the app.
       Cancel a code; let one expire.
 - [ ] Device-initiated pairing: start it in Tracks, type the 6 digits under "Got a 6-digit code".
-- [ ] Remove that device from My Account and from Devices and Keys. Tracks is signed out.
+- [ ] Remove that device from My account and from its owner's page under People. Tracks is signed out.
 - [ ] Libraries: add a library, watch the scan count up, open its scan errors.
 - [ ] Unmount a library's folder: it shows Offline on the overview and the library page, and
       nothing goes missing. Remount it.
-- [ ] Backups: Back Up Now, download it, delete an old one.
+- [ ] Backups: Back up now, download it, delete an old one.
 - [ ] Settings: change the server name and save; a setting set by config is read-only.
       Leaving with unsaved changes asks first.
-- [ ] Users: change a member's libraries; make a reset link and use it; try to delete the last
-      admin and read the refusal.
-- [ ] Requests: enable a source, run Test, view a failed request's details, Try Again.
+- [ ] People: change a member's libraries; make a reset link and use it; try to delete the last
+      admin and read the refusal. Old `#/users` and `#/devices` links land on People.
+- [ ] Requests: on Sources and limits enable a source and run Test search; on Requests view a
+      failed request's details and Try again.
 - [ ] With acquisition unavailable, Requests is not in the sidebar and `#/requests` goes to the
       overview.
-- [ ] Sign in as a member: only My Account is there.
+- [ ] Sign in as a member: only My account is there, with no tab bar or menu on a phone.
 - [ ] Let the session expire (or delete the cookie): the next action shows the sign-in page.
 
 ## License

@@ -32,14 +32,14 @@ pub mod build {
         listen_line, me_body, pair_result_body, qr_link, spaced_code,
     };
     pub use crate::routes::acquisition::{external_play_body, search_body};
-    pub use crate::routes::cloud::{
-        cloud_info, device_body, devices_body, page_body as cloud_page_body, push_body,
-        record_body, setting_results_body, settings_body, usage_body,
-    };
     pub use crate::routes::addresses::urls_version;
     pub use crate::routes::admin::{
         admin_library, admin_user, audit_summary, invite_state, library_problems_for,
         overview_library, scan_detail_body,
+    };
+    pub use crate::routes::cloud::{
+        cloud_info, device_body, devices_body, page_body as cloud_page_body, push_body,
+        record_body, setting_results_body, settings_body, usage_body,
     };
     pub use crate::routes::enrichment::status_body as enrichment_status_body;
     pub use crate::routes::media::{decision_body, download_name, reason_text};

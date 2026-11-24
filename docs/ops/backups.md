@@ -6,7 +6,7 @@ Everything Trackside knows is in its data folder (`/data` in Docker):
 
 | Path | What | Back up? |
 |---|---|---|
-| `trackside.db` (with `-wal` and `-shm` while running) | accounts, libraries, song ids, listens, favourites, playlists, settings | yes, through a backup file, never by copying the live file |
+| `trackside.db` (with `-wal` and `-shm` while running) | accounts, libraries, song ids, listens, favourites, playlists, settings, and what the Tracks apps sync to Trackside Cloud (history, app settings, app playlists) | yes, through a backup file, never by copying the live file |
 | `secret.key` | the key that seals app passwords and signs media tokens | yes, and keep it private |
 | `backups/` | the server's own backups | copy it somewhere else |
 | `config.toml` | your settings, if you made one | yes |
@@ -15,6 +15,10 @@ Everything Trackside knows is in its data folder (`/data` in Docker):
 
 Your music isn't in the data folder and Trackside never changes it, so back it up the way you
 already do.
+
+Backups hold your users' synced listening history, so keep them as private as the server.
+Secrets the apps share between a person's own devices (the nearby-devices key) are encrypted by
+the apps before they reach the server, and neither the server nor a backup can read them.
 
 If `secret.key` is lost, app passwords and pending pairing codes stop working and have to be
 made again. Passwords, sessions and device keys keep working, because they're stored as

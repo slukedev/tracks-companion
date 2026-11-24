@@ -32,6 +32,7 @@ Contents:
 16. Admin endpoints (dashboard)
 17. Subsonic and OpenSubsonic coverage
 18. Versioning and deprecation
+19. Trackside Cloud
 
 ---
 
@@ -47,9 +48,11 @@ Contents:
   Request bodies are limited to 1 MiB except uploads. Responses are compressed with `br` or
   `gzip` when the client accepts it; media is never compressed.
 - **Field names** are `snake_case`. Clients must ignore unknown fields and unknown enum values.
-  Absent optional fields mean "unknown" or "none"; `null` is not sent, with two exceptions:
-  the chart series of `/admin/stats/*`, where `null` marks a bucket with nothing recorded, and
-  `PATCH` bodies, where `null` clears a value (`max_bitrate_kbps`, `quick_scan_interval_s`).
+  Absent optional fields mean "unknown" or "none"; `null` is not sent, with three exceptions:
+  the chart series of `/admin/stats/*`, where `null` marks a bucket with nothing recorded,
+  `PATCH` bodies, where `null` clears a value (`max_bitrate_kbps`, `quick_scan_interval_s`), and
+  a cleared Trackside Cloud setting (section 19). The apps' own `fields` in section 19 keep
+  their own names.
 - **Ids** are strings (architecture section 6), case-insensitive on input.
 - **Times** are RFC 3339 UTC with milliseconds: `"2026-11-14T09:30:00.000Z"`. Durations and
   positions are integer milliseconds in fields ending `_ms`.
@@ -380,10 +383,17 @@ No auth. Lets a client tell Trackside from other servers and decide what to call
     "hls": true,
     "suggested_cellular_profile": "aac-256"
   },
-  "features": {"lyrics": true, "uploads": false, "events": true, "animated_art": false},
-  "subsonic": {"enabled": true, "path": "/rest"}
+  "features": {"lyrics": true, "uploads": false, "events": true, "animated_art": false,
+               "cloud": true},
+  "subsonic": {"enabled": true, "path": "/rest"},
+  "cloud": {"version": 1, "max_batch": 1000, "max_page": 2000,
+            "entities": ["plays", "sessions", "stations", "forgotten-songs", "blocked-artists",
+                         "excluded-stations", "playlists", "playlist-entries", "likes", "settings"]}
 }
 ```
+
+`features.cloud` and `cloud` say Trackside Cloud is on (section 19); `cloud` is left out when the
+admin turned it off.
 
 The unauthenticated document never mentions acquisition. Authenticated feature flags are in
 `GET /api/v1/me` (section 7).
@@ -1050,6 +1060,7 @@ caller can see, in sync as well.
 | `upload` | `{"id", "state", "song_id"?}` | the caller's uploads |
 | `server_urls` | `{"version"}` | the server's addresses changed; call `GET /server/urls` (section 7) |
 | `session` | `{"reason": "revoked"}` | the credential was revoked; the stream ends |
+| `cloud` | `{"entity": "plays"}` | the caller's Trackside Cloud data for `entity` (or `devices`) changed; pull it (section 19). Never carries the data |
 
 `id` of each event is the seq at the time. Each event type is sent only to callers allowed to see
 it. Clients connect only while in the foreground. A user may have 16 streams open at once; a
@@ -1323,7 +1334,7 @@ fixtures in `dashboard/dev/fixtures/` use the same shapes.
 |---|---|
 | `GET /admin/users` | `{"users": [AdminUser]}` |
 | `POST /admin/users` | `{"username", "display_name"?, "password", "role"?, "permissions"?, "library_ids"}` → `201` AdminUser. `role` defaults to `member`; `role: admin` needs a recent password |
-| `GET /admin/users/{id}` | AdminUser plus integer `devices`, `api_keys` and `sessions` |
+| `GET /admin/users/{id}` | AdminUser plus integer `devices`, `api_keys` and `sessions`, and `cloud: {"items", "bytes"}` when the user keeps anything in Trackside Cloud (counts only, never the content) |
 | `PATCH /admin/users/{id}` | any of `display_name`, `role`, `permissions` (`can_download`, `can_upload`, `can_request`, `legacy_subsonic`, `max_bitrate_kbps`; `null` removes the limit), `disabled`. Changing `role` or `disabled` needs a recent password |
 | `PUT /admin/users/{id}/libraries` | `{"library_ids": [...]}`; bumps the user's sync epoch |
 | `POST /admin/users/{id}/password-reset` | `201 {"url": "https://.../reset/<token>", "expires_at"}`; recent password |
@@ -1437,6 +1448,10 @@ files were left for later because they were still being written (`scanner.settle
 - `acquire.fetched_keep` (a whole number, default `500`) and `acquire.fetched_max_bytes` (a size,
   default `"20GiB"`) limit songs played without being kept. Lowering either evicts at once, least
   recently played first. `0` keeps none beyond those in use.
+- `cloud.enabled` (default `true`), `cloud.quota_items` (a whole number, default `2000000`) and
+  `cloud.quota_bytes` (a size, default `"1GiB"`) control Trackside Cloud (section 19). They are
+  dashboard settings only, not configuration keys. A lower quota refuses new items and keeps
+  what is stored.
 - Secret keys (`enrichment.lastfm_api_key`) are write-only: `PATCH` takes the text, which is
   sealed with the server's secret key before it is stored, and needs a recent password; `GET`
   and every response show only whether one is set, as `"value": true` or `false`.
@@ -1701,3 +1716,241 @@ The previous Subsonic proxy Tracks used fetched songs on demand from services el
 - Wire fixtures for every response shape live in `crates/trackside-api/tests/fixtures/`.
   The server's tests serialise the real types and compare against them; Tracks' tests decode the
   same files. A fixture change is an API change and is reviewed as one.
+
+---
+
+## 19. Trackside Cloud
+
+Per-user sync of the Tracks apps' own data (history, sessions, stations, settings, lists,
+playlists, likes), for people who choose their Trackside server over iCloud. ADR 0012 has the
+design. Fixtures: `crates/trackside-api/tests/fixtures/cloud-*.json`.
+
+- **Only your own data.** Every route works on the caller's records and nobody else's, admins
+  included. There is no admin route to anyone's records, and the dashboard never shows them;
+  admins see item and byte counts on the user page (section 16).
+- **Device keys only**, scope `library` to read and `write` to change. A session or an API key is
+  `403 forbidden`. With `cloud.enabled` off (section 16, Server settings) every route is `404`.
+- **Shapes.** The envelope follows section 1 (`snake_case`, RFC 3339 times). `fields` is the
+  app's own object under the app's own names; the server keeps it as sent apart from the rules
+  below, so unknown fields and enum values round-trip. The times inside `fields` that the server
+  reads (`playedAtMs`, `firstSeenMs`, `lastSeenMs`, `forgottenAtMs`) are integer milliseconds.
+  `null` inside `fields` is dropped on a new record, clears a field on a newest-wins field, and
+  is ignored elsewhere.
+- **Versions.** Each user has their own change seq. Every write takes the next value, which
+  becomes the record's `version`. The pull cursor is that seq as a decimal string; it never
+  depends on client time.
+
+### Entities
+
+| Path segment | `id` | Rule |
+|---|---|---|
+| `plays` | the client's playID UUID, a UUIDv5 for Apple backfill, or `lastfm:<played_at_s>:<hash>` | `title`, `artistName` and `playedAtMs` are required. Core fields (`title`, `artistName`, `albumTitle`, `playedAtMs`, `kind`, `source`, `recordedByDeviceID`, `platform`) never change: a different value is `conflict`. `artworkURL` is newest-wins. Every other field (`songKey`, `catalogID`, `serverSongID`, `spotifyID`, `stationID`, `sessionID`, `playedMs`, `durationMs`, `scrobbledAt`, `addedToPlaylistAt`, and fields the server does not know) is first non-null wins. `songKey` is filled with `tracks_model::song_key(title, artistName)` when absent. Tombstones are kept forever. |
+| `sessions` | UUID | Written only by its owner (its `recordedByDeviceID` field, else the device that first pushed it) or a device restored from the owner (Devices below); anyone else is `rejected` `not_owner`. Otherwise the last write wins, field by field. |
+| `stations` | `stationKey(name)`, which the server derives when `id` is empty | `name` is required. `firstSeenMs` takes the minimum, `lastSeenMs` the maximum, every other field the first non-null. |
+| `forgotten-songs` | `songIdentity` (`title` 0x1F `artistName`, folded) | Grows only: `forgottenAtMs` takes the maximum; a delete is `rejected` `grow_only`. |
+| `blocked-artists`, `excluded-stations` | the folded `name`, derived when `id` is empty | One value per item, newest `client_modified_at` wins, deletes included: an add newer than the delete brings the item back, an older one is `conflict`. |
+| `likes` | `songIdentity`, derived when `fields` has `title` and `artistName` | `{"loved", "rating"?}`, newest `client_modified_at` wins as above. |
+| `playlists` | UUID | Newest `client_modified_at` wins per field. Deleting a playlist deletes its entries. |
+| `playlist-entries` | UUID (the entry) | `playlistID` and `order` (a fractional order key, compared as text by the client) are required; `track` is `{"title", "artist", "album"?, "ids": {"<source>": "<id>"}}`. Newest wins per field; `playlistID` never changes. |
+
+A keyed `id` that does not match its fields (a station whose `id` is not `stationKey(name)`) is
+`rejected` `identity_mismatch`. Ids and device ids are up to 256 and 128 bytes of text.
+
+### `GET /api/v1/cloud/{entity}?cursor=&limit=` (scope: library)
+
+`limit` defaults to 500, at most 2000. No `cursor` (or an empty one) pages a full snapshot from
+the start; tombstones are included, so a snapshot can also be applied as a delta.
+
+```json
+{
+  "upserts": [{"id": "6A8C0E2F-4B6D-4F8A-9C1E-3B5D7F9A1C3E", "version": 917,
+               "fields": {"title": "Halo", "artistName": "Beyoncé", "playedAtMs": 1794645000000,
+                          "kind": "onDemand", "songKey": "halo\u001fbeyonce"},
+               "device_id": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C",
+               "client_modified_at": "2026-11-14T09:25:00.000Z"}],
+  "deletes": [{"id": "1F3B5D7F-9A1C-4E3B-8D5F-7A9C1E3B5D7F", "version": 918,
+               "device_id": "0C7B5E3A-9D1F-4E2B-8A6C-5F4E3D2C1B0A",
+               "client_modified_at": "2026-11-14T09:29:30.000Z",
+               "deleted_at": "2026-11-14T09:29:30.000Z",
+               "merged_into": "6A8C0E2F-4B6D-4F8A-9C1E-3B5D7F9A1C3E"}],
+  "cursor": "918",
+  "has_more": false
+}
+```
+
+- Records come in `version` order and each appears at most once per page. A record that changes
+  after it was paged comes again later at its new version; nothing committed before a page is
+  skipped by it.
+- Commit `cursor` only after applying the page, and keep pulling while `has_more`.
+- `410 sync_reset`: the cursor is older than tombstones the server pruned, or newer than anything
+  it has (a restored backup). Pull again without a cursor, keeping local data until done.
+- `400 bad_request` (`details.field = "cursor"`) for a cursor that is not a number; `404` for an
+  unknown entity.
+
+### `POST /api/v1/cloud/{entity}:batch` (scope: write)
+
+The `:batch` suffix is part of the last path segment (`/cloud/plays:batch`). Up to 1000 items and
+an 8 MiB body; more is `413 too_large`. Each item is idempotent by `id`.
+
+```json
+{"items": [
+  {"id": "6A8C0E2F-4B6D-4F8A-9C1E-3B5D7F9A1C3E",
+   "fields": {"title": "Halo", "artistName": "Beyoncé", "playedAtMs": 1794645000000,
+              "kind": "onDemand", "source": "appleMusic",
+              "recordedByDeviceID": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C"},
+   "client_modified_at": "2026-11-14T09:25:00.000Z",
+   "device_id": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C"},
+  {"id": "1F3B5D7F-9A1C-4E3B-8D5F-7A9C1E3B5D7F", "base_version": 902,
+   "client_modified_at": "2026-11-14T09:29:30.000Z", "device_id": "0C7B5E3A-...",
+   "deleted_at": "2026-11-14T09:29:30.000Z",
+   "merged_into": "6A8C0E2F-4B6D-4F8A-9C1E-3B5D7F9A1C3E"}
+]}
+```
+
+- An upsert carries `fields`; a delete carries `deleted_at` (and `merged_into` for a play the
+  client merged into another) and no `fields`.
+- `base_version` is compare-and-set: the `version` the client last saw, or `0` for "must not
+  exist yet". A mismatch is `conflict`, except that an item that changes nothing is always
+  `duplicate`, so replaying a batch is safe.
+- An upsert of a tombstoned id is `rejected` `deleted` unless it carries `"undelete": true`
+  (the newest-wins lists decide by time instead).
+- `client_modified_at` and `deleted_at` more than a day ahead of the server's clock, and a play
+  whose `playedAtMs` is, are `rejected` `future`.
+
+`200`, one result per item in order:
+
+```json
+{"results": [
+  {"id": "6A8C0E2F-...", "status": "accepted", "version": 918},
+  {"id": "lastfm:1700000000:5f2b9c1d", "status": "duplicate", "version": 640},
+  {"id": "1F3B5D7F-...", "status": "conflict", "current": {"id": "1F3B5D7F-...", "version": 911,
+   "fields": {"title": "Halo"}, "device_id": "...", "client_modified_at": "..."}},
+  {"id": "8E0A2C4E-...", "status": "rejected", "reason": "deleted"}
+]}
+```
+
+- `accepted`: stored at `version`. `duplicate`: already stored, nothing changed; success.
+- `conflict`: the stored copy stands; `current` is it (a record as in a pull, or a delete), absent
+  when nothing is stored. Apply `current`, or rebase and push again with its `version`.
+- `rejected` with `reason`: `invalid`, `too_large`, `deleted`, `not_owner`, `grow_only`,
+  `future`, `identity_mismatch`, `encryption_required` or `quota_exceeded`. Drop the item, except
+  for `quota_exceeded`, which clears when space is freed or the admin raises the quota. Reasons
+  are an open set.
+- For a keyed entity pushed with an empty `id`, `id` in the result is the key the server derived.
+- The whole batch fails only for auth, size, malformed JSON or `429 rate_limited`.
+
+Writes are applied in short transactions of at most 250 items, so other users' requests run
+between them during a large import.
+
+### Settings
+
+`GET /api/v1/cloud/settings?cursor=` (scope: library): every setting, or those changed after
+`cursor`.
+
+```json
+{
+  "settings": {
+    "playlistName": {"value": "Heard on the radio", "modified_at": "2026-11-13T09:30:00.000Z",
+                     "device_id": "0C7B5E3A-...", "version": 12},
+    "playlistID": {"value": null, "modified_at": "2026-11-14T08:30:00.000Z",
+                   "device_id": "6F1D9C2A-...", "version": 310},
+    "nearbyKey": {"value": {"$encrypted": {"v": 1, "alg": "chachapoly", "kid": "icloud-keychain-1",
+                                           "nonce": "3q2+7wABAgMEBQYH", "ct": "kJ4w0bQ2..."}},
+                  "modified_at": "2026-11-14T09:20:00.000Z", "device_id": "6F1D9C2A-...",
+                  "version": 412}
+  },
+  "cursor": "918"
+}
+```
+
+`PATCH /api/v1/cloud/settings` (scope: write), up to 1000 keys:
+
+```json
+{"settings": {
+  "playlistName": {"value": "Tracks", "modified_at": "2026-11-14T09:29:50.000Z", "device_id": "6F1D9C2A-..."},
+  "playlistID": {"value": null, "modified_at": "2026-11-14T09:29:50.000Z", "device_id": "6F1D9C2A-..."}
+}}
+```
+
+`value` must be present; `null` clears. `200 {"results": [{"key", "status", "reason"?,
+"current"?}]}`, where `current` is the value that stands after the decision. The server decides,
+the way Tracks' `SyncedSetting.decide` does, and is authoritative:
+
+- The newest `modified_at` wins per key; a tie keeps the stored value (`conflict`).
+- `forgottenSongs` and `forgottenSongDates` are lists of text that merge by union (sorted) and
+  keep the later time; `null` adds nothing.
+- A cleared value is an explicit `null` with its time and wins like any value.
+- A seed (`modified_at` `1970-01-01T00:00:00.000Z`) never replaces a stored value, real or seed.
+- Keys the server does not know, such as platform-only settings, round-trip with newest-wins.
+- Keys are up to 128 bytes, values up to 256 KiB of JSON, at most 1000 keys per user.
+
+### Encrypted values
+
+A setting may hold a value the client encrypted, which the server stores and returns untouched
+and cannot read:
+
+```json
+{"$encrypted": {"v": 1, "alg": "chachapoly", "kid": "icloud-keychain-1",
+                "nonce": "<base64>", "ct": "<base64>"}}
+```
+
+The object has the single key `$encrypted`. `alg` (required) and `kid` are the client's own
+labels; `ct` (required) and `nonce` are base64, standard or URL-safe, padded or not; other members
+must be text or numbers. `ct` is 17 bytes to 16 KiB decoded and not exactly 32 bytes, since an
+AEAD adds a tag and a 32-byte `ct` would be a raw key.
+
+`nearbyKey`, the 32-byte TLS secret a user's nearby devices share, must be such an envelope or
+`null`: anything else is `rejected` `encryption_required`. The key that encrypts it never reaches
+the server (the apps keep it in iCloud Keychain or the platform's own key store), so the server,
+its backups and its admin can never read the nearby secret.
+
+### Devices
+
+The app's own device ids and which devices each was restored from, so a restored device
+inherits what its predecessors owned (sessions here; the right to scrobble a play, which the
+clients decide: the server only stores `scrobbledAt` and `recordedByDeviceID` and never
+scrobbles).
+
+- `GET /api/v1/cloud/devices` (scope: library): `{"devices": [{"device_id", "predecessors",
+  "name"?, "platform"?, "server_device_id"?, "current", "registered_at", "updated_at"}]}`.
+  `server_device_id` is the signed-in install (section 7, Devices) that registered it, and
+  `current` marks the caller's own.
+- `PUT /api/v1/cloud/devices/{device_id}` (scope: write) `{"predecessors": [...], "name"?,
+  "platform"?}`: registers the device or adds predecessors (they only grow, at most 32; a
+  device cannot be its own). `200` with the device. At most 200 devices per user.
+
+Device `A` succeeds device `B` when `A` is `B` or `B` is among `A`'s predecessors, directly or
+through others.
+
+### Usage
+
+`GET /api/v1/cloud/usage` (scope: library):
+
+```json
+{"items": 152340, "bytes": 98312448, "quota": {"items": 2000000, "bytes": 1073741824},
+ "entities": {"plays": {"items": 151900, "bytes": 97800000}}}
+```
+
+### Limits
+
+- Fields of one item: 16 KiB of JSON, 100 keys, field names of 64 bytes, strings of 4 KiB,
+  arrays of 1000, nesting 4 deep; over is `rejected` `too_large`.
+- Per user: `cloud.quota_items` items and `cloud.quota_bytes` bytes (section 16), tombstones
+  included. Deletes are always allowed.
+- Pushes (batches and settings patches) per user: 20 a second with bursts of 40, and 10 000
+  items a second with bursts of 50 000, on top of the per-key request limit. Over that,
+  `429 rate_limited` with `Retry-After`.
+- Tombstones are pruned 90 days after they were written, except plays', which are kept forever.
+
+### Change signal
+
+After a write, the owner's event streams (section 13) get `cloud` with `{"entity": "<path
+segment>"}`, or `"devices"` for the registry: pull that entity. The event never carries data and
+goes to nobody else. After reconnecting, pull every entity: the stream does not replay `cloud`
+events.
+
+### Backups and deletion
+
+Cloud data lives in the same database, so every backup holds it (section 16, Backups), as
+readable as the rest of the database apart from encrypted values. Deleting a user deletes their
+cloud data with them.

@@ -69,7 +69,10 @@ mod tests {
         ]);
         assert!(registry.succeeds("A", "A"));
         assert!(registry.succeeds("C", "A"));
-        assert!(!registry.succeeds("A", "C"), "ownership does not flow backwards");
+        assert!(
+            !registry.succeeds("A", "C"),
+            "ownership does not flow backwards"
+        );
         assert!(!registry.succeeds("X", "A"));
         assert!(registry.succeeds("X", "Y"));
     }

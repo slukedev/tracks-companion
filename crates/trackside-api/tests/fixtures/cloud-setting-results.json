@@ -1,0 +1,43 @@
+{
+  "results": [
+    {
+      "current": {
+        "device_id": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C",
+        "modified_at": "2026-11-14T09:29:50.000Z",
+        "value": "Tracks",
+        "version": 919
+      },
+      "key": "playlistName",
+      "status": "accepted"
+    },
+    {
+      "current": {
+        "device_id": "0C7B5E3A-9D1F-4E2B-8A6C-5F4E3D2C1B0A",
+        "modified_at": "2026-11-14T09:29:00.000Z",
+        "value": true,
+        "version": 640
+      },
+      "key": "autoAddToPlaylist",
+      "status": "conflict"
+    },
+    {
+      "current": {
+        "device_id": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C",
+        "modified_at": "2026-11-14T09:29:50.000Z",
+        "value": [
+          "halo\u001fbeyonce",
+          "lion\u001felevation",
+          "tides\u001fumbra"
+        ],
+        "version": 920
+      },
+      "key": "forgottenSongs",
+      "status": "accepted"
+    },
+    {
+      "key": "nearbyKey",
+      "reason": "encryption_required",
+      "status": "rejected"
+    }
+  ]
+}
