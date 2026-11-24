@@ -11,7 +11,7 @@ Guides for people hosting the server. New here? Start with the
 | [remote-access.md](remote-access.md) | Tailscale, Caddy, built-in HTTPS, Cloudflare Tunnel, Bonjour |
 | [reverse-proxy.md](reverse-proxy.md) | Caddy and nginx settings, serving under a path |
 | [backups.md](backups.md) | what to keep, automatic and manual backups, restore, Litestream |
-| [upgrading.md](upgrading.md) | upgrade checklist, downgrading, edge builds |
+| [upgrading.md](upgrading.md) | upgrade checklist, downgrading, building from main |
 | [troubleshooting.md](troubleshooting.md) | when something doesn't work |
 | [configuration.md](configuration.md) | every setting |
 | [acquisition.md](acquisition.md) | the optional request feature, slskd and yt-dlp |

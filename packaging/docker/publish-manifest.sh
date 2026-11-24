@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tags one variant as a multi-arch image from images already pushed by digest, adds OCI
 # annotations to the index, and signs the result with cosign (keyless). Used by
-# .github/workflows/ci.yml and images.yml.
+# .github/workflows/images.yml.
 #
 #   IMAGE=ghcr.io/slukedev/trackside VERSION=1.2.3 REVISION=<commit> \
 #     packaging/docker/publish-manifest.sh <variant> <tags-file> <digest>...

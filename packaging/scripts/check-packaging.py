@@ -4,7 +4,8 @@
 - The .deb and .rpm metadata in packaging/ matches what the server crate's manifest carries
   (cargo-deb and cargo-generate-rpm only read the crate manifest).
 - The Rust version the Dockerfile installs matches rust-toolchain.toml.
-- Every image reference in the Dockerfile and compose files is pinned by digest.
+- Every image reference in the Dockerfile and compose files is pinned by digest (except
+  Trackside's own, and the local name compose.build.yaml builds).
 
 Exit status 1 lists every problem. With --allow-missing-metadata, a manifest without the
 package tables is a warning instead (until the server crate adopts them).
@@ -54,7 +55,8 @@ def check_pins(problems):
     files = [PACKAGING / "docker" / "Dockerfile", *sorted(PACKAGING.glob("compose*.yaml"))]
     for path in files:
         for ref in IMAGE_LINE.findall(path.read_text()):
-            if ref.startswith("ghcr.io/slukedev/trackside:"):
+            # Our own images, and the name compose.build.yaml gives a local build.
+            if ref.startswith(("ghcr.io/slukedev/trackside:", "trackside:")):
                 continue
             if not re.search(r"@sha256:[0-9a-f]{64}$", ref):
                 problems.append(f"{path.relative_to(ROOT)}: {ref} is not pinned by digest")

@@ -44,10 +44,10 @@ starts at schema 4; there is nothing to upgrade from.
 - Images for amd64 and arm64 (`latest`, `slim`, `acquire`), static Linux binaries, `.deb` and
   `.rpm` packages with a hardened systemd unit, and templates for Unraid, TrueNAS, Synology and
   CasaOS. Linux and Docker only; macOS isn't supported yet.
-- `latest` is the newest release; `edge` is built from every commit to `main` and may break.
-  Images are signed by the workflow that built them (`ci.yml` for edge, `images.yml` for
-  releases) and carry SBOM and provenance attestations; release binaries and packages carry
-  build provenance.
+- `latest` is the newest release. To run `main`, `compose.build.yaml` builds the image from
+  source on your machine; no images are published between releases. Release images are
+  signed by `images.yml` and carry SBOM and provenance attestations; release binaries and
+  packages carry build provenance.
 - Optional acquisition through yt-dlp and slskd, off unless an admin turns it on. Playing a
   song the server doesn't have streams it through yt-dlp without keeping it; only Get adds a
   song to the library.

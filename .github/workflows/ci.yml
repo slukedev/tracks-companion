@@ -1,7 +1,6 @@
-# Checks for Trackside. Pushes to main and pull requests run one Linux job with every check.
-# On main, the edge job then builds amd64 and arm64 on an x64 runner (the Dockerfile
-# cross-compiles, so no emulation), smoke tests amd64, and pushes and signs edge and
-# edge-<commit>.
+# Checks for Trackside, on GitHub-hosted runners. Pushes to main and pull requests run one
+# Linux job with every check. Nothing here builds or publishes images: people running main
+# build it at install time (packaging/compose.build.yaml).
 #
 # Pull request and release images: images.yml. Release binaries and packages: release.yml.
 
@@ -35,9 +34,15 @@ defaults:
 jobs:
   check:
     name: Check
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 90
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
     steps:
+      # GitHub's standard runners have about 14 GB free; a Rust release build plus Docker
+      # layers can run out. Preinstalled toolchains this job doesn't use free about 20 GB more.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -76,6 +81,8 @@ jobs:
           docker compose -f compose.yaml config -q
           docker compose -f compose.yaml -f compose.acquire.yaml config -q
           docker compose -f compose.yaml -f compose.tailscale.yaml config -q
+          docker compose -f compose.yaml -f compose.build.yaml config -q
+          TRACKSIDE_BUILD_TARGET=acquire docker compose -f compose.yaml -f compose.acquire.yaml -f compose.build.yaml config -q
           for f in nas/truenas/compose.yaml nas/synology/compose.yaml nas/casaos/docker-compose.yml; do
             docker compose -f "$f" config -q
           done
@@ -121,105 +128,3 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  edge:
-    name: Edge (amd64 and arm64)
-    needs: [check]
-    if: github.event_name == 'push'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 90
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Image name and version
-        id: meta
-        run: |
-          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/trackside" >> "$GITHUB_OUTPUT"
-          echo "version=0.0.0-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
-      - uses: useblacksmith/setup-docker-builder@9657a6e02ca6445e6d6ce5ffaf370f4828dea50d # v2.4.0
-        with:
-          cache-key: trackside-amd64
-          platforms: linux/amd64,linux/arm64
-      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
-        with:
-          cosign-release: v3.1.5
-
-      - name: Build and push slim by digest
-        id: slim
-        uses: useblacksmith/build-push-action@9b0579bbec7a6cad2f171596c57e7ac1e7658850 # v2.3.0
-        with:
-          context: .
-          file: packaging/docker/Dockerfile
-          target: slim
-          platforms: linux/amd64,linux/arm64
-          outputs: type=image,name=${{ steps.meta.outputs.image }},push-by-digest=true,name-canonical=true,push=true
-          build-args: |
-            VERSION=${{ steps.meta.outputs.version }}
-            REVISION=${{ github.sha }}
-          sbom: true
-          provenance: mode=max
-      - name: Build and push standard by digest
-        id: standard
-        uses: useblacksmith/build-push-action@9b0579bbec7a6cad2f171596c57e7ac1e7658850 # v2.3.0
-        with:
-          context: .
-          file: packaging/docker/Dockerfile
-          target: standard
-          platforms: linux/amd64,linux/arm64
-          outputs: type=image,name=${{ steps.meta.outputs.image }},push-by-digest=true,name-canonical=true,push=true
-          build-args: |
-            VERSION=${{ steps.meta.outputs.version }}
-            REVISION=${{ github.sha }}
-          sbom: true
-          provenance: mode=max
-      - name: Build and push acquire by digest
-        id: acquire
-        uses: useblacksmith/build-push-action@9b0579bbec7a6cad2f171596c57e7ac1e7658850 # v2.3.0
-        with:
-          context: .
-          file: packaging/docker/Dockerfile
-          target: acquire
-          platforms: linux/amd64,linux/arm64
-          outputs: type=image,name=${{ steps.meta.outputs.image }},push-by-digest=true,name-canonical=true,push=true
-          build-args: |
-            VERSION=${{ steps.meta.outputs.version }}
-            REVISION=${{ github.sha }}
-          sbom: true
-          provenance: mode=max
-
-      # The tags move only once every variant has passed.
-      - name: Smoke test each variant (amd64)
-        env:
-          IMAGE: ${{ steps.meta.outputs.image }}
-          SLIM: ${{ steps.slim.outputs.digest }}
-          STANDARD: ${{ steps.standard.outputs.digest }}
-          ACQUIRE: ${{ steps.acquire.outputs.digest }}
-        run: |
-          for pair in "slim $SLIM" "standard $STANDARD" "acquire $ACQUIRE"; do
-            read -r variant digest <<< "$pair"
-            docker pull --quiet --platform linux/amd64 "$IMAGE@$digest"
-            packaging/docker/smoke-test.sh "$IMAGE@$digest" "$variant"
-          done
-      - name: Tag edge and sign
-        env:
-          IMAGE: ${{ steps.meta.outputs.image }}
-          VERSION: ${{ steps.meta.outputs.version }}
-          REVISION: ${{ github.sha }}
-          SLIM: ${{ steps.slim.outputs.digest }}
-          STANDARD: ${{ steps.standard.outputs.digest }}
-          ACQUIRE: ${{ steps.acquire.outputs.digest }}
-        run: |
-          for pair in "slim $SLIM" "standard $STANDARD" "acquire $ACQUIRE"; do
-            read -r variant digest <<< "$pair"
-            packaging/docker/image-tags.sh "$variant" edge "$REVISION" > "tags-$variant"
-            packaging/docker/publish-manifest.sh "$variant" "tags-$variant" "$digest" | tee -a "$GITHUB_STEP_SUMMARY"
-          done

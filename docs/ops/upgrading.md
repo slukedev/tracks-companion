@@ -28,6 +28,8 @@ Upgrade:
 
 - [ ] Docker Compose: change `TRACKSIDE_TAG` in `.env` (or keep `latest`), then
       `docker compose pull && docker compose up -d`.
+- [ ] Docker Compose with `compose.build.yaml`: change `TRACKSIDE_BUILD_REF` in `.env` if
+      you pin one, then `docker compose up -d --build`.
 - [ ] Docker: `docker pull ghcr.io/slukedev/trackside:<version>`, then remove and
       recreate the container with the same volumes.
 - [ ] `.deb` or `.rpm`: install the new package; the service restarts by itself.
@@ -66,12 +68,18 @@ again.
 
 If the release didn't change the database, just run the old version; no restore is needed.
 
-## Following edge builds
+## Building from main
 
-The `edge` tags are built from every commit to `main` and may break. `latest` is the newest
-release. An edge image is published only after that commit passes the full checks and the
-start-up smoke test (on amd64), but nobody has used it yet. Use edge on a second server, or with a backup you're ready to restore.
+No images are published between releases. To run `main`, build it on your machine with
+[`compose.build.yaml`](install.md#building-from-source-with-compose). Every commit on `main`
+has passed the full checks, but nobody has used it yet, and it may break. Run it on a second
+server, or with a backup you're ready to restore.
 
-To stay on one edge build instead of the moving tag, use `edge-<commit>` (the first seven
-characters of the commit on `main`). Going back from edge to a release can need a restore,
-as in [Downgrading](#downgrading), if edge had a newer database schema.
+- **Update:** `docker compose up -d --build`. Docker fetches `main` again and rebuilds only
+  what changed, which usually takes a few minutes rather than the length of a first build.
+- **Stay on one build:** set `TRACKSIDE_BUILD_REF` in `.env` to a full commit hash, and move it
+  on purpose.
+- **Go back to a release:** set `TRACKSIDE_BUILD_REF` to the release tag
+  (`trackside-vX.Y.Z`), or remove `compose.build.yaml` from `COMPOSE_FILE` and pull the
+  release image. If `main` had a newer database schema, restore a backup as in
+  [Downgrading](#downgrading).

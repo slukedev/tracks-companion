@@ -2,7 +2,8 @@
 
 For maintainers. A release is a GitHub release for a tag named `trackside-vX.Y.Z` on `main`
 (`trackside-vX.Y.Z-rc.N`, marked as a pre-release, for a pre-release). Publishing it starts
-two workflows, both on Blacksmith runners:
+two workflows, both on GitHub-hosted runners (`ubuntu-24.04`, and `ubuntu-24.04-arm` for
+the arm64 images):
 
 - [`release.yml`](../../.github/workflows/release.yml) builds the static Linux binaries
   (x86_64 and aarch64 musl), the `.deb` and `.rpm` packages and `SHA256SUMS`, and attaches
@@ -12,9 +13,11 @@ two workflows, both on Blacksmith runners:
   release GitHub marks as latest, `latest`, `slim` and `acquire` (also `latest-slim` and
   `latest-acquire`). A pre-release gets only `X.Y.Z-rc.N` tags.
 
-Every push to `main` already ran the full checks in `ci.yml` and, once they passed,
-published `edge` from the same workflow. The performance and scenario checks that need a person are in
-`tests-e2e/RELEASE.md`.
+Every push to `main` already ran the full checks in `ci.yml`. Nothing publishes images
+between releases: people who run `main` build it themselves with
+[`compose.build.yaml`](install.md#building-from-source-with-compose), so a release is the
+first time a commit's images exist on ghcr.io. The performance and scenario checks that need
+a person are in `tests-e2e/RELEASE.md`.
 
 ## Checklist
 
@@ -93,8 +96,8 @@ change both together.
 | slskd, Tailscale | `packaging/compose.acquire.yaml`, `packaging/compose.tailscale.yaml` | `docker buildx imagetools inspect` |
 | ffmpeg in CI | `FFMPEG_IMAGE` in `ci.yml` | same digest as the Dockerfile |
 | Rust | `rust-toolchain.toml` and `RUST_VERSION` in the Dockerfile | both together; CI checks they match |
-| GitHub Actions, including `useblacksmith/setup-docker-builder` and `useblacksmith/build-push-action` | `uses:` lines in the workflows | `git ls-remote --tags https://github.com/<owner>/<action>`, the commit of the tag (the `^{}` line for an annotated tag) |
-| Runner labels | `runs-on:` lines and `.github/actionlint.yaml` | [Blacksmith's runner list](https://docs.blacksmith.sh/blacksmith-runners/overview) |
+| GitHub Actions, including `docker/setup-buildx-action` and `docker/build-push-action` | `uses:` lines in the workflows | `git ls-remote --tags https://github.com/<owner>/<action>`, the commit of the tag (the `^{}` line for an annotated tag) |
+| Runner labels | `runs-on:` lines | [GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) |
 | CI tools | `tool:` lines (cargo-deny, cargo-zigbuild, cargo-deb, cargo-generate-rpm), `ziglang` | crates.io and PyPI |
 
 After a change, build each image target, run

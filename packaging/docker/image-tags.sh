@@ -1,8 +1,6 @@
 #!/bin/sh
-# Prints the image tags for one variant, one per line. Used by .github/workflows/ci.yml and
-# images.yml.
+# Prints the image tags for one variant, one per line. Used by .github/workflows/images.yml.
 #
-#   packaging/docker/image-tags.sh <slim|standard|acquire> edge <commit>
 #   packaging/docker/image-tags.sh <slim|standard|acquire> release <X.Y.Z[-pre]> <latest: true|false>
 #
 # standard is the unsuffixed default; slim and acquire add -slim and -acquire. A release that
@@ -12,8 +10,7 @@
 set -eu
 
 usage() {
-  echo "usage: image-tags.sh <slim|standard|acquire> edge <commit>" >&2
-  echo "       image-tags.sh <slim|standard|acquire> release <version> <true|false>" >&2
+  echo "usage: image-tags.sh <slim|standard|acquire> release <version> <true|false>" >&2
   exit 2
 }
 
@@ -26,13 +23,6 @@ case "$variant" in
 esac
 
 case "$kind" in
-  edge)
-    commit=${3:-}
-    [ -n "$commit" ] || usage
-    short=$(printf '%s' "$commit" | cut -c1-7)
-    echo "edge-$short$suffix"
-    echo "edge$suffix"
-    ;;
   release)
     version=${3:-}
     latest=${4:-}

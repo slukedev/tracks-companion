@@ -16,30 +16,37 @@ backups it makes.
 ## Quick start
 
 You need Docker with Compose (Docker Desktop on a Mac or Windows, or Docker Engine on Linux)
-and a folder of music. These steps take about five minutes.
+and a folder of music. There is no release yet, so Docker builds Trackside from `main` on your
+machine: the first build takes about 10 to 15 minutes and needs about 10 GB of free disk.
 
-**1. Get the compose file**
+**1. Get the compose files**
 
 ```sh
 mkdir trackside && cd trackside
 curl -fsSLO https://raw.githubusercontent.com/slukedev/tracks-companion/main/packaging/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/slukedev/tracks-companion/main/packaging/compose.build.yaml
 ```
 
-**2. Tell it where your music is**
+**2. Tell it where your music is, and to build from source**
 
 ```sh
 echo "MUSIC_DIR=/path/to/your/music" > .env
+echo "COMPOSE_FILE=compose.yaml:compose.build.yaml" >> .env
 ```
 
 Trackside mounts the folder read-only. Files and folders need to be readable by everyone
 (the usual default), because the server runs as its own unprivileged user.
 
-**3. Start it**
+**3. Build and start it**
 
 ```sh
-docker compose up -d
+docker compose up -d --build
 docker compose logs trackside
 ```
+
+To update later, run `docker compose up -d --build` again. Once a release is out, you can
+remove the `COMPOSE_FILE` line instead and pull the published `latest` image
+([install.md](docs/ops/install.md#building-from-source-with-compose)).
 
 The log shows a banner with a one-time setup token:
 
@@ -91,8 +98,9 @@ Trackside can convert songs for phones on cellular and for formats Apple devices
 `slim` leaves ffmpeg out and plays every song as it is. `acquire` adds what the optional
 acquisition feature needs.
 
-`latest` is the newest release. `edge` is built from every commit to `main`, so it has the
-newest changes and may break; use it only to try something before it's released.
+`latest` is the newest release. To run `main`, build it on your machine with
+[`compose.build.yaml`](docs/ops/install.md#building-from-source-with-compose); it has the newest
+changes and may break.
 
 ## Running it
 

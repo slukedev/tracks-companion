@@ -1,0 +1,34 @@
+# Build Trackside on this machine from the source on GitHub, instead of pulling an image.
+# This is how to run main between releases. Layer it on top of compose.yaml (and after
+# compose.acquire.yaml or compose.tailscale.yaml, if you use them):
+#
+#   docker compose -f compose.yaml -f compose.build.yaml up -d --build
+#
+# or put COMPOSE_FILE=compose.yaml:compose.build.yaml in .env and run
+# `docker compose up -d --build`. Docker clones the repository at the chosen ref and builds
+# it with BuildKit; no registry is involved. The first build downloads the Rust toolchain
+# and compiles the server, which takes 10 to 15 minutes on a 4-core x86 machine (an hour or
+# more on a small ARM board) and needs about 10 GB of free disk. Later builds reuse the
+# toolchain and the Cargo caches.
+#
+# To update, run the same `docker compose up -d --build` again: it fetches the ref anew and
+# rebuilds what changed. `docker builder prune` frees the build cache afterwards.
+#
+# Choose in .env (see env.example):
+#   TRACKSIDE_BUILD_REF     main (default), a release tag such as trackside-v1.2.0, or a
+#                           full commit hash, to stay on one build
+#   TRACKSIDE_BUILD_TARGET  standard (default), slim, or acquire (needed with
+#                           compose.acquire.yaml)
+
+services:
+  trackside:
+    image: trackside:local
+    pull_policy: build
+    build:
+      context: https://github.com/slukedev/tracks-companion.git#${TRACKSIDE_BUILD_REF:-main}
+      dockerfile: packaging/docker/Dockerfile
+      target: ${TRACKSIDE_BUILD_TARGET:-standard}
+      args:
+        # Only the image labels read these; the server reports the version in Cargo.toml.
+        VERSION: source-${TRACKSIDE_BUILD_REF:-main}
+        REVISION: ${TRACKSIDE_BUILD_REF:-main}

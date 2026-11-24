@@ -8,6 +8,7 @@
 # Optional extras, each in its own file layered on top of this one:
 #   compose.acquire.yaml    acquisition with the -acquire image and an slskd container
 #   compose.tailscale.yaml  reach the server from anywhere over your tailnet
+#   compose.build.yaml      build the image from source here instead of pulling it (for main)
 # Use them with `docker compose -f compose.yaml -f compose.acquire.yaml up -d`, or list them
 # in COMPOSE_FILE in .env so plain `docker compose` picks them up.
 #

@@ -28,9 +28,15 @@ defaults:
 jobs:
   linux:
     name: Linux binaries and packages
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 60
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
     steps:
+      # GitHub's standard runners have about 14 GB free; a Rust release build plus Docker
+      # layers can run out. Preinstalled toolchains this job doesn't use free about 20 GB more.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -85,7 +91,7 @@ jobs:
   publish:
     name: Attach to the release
     needs: [linux]
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: write
