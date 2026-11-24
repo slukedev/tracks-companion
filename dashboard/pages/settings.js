@@ -28,6 +28,11 @@ const GROUPS = [
     ['media.transcode_cache_max', 'Space for converted songs', 'Like 10GiB. Converted copies are kept to play again faster.', 'size'],
     ['media.art_cache_max', 'Space for artwork', 'Like 2GiB', 'size'],
   ]],
+  ['Sync', [
+    ['cloud.enabled', 'Sync between devices', 'Tracks keeps history, settings, playlists and likes in step across each person\'s devices', 'bool'],
+    ['cloud.quota_items', 'Items per person', 'Lowering it stops new items but keeps what is stored', 'number'],
+    ['cloud.quota_bytes', 'Space per person', 'Like 1GiB', 'size'],
+  ]],
   ['Other apps', [
     ['auth.legacy_subsonic', 'Older Subsonic apps', 'Lets apps like Symfonium or Feishin sign in with an app password', 'bool'],
   ]],

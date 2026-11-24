@@ -104,7 +104,7 @@ w('me', {
 });
 
 w('admin-users', { users });
-w('admin-user', { ...mum, devices: 2, api_keys: 0, sessions: 1 });
+w('admin-user', { ...mum, devices: 2, api_keys: 0, sessions: 1, cloud: { items: 12400, bytes: 18000000 } });
 w('admin-user-created', { ...users[2], id: 'u0f3a6b9c2d5e8f1a4b7', username: 'nana', display_name: 'Nana', created_at: '2026-11-14T10:00:00.000Z', last_seen_at: undefined });
 w('admin-password-reset', { url: 'http://192.168.1.20:4747/reset/preview-reset-token-4XQ9', expires_at: '2026-11-15T10:00:00.000Z' });
 
@@ -202,6 +202,9 @@ w('admin-settings', {
   'acquire.soulseek.enabled': s(true, 'dashboard'),
   'acquire.soulseek.url': s('http://slskd:5030', 'config', false),
   'enrichment.musicbrainz': s(false),
+  'cloud.enabled': s(true),
+  'cloud.quota_items': s(2000000),
+  'cloud.quota_bytes': s('1GiB'),
   'enrichment.lastfm_api_key': s(true, 'dashboard'),
 });
 w('admin-server-urls', { urls: [

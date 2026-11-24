@@ -139,6 +139,21 @@
     "source": "default",
     "editable": true
   },
+  "cloud.enabled": {
+    "value": true,
+    "source": "default",
+    "editable": true
+  },
+  "cloud.quota_items": {
+    "value": 2000000,
+    "source": "default",
+    "editable": true
+  },
+  "cloud.quota_bytes": {
+    "value": "1GiB",
+    "source": "default",
+    "editable": true
+  },
   "enrichment.lastfm_api_key": {
     "value": true,
     "source": "dashboard",

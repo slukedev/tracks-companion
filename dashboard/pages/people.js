@@ -3,7 +3,7 @@
 
 import { call, describe } from '../api.js';
 import {
-  h, pageHead, section, list, row, badge, button, busy, field, input, toggle, ago, agoInline, date, plural,
+  h, pageHead, section, list, row, badge, button, busy, field, input, toggle, agoInline, date, plural, num, bytes,
   confirm, toast, failed, shareLink, formError, setFieldError, checkbox, empty, platformIcon, platformName, icon,
 } from '../ui.js';
 import { accessForm } from './access.js';
@@ -114,8 +114,11 @@ async function personPage(ctx, id) {
   const isSelf = user.id === ctx.user.id;
 
   const lede = [`${user.username}, ${roleName(user.role).toLowerCase()}`, user.last_seen_at ? `seen ${agoInline(user.last_seen_at)}` : 'never signed in', `joined ${date(user.created_at)}`].join(', ');
+  // Counts only: what someone keeps in sync is theirs, so the content is never shown here.
+  const synced = user.cloud ? h('p.small.muted', `Synced data: ${num(user.cloud.items ?? 0)} items · ${bytes(user.cloud.bytes ?? 0)}`) : null;
   return h('div.page.narrow',
     pageHead(name, { crumb: ['People', '#/people'], lede }),
+    synced,
     user.disabled ? h('div.callout', { role: 'status' }, icon('lock', 'tint-warn'), h('p', `${name} cannot sign in. Their devices stop working until you turn sign-in back on below.`)) : null,
     devicesSection(ctx, name, theirDevices),
     keysSection(ctx, theirKeys),
