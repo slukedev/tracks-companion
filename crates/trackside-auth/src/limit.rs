@@ -240,9 +240,9 @@ impl Backoff {
 
     fn known(&self, pair: &(Account, IpKey), now: Millis) -> bool {
         lock(&self.known).get(&pair.0).is_some_and(|addresses| {
-            addresses.iter().any(|(ip, at)| {
-                *ip == pair.1 && *at <= now && now.since(*at) < KNOWN_ADDRESS_FOR
-            })
+            addresses
+                .iter()
+                .any(|(ip, at)| *ip == pair.1 && *at <= now && now.since(*at) < KNOWN_ADDRESS_FOR)
         })
     }
 
@@ -520,7 +520,10 @@ mod tests {
         assert!(backoff.known(&pair(newest), now));
         // Signing in again from an address refreshes it instead of adding another.
         backoff.succeed(&luke, newest);
-        assert_eq!(lock(&backoff.known).get(&luke).map(Vec::len), Some(KNOWN_PER_ACCOUNT));
+        assert_eq!(
+            lock(&backoff.known).get(&luke).map(Vec::len),
+            Some(KNOWN_PER_ACCOUNT)
+        );
     }
 
     #[test]

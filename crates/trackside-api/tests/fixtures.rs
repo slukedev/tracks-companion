@@ -556,7 +556,10 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             error: wire::ErrorBody {
                 code: String::from("https_required"),
                 message: trackside_auth::AuthError::HttpsRequired.to_string(),
-                details: None,
+                details: Some(serde_json::json!({"https_urls": [
+                    {"url": "https://music.example.com", "kind": "public", "tls": true},
+                    {"url": "https://home.tail4a2c.ts.net", "kind": "tailnet", "tls": true},
+                ]})),
                 request_id: Some(String::from("7a1e4c9b2d8f4a6c9e3b5d7f1a2c4e6b")),
             },
         },

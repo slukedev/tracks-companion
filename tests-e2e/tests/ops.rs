@@ -459,7 +459,9 @@ async fn an_older_database_is_backed_up_and_migrated_and_a_newer_one_refused() -
     {
         let db = rusqlite::Connection::open(&db_path)?;
         db.execute_batch(
-            "DROP TABLE enrichment_fetches; DROP TABLE enrichment_artists;
+            "DROP TABLE cloud_devices; DROP TABLE cloud_entities; DROP TABLE cloud_items;
+             DROP TABLE cloud_meta; DROP TABLE cloud_state;
+             DROP TABLE enrichment_fetches; DROP TABLE enrichment_artists;
              DROP TABLE enrichment_top_songs; DROP TABLE enrichment_song_names;
              DROP TABLE stats_hourly; DROP TABLE stats_daily;
              ALTER TABLE sessions DROP COLUMN recent_auth_at;
@@ -473,7 +475,7 @@ async fn an_older_database_is_backed_up_and_migrated_and_a_newer_one_refused() -
     let backup = std::fs::read_dir(env.server.data_dir().join("backups"))?
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .find(|n| n.starts_with("pre-migrate-v1-v3-"));
+        .find(|n| n.starts_with("pre-migrate-v1-v4-"));
     assert!(
         backup.is_some(),
         "no pre-migration backup: {}",
@@ -566,6 +568,7 @@ async fn behind_a_proxy_the_base_path_and_forwarded_headers_from_trusted_peers_a
                 .http
                 .post(c.api("/auth/session"))
                 .header("x-forwarded-for", ip)
+                .header("x-forwarded-proto", "https")
                 .json(&json!({"username": user, "password": "wrong password!"}))
                 .send()
                 .await?;

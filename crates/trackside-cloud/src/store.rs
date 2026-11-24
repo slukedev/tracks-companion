@@ -226,7 +226,8 @@ fn apply_one(
                 repo::touch(tx, state.user, state.entity, &id, &meta, at)?;
             }
             // A replayed delete finishes a cascade that a restart cut short.
-            if state.entity == Entity::Playlists && stored.as_ref().is_some_and(|s| s.fields.is_none())
+            if state.entity == Entity::Playlists
+                && stored.as_ref().is_some_and(|s| s.fields.is_none())
             {
                 state.deleted_playlists.push(id.clone());
             }
@@ -266,8 +267,8 @@ fn cascade_some(
     playlist: &str,
     limit: usize,
 ) -> Result<usize, DbError> {
-    let Some(tombstone) = repo::load(tx, user, Entity::Playlists, playlist)?
-        .filter(|p| p.fields.is_none())
+    let Some(tombstone) =
+        repo::load(tx, user, Entity::Playlists, playlist)?.filter(|p| p.fields.is_none())
     else {
         return Ok(0);
     };

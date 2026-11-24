@@ -89,7 +89,9 @@ you know you want the server on the internet.
 Caddy gets and renews certificates by itself and speaks HTTP/3. Point a DNS name at your home
 address (a dynamic DNS name works), forward ports 80 and 443 to the machine running Caddy,
 and use the recipe in [reverse-proxy.md](reverse-proxy.md#caddy). Then add
-`https://music.example.com` as an address.
+`https://music.example.com` as an address, and list Caddy's address in `server.trusted_proxies`:
+without it, Trackside can't tell that the app used HTTPS and refuses to sign it in (see
+[Plain HTTP](#plain-http)).
 
 ## Built-in HTTPS
 
@@ -135,19 +137,63 @@ with bridge networking it silently does nothing, and you add the server by addre
 
 ## Plain HTTP
 
-Plain HTTP is fine on your own network and over Tailscale, which encrypts everything itself.
-Anywhere else, use HTTPS: device keys and media tokens travel with every request. Trackside
-enforces this: over plain HTTP it accepts passwords, app passwords, API keys and device keys
-only from your own network (loopback, private and link-local addresses, `fc00::/7`, and
-Tailscale's `100.64.0.0/10`). From anywhere else, signing in, the dashboard, Subsonic apps
-and the Tracks app get "Use the server's https address" (`403 https_required`) instead. Behind
-a reverse proxy that serves HTTPS, list the proxy in `server.trusted_proxies` so Trackside
-believes its `X-Forwarded-Proto`. If your LAN uses global IPv6 addresses rather than private
-ones, add its prefix to `server.local_networks`, for example
-`TRACKSIDE_SERVER__LOCAL_NETWORKS=2001:db8:1234:5678::/64`. Tracks holds
-to this itself: it sends a key, code or password over plain HTTP only to a nearby address (a
-private or Tailscale IP, or a `.local`, `.lan`, `.internal`, `.home.arpa` or `.ts.net` name), and
-only after that address has proven it is your server. A public `http://` address is never used
-for signing in. Tracks warns
-when you enter an `http://` address that isn't on your local network. Over plain HTTP the dashboard's sign-in still works from
-your own network, with a cookie that isn't marked secure.
+Plain `http://` is fine on your own network and over Tailscale, which encrypts everything
+itself. Anywhere else, use HTTPS: passwords, device keys and media tokens travel with every
+request, and anyone on the way could read them.
+
+Trackside enforces this. Over plain HTTP it accepts a password, app password, API key or device
+key only from a device that is nearby:
+
+- your own network: loopback, private addresses (`10.x`, `172.16-31.x`, `192.168.x`),
+  link-local addresses and IPv6 `fc00::/7`;
+- Tailscale's `100.64.0.0/10`;
+- any network you list in `server.local_networks`.
+
+From anywhere else, signing in, the dashboard, Subsonic apps and the Tracks app get "Use the
+server's https address" (`403 https_required`) instead, before the password or key is even
+checked. Nothing changes over HTTPS.
+
+### If you see "Use the server's https address"
+
+- **Away from home over plain HTTP.** Expected. Set up one of the options above and use its
+  `https://` address.
+- **At home, through a reverse proxy.** Trackside judges a request by the address it came
+  from. A proxy (Caddy, nginx, Traefik, `tailscale serve`, a tunnel) is that address for every
+  client behind it, so Trackside only believes what the proxy says about the real client
+  (`X-Forwarded-For`) and about HTTPS (`X-Forwarded-Proto`) when the proxy is listed in
+  `server.trusted_proxies`. Until it is, requests through it that carry forwarding headers are
+  refused, even when the proxy is on your own network: it could be passing on requests from the
+  internet. Add the proxy's address, for example `trusted_proxies = ["127.0.0.1/32", "::1/128"]`
+  for a proxy on the same machine, or the proxy container's network such as `"172.18.0.0/16"`.
+  The dashboard's Overview says when requests arrive through a proxy that isn't trusted.
+- **At home, with global IPv6.** If your network hands out public IPv6 addresses rather than
+  private ones, Trackside can't tell they are yours. Add the prefix to `server.local_networks`,
+  for example `TRACKSIDE_SERVER__LOCAL_NETWORKS=2001:db8:1234:5678::/64`.
+- **A name that points home from outside too.** If `music.example.com` resolves to your public
+  IP even at home (or your router sends you out and back in), the server sees a public address
+  and wants HTTPS. Use the LAN address at home, or HTTPS everywhere.
+
+### Carrier-grade NAT and Tailscale's range
+
+Tailscale gives out addresses in `100.64.0.0/10`, so Trackside counts that range as nearby.
+Some internet providers use the same range for carrier-grade NAT, where it is the internet, not
+your network. If your server is reached through such a provider without Tailscale in between,
+set `server.tailscale_is_local = false` (`TRACKSIDE_SERVER__TAILSCALE_IS_LOCAL=false`) so plain
+HTTP from that range needs HTTPS like any other public address. Tailscale users who turn it off
+should use `tailscale serve` for HTTPS ([above](#tailscale-on-the-host)).
+
+### What Tracks does
+
+Tracks holds to the same rule itself: it sends a key, code or password over plain HTTP only to
+a nearby address (a private or Tailscale IP, or a `.local`, `.lan`, `.internal`, `.home.arpa`
+or `.ts.net` name), and only after that address has proven it is your server. A public
+`http://` address is never used for signing in, and Tracks warns when you enter one.
+
+### The dashboard over plain HTTP
+
+Over plain HTTP the dashboard's sign-in works only from a nearby device, and its session
+cookie can't be marked secure. That cookie is accepted only on the same terms: if a browser
+brings it to the server over plain HTTP from somewhere that isn't nearby (a laptop that left
+home, a name that resolves differently outside), Trackside answers `https_required` and clears
+the cookie, so it stops being sent in the clear. Sign in again over HTTPS. Over HTTPS only the
+secure cookie counts.

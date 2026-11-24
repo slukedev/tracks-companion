@@ -58,6 +58,57 @@ async fn server_urls(
     super::cached_json(&headers, &etag, &body)
 }
 
+/// Middleware: adds `details.https_urls` to a `403 https_required`, so a client refused over
+/// plain HTTP can switch to an HTTPS address without first reading `/server/urls`, which it
+/// could not authenticate for. The addresses come from the same list, never from the request.
+pub(crate) async fn https_urls_on_refusal(
+    State(state): State<ApiState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let response = next.run(request).await;
+    if response.status() != http::StatusCode::FORBIDDEN {
+        return response;
+    }
+    let (mut parts, body) = response.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, 64 * 1024).await else {
+        return Response::from_parts(parts, axum::body::Body::empty());
+    };
+    let mut value: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(value) => value,
+        Err(_) => return Response::from_parts(parts, axum::body::Body::from(bytes)),
+    };
+    let Some(error) = value
+        .get_mut("error")
+        .and_then(|e| e.as_object_mut())
+        .filter(|e| e.get("code").and_then(|c| c.as_str()) == Some("https_required"))
+    else {
+        return Response::from_parts(parts, axum::body::Body::from(bytes));
+    };
+    let https: Vec<ServerUrl> = super::candidate_urls(&state)
+        .await
+        .into_iter()
+        .filter(|u| u.tls)
+        .collect();
+    if https.is_empty() {
+        return Response::from_parts(parts, axum::body::Body::from(bytes));
+    }
+    let details = error
+        .entry("details")
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if let Some(details) = details.as_object_mut() {
+        details.insert(
+            String::from("https_urls"),
+            serde_json::to_value(&https).unwrap_or_default(),
+        );
+    }
+    parts.headers.remove(http::header::CONTENT_LENGTH);
+    Response::from_parts(
+        parts,
+        axum::body::Body::from(serde_json::to_vec(&value).unwrap_or_default()),
+    )
+}
+
 /// Sends `server_urls` to every event stream when the list differs from the last one sent.
 pub(crate) async fn announce(state: &ApiState) {
     let version = body(state).await.version;

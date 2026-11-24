@@ -657,6 +657,7 @@ async fn deleting_a_playlist_deletes_its_entries() -> TestResult {
 
 #[tokio::test]
 async fn a_large_playlist_is_deleted_in_chunks() -> TestResult {
+    const ENTRIES: usize = 700;
     let f = open()?;
     let u = user(&f.db, "luke")?;
     let limits = Limits::default();
@@ -669,7 +670,6 @@ async fn a_large_playlist_is_deleted_in_chunks() -> TestResult {
         limits,
     )
     .await?;
-    const ENTRIES: usize = 700;
     for batch in 0..ENTRIES / 100 {
         let entries = (batch * 100..(batch + 1) * 100)
             .map(|n| {
@@ -696,7 +696,7 @@ async fn a_large_playlist_is_deleted_in_chunks() -> TestResult {
     .await?;
     let page = store::pull(&f.db, u, Entity::PlaylistEntries, None, 1000).await?;
     assert_eq!(page.deletes.len(), ENTRIES);
-    assert!(page.upserts.is_empty());
+    assert_eq!(page.upserts.len(), 0);
     // Every entry got its own version, after the playlist's.
     let versions: HashSet<i64> = page.deletes.iter().map(|r| r.version).collect();
     assert_eq!(versions.len(), ENTRIES);
@@ -1105,10 +1105,26 @@ async fn a_database_rolled_back_under_the_same_token_gets_a_new_epoch() -> TestR
         let db = open_at(&path)?;
         let started = epoch::reconcile(&db)?;
         let u = user(&db, "luke")?;
-        store::push(&db, u, Entity::Plays, (0..5).map(play).collect(), None, limits).await?;
+        store::push(
+            &db,
+            u,
+            Entity::Plays,
+            (0..5).map(play).collect(),
+            None,
+            limits,
+        )
+        .await?;
         // Litestream's replica: the same file, token included, a little behind.
         db.backup_into(&early)?;
-        store::push(&db, u, Entity::Plays, (5..10).map(play).collect(), None, limits).await?;
+        store::push(
+            &db,
+            u,
+            Entity::Plays,
+            (5..10).map(play).collect(),
+            None,
+            limits,
+        )
+        .await?;
         started.epoch
     };
     {

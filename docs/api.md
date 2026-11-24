@@ -62,7 +62,7 @@ Contents:
   | Header or parameter | Accepted on | Notes |
   |---|---|---|
   | `Authorization: Bearer tsk_...` | every authenticated route | device keys and API keys |
-  | `__Host-trackside_session` cookie | every authenticated route; required for `/admin/*` | requests that change state also need `X-Trackside-CSRF: 1` and a matching `Origin`. Over plain HTTP from a private or loopback address the cookie is `trackside_session`, without `Secure` |
+  | `__Host-trackside_session` cookie | every authenticated route; required for `/admin/*` | requests that change state also need `X-Trackside-CSRF: 1` and a matching `Origin`. Over plain HTTP from a private or loopback address the cookie is `trackside_session`, without `Secure`; it is accepted only where a password would be (Plain HTTP, below) |
   | `?mt=<media token>` | media routes only (section 11, 15.6) | for AVPlayer, which cannot send headers reliably |
 
   Keys never travel in query strings on non-media routes; a key in a query string is rejected
@@ -74,21 +74,34 @@ Contents:
   limited routes, and `Retry-After` on `429`.
 - **Plain HTTP.** A password, an API key or device key (`Authorization: Bearer`), or a setup,
   invite, reset or pairing secret is accepted only over HTTPS (directly, or through a proxy in
-  `server.trusted_proxies` whose `X-Forwarded-Proto` or `Forwarded` says `https`), or over plain
-  HTTP from a nearby client: loopback, RFC 1918, link-local, `fc00::/7`, Tailscale's
-  `100.64.0.0/10`, or a network listed in `server.local_networks`. Otherwise the request is
-  refused with `403 https_required` before the credential is looked at. This covers
+  `server.trusted_proxies` whose `X-Forwarded-Proto` says `https`, or whose `Forwarded` says
+  `proto=https` when it sends no `X-Forwarded-For`), or over plain HTTP from a nearby client:
+  loopback, RFC 1918, link-local, `fc00::/7`, Tailscale's `100.64.0.0/10` (unless
+  `server.tailscale_is_local` is off), or a network listed in `server.local_networks`. Otherwise
+  the request is refused with `403 https_required` before the credential is looked at. This covers
   `POST /setup`, `/auth/session`, `/auth/login`, `/auth/reauth`, `/me/password`,
   `/me/api-keys`, `/invites/{token}/accept`, `/password-resets/{token}`, `/pair/claim`,
   `/pair/requests` and `GET /pair/requests/{id}`, every route reached with a bearer key, and
-  Subsonic `apiKey`, `u`+`p` and `u`+`t`+`s` (error 50, HTTP `403` on media endpoints). Session
-  cookies and media tokens are not affected: the session cookie is `Secure` off the LAN, and
-  media tokens expire. Forwarding headers from a peer that isn't a trusted proxy are ignored,
-  except that a nearby peer's are believed for this one decision (only someone on the network
-  could forge them).
+  Subsonic `apiKey`, `u`+`p` and `u`+`t`+`s` (error 50, HTTP `403` on media endpoints). The
+  plain `trackside_session` cookie follows the same rule: from a client that isn't nearby it is
+  refused with `https_required`, and that response clears it (`Set-Cookie` with `Max-Age=0`).
+  The `__Host-` cookie needs HTTPS anyway, and media tokens expire.
+  - Forwarding headers (`X-Forwarded-For`, `X-Forwarded-Proto`, `Forwarded`, `X-Real-IP`) from a
+    peer that isn't in `server.trusted_proxies` are never believed: the peer is judged by its own
+    address, and a nearby peer that sends any of them is refused, since it may be forwarding
+    clients from the internet. Add such a proxy to `server.trusted_proxies`.
+  - From a trusted proxy, the client is the rightmost `X-Forwarded-For` hop that isn't itself a
+    trusted proxy. `Forwarded` is read only when there is no `X-Forwarded-For`, because common
+    proxies append to `X-Forwarded-For` and pass a client's own `Forwarded` through.
+  - `https_required` carries `details.https_urls` when the server knows any HTTPS address: the
+    `tls: true` entries of `GET /server/urls` (`url`, `kind`, `tls`, `fingerprint`?), so a
+    refused client can switch without signing in first. They come from the server's own list,
+    never from the request.
 - **Concurrency per user.** At most 8 streams and downloads at once (including instant play
   and Subsonic `stream`, `download` and `hls`) and 3 transcodes at once (HLS jobs, transcoded
-  downloads, Subsonic conversions) per user. Over that, `429 rate_limited` with
+  downloads, Subsonic conversions) per user. Only a request that starts an encoder takes a
+  transcode slot: waiting for a transcode that is cached or already being made takes none, and
+  a transcoded download takes its stream slot once the file is ready to send. Over that, `429 rate_limited` with
   `Retry-After: 1`; the Subsonic media endpoints answer HTTP `429` with an error envelope.
 - **Server time.** Every response has a `Date` header; clients use it to compute `client_time`
   skew if they want to.
@@ -135,7 +148,7 @@ display in Tracks. `details` is optional and code-specific.
 | 403 | `forbidden` | authenticated but not allowed (role, scope, library) |
 | 403 | `csrf` | session request without the CSRF header or with a foreign `Origin` |
 | 403 | `setup_required` | an endpoint used before the first admin exists |
-| 403 | `https_required` | a password, key, or setup, invite, reset or pairing secret sent over plain HTTP from an address that isn't nearby (section 2, Plain HTTP) |
+| 403 | `https_required` | a password, key, plain session cookie, or setup, invite, reset or pairing secret sent over plain HTTP from an address that isn't nearby (section 1, Plain HTTP); `details.https_urls` when the server has HTTPS addresses |
 | 403 | `device_mismatch` | a Trackside Cloud route named a device id other than the one bound to the calling device key (section 19) |
 | 403 | `reauth_required` | a sensitive change from a session whose last password check is over 10 minutes old; `POST /auth/reauth` and retry (section 6) |
 | 404 | `not_found` | unknown id, or an id the caller cannot see (never `403`, to avoid leaking existence) |
@@ -1352,7 +1365,7 @@ fixtures in `dashboard/dev/fixtures/` use the same shapes.
 | `PUT /admin/users/{id}/libraries` | `{"library_ids": [...]}`; bumps the user's sync epoch |
 | `POST /admin/users/{id}/password-reset` | `201 {"url": "https://.../reset/<token>", "expires_at"}`; recent password |
 | `POST /admin/users/{id}/sign-out` | ends sessions; `{"devices": true}` also revokes device keys |
-| `DELETE /admin/users/{id}` | `204`; deletes their listens, playlists, stars, devices. Refused for the last admin (`409`, `details.reason = "last_admin"`); recent password |
+| `DELETE /admin/users/{id}` | `204`; deletes their listens, playlists, stars, devices and Trackside Cloud data. Refused for the last active admin (`409`, `details.reason = "last_admin"`); recent password. The user is disabled first, in the same transaction as that check, so a demotion racing with the delete is refused instead of leaving no admin |
 
 AdminUser:
 
@@ -1809,7 +1822,8 @@ the start; tombstones are included, so a snapshot can also be applied as a delta
 
 ### `POST /api/v1/cloud/{entity}:batch` (scope: write)
 
-The `:batch` suffix is part of the last path segment (`/cloud/plays:batch`). Up to 1000 items and
+The `:batch` suffix is part of the last path segment (`/cloud/plays:batch`); a percent-encoded
+colon (`/cloud/plays%3Abatch`) is the same route. Up to 1000 items and
 an 8 MiB body; more is `413 too_large`. Each item is idempotent by `id`.
 
 ```json

@@ -22,7 +22,20 @@ the apps before they reach the server, and neither the server nor a backup can r
 
 After a restore the server starts a new cloud sync epoch, and the Tracks apps pull their cloud
 data again and send back what the backup lacked. `trackside.db.cloud-instance`, next to the
-database, is how the server notices; don't copy it along with a database file.
+database, is how the server notices: it holds a token that changes after every backup and a
+count of the cloud changes the server has seen. A database with an older token, or with fewer
+changes than that count, gets a new epoch. Don't copy that file along with a database file.
+
+If you restore some other way, delete `trackside.db.cloud-instance` before you start the server
+again:
+
+- a Litestream restore (below), which brings back a database a little behind the live one;
+- a whole data folder put back from a snapshot (ZFS, Btrfs, a NAS or VM snapshot, `rsync`),
+  which brings back the old `trackside.db.cloud-instance` too, so the server can't tell the
+  database went back in time.
+
+Without that, devices that synced after the backup can silently miss changes made after the
+restore. Deleting the file only makes every device pull its cloud data once more.
 
 If `secret.key` is lost, app passwords and pending pairing codes stop working and have to be
 made again. Passwords, sessions and device keys keep working, because they're stored as
@@ -33,7 +46,9 @@ hashes.
 Every night at 03:30 server time the server writes a consistent copy of the database to
 `backups/trackside-<UTC time>.db`, with `secret.key` beside it as `<same name>.key`, and keeps
 the last 7. It checks there's room first; if there isn't, it skips the backup and says so on the
-dashboard's overview.
+dashboard's overview. Backups hold password hashes and sealed secrets, so the server makes the
+backups folder and every file in it readable by its own user only, and tightens older backups
+when it lists them.
 
 ```toml
 [backup]
@@ -126,10 +141,10 @@ services:
       LITESTREAM_SECRET_ACCESS_KEY: ${LITESTREAM_SECRET_ACCESS_KEY}
 ```
 
-To restore from it, stop Trackside and run
-`docker compose run --rm litestream restore -o /data/trackside.db /data/trackside.db`
-after moving the old file aside. Litestream doesn't copy `secret.key`; keep that with your
-other backups.
+To restore from it, stop Trackside, move the old `trackside.db` aside, delete
+`/data/trackside.db.cloud-instance`, and run
+`docker compose run --rm litestream restore -o /data/trackside.db /data/trackside.db`.
+Litestream doesn't copy `secret.key`; keep that with your other backups.
 
 ## Your listening history
 

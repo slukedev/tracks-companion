@@ -5,7 +5,13 @@ A proxy in front of Trackside has three jobs: terminate TLS, pass through long r
 the client really is.
 
 On the Trackside side, set the proxy's address as trusted, so `X-Forwarded-For`,
-`X-Forwarded-Proto` and `X-Forwarded-Host` are believed. Headers from anyone else are ignored.
+`X-Forwarded-Proto` and `X-Forwarded-Host` are believed. Headers from anyone else are ignored,
+and a proxy that isn't trusted is judged by its own address alone: since it could be passing on
+requests from the internet, passwords and keys that come through it over plain HTTP are refused
+with `https_required`, even when the proxy is on your network. When a proxy sends
+`X-Forwarded-For`, Trackside reads the client from it and ignores any `Forwarded` header beside
+it, which the proxy may have passed through from the client untouched; `Forwarded` (RFC 7239)
+is used only from a proxy that sends it alone.
 
 ```toml
 [server]

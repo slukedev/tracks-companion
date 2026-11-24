@@ -54,7 +54,7 @@ Merge rules, per entity, all pure functions with tests:
 | stations | Keyed by `stationKey(name)` (`tracks_model::folded`); `firstSeenMs` min, `lastSeenMs` max, the rest first non-null. |
 | forgotten-songs | Keyed by `songIdentity`; grows only, `forgottenAtMs` max. Deletes are refused. |
 | blocked-artists, excluded-stations, likes | One newest-wins value per item by `client_modified_at`, deletes included, so a later add brings an item back without an undelete. |
-| playlists, playlist-entries | Newest wins per field; an entry keeps its `playlistID`; deleting a playlist tombstones its live entries in the same transaction. |
+| playlists, playlist-entries | Newest wins per field; an entry keeps its `playlistID`; deleting a playlist tombstones its live entries right after, in transactions of 250 like a push, each stopping if the playlist came back meanwhile. Replaying the delete finishes a cascade a restart cut short. |
 | settings | Tracks' `SyncedSetting.decide`, run by the server: newest wins, ties keep the stored value, a 1970 seed never replaces anything, `forgottenSongs` and `forgottenSongDates` merge by union, `null` is an explicit clear. |
 
 Restores. A restored backup lacks whatever was written after it, and its seqs restart below
@@ -65,8 +65,17 @@ every backup, and the server keeps the last token it wrote in a sidecar file
 `<database>.cloud-instance`. At start, a database whose token differs from the sidecar's is not
 the copy the server last ran with (a restore, a file put in place by hand, a lost sidecar): it
 gets a new epoch, and every cursor from before is `410 sync_reset`. Because the token changes
-after each backup, no backup shares the live token. Copying the live file while the server runs
-and putting it back later is not detected; the docs already forbid copying the live file.
+after each backup, no backup shares the live token.
+
+The token alone misses a database rolled back underneath the server with its token intact: a
+Litestream restore of the live file. So the database also counts every seq change it ever
+committed (`cloud_meta.issued`, which only grows), and the sidecar keeps the highest count the
+server has seen committed, raised after each cloud write. A database whose count is below the
+sidecar's was rolled back and gets a new epoch too. The count is written after the commit, so the
+sidecar can lag the database (missing a rollback within that moment) but never lead it, which
+would reset every client for nothing. A whole data folder restored from a snapshot brings its
+own old sidecar and is not detected; the backup docs say to delete the sidecar after such a
+restore and after a Litestream one, which forces the new epoch.
 
 Device binding. A device key speaks for one app device id: the one it registered with
 `PUT /cloud/devices/{id}`, else the `client_device_id` it signed in with. Pushed items and

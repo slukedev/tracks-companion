@@ -440,9 +440,6 @@ async fn request_headers_never_add_an_address() -> TestResult {
         .get(server.url("/server/urls"))
         .bearer_auth(&key)
         .header("host", "evil.example")
-        .header("x-forwarded-host", "evil.example")
-        .header("x-forwarded-proto", "https")
-        .header("forwarded", "host=evil.example;proto=https")
         .send()
         .await?
         .json()
@@ -451,6 +448,23 @@ async fn request_headers_never_add_an_address() -> TestResult {
     assert!(
         spoofed.urls.iter().all(|u| !u.url.contains("evil")),
         "{spoofed:?}"
+    );
+    // Forwarding headers from a peer that is not a trusted proxy: the key is refused over
+    // plain HTTP, and the refusal names no address from them either.
+    let forwarded = server
+        .http
+        .get(server.url("/server/urls"))
+        .bearer_auth(&key)
+        .header("x-forwarded-host", "evil.example")
+        .header("x-forwarded-proto", "https")
+        .header("forwarded", "host=evil.example;proto=https")
+        .send()
+        .await?;
+    assert_eq!(forwarded.status(), 403);
+    let body = forwarded.text().await?;
+    assert!(
+        body.contains("https_required") && !body.contains("evil"),
+        "{body}"
     );
     Ok(())
 }

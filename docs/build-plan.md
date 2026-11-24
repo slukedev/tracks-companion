@@ -993,9 +993,9 @@ Acceptance:
 Scope:
 
 - `Server/packaging/docker/Dockerfile` multi-stage: build with `cargo-zigbuild` for musl amd64
-  and arm64; three targets: `slim` (`gcr.io/distroless/static-debian12:nonroot`, no ffmpeg),
+  and arm64; three targets: `slim` (`gcr.io/distroless/static-debian13:nonroot`, no ffmpeg),
   `standard` (same base plus a pinned static ffmpeg build without libfdk_aac, the default `latest`
-  tag), `acquire` (`gcr.io/distroless/cc-debian12:nonroot` for glibc, plus ffmpeg, a pinned
+  tag), `acquire` (`gcr.io/distroless/cc-debian13:nonroot` for glibc, plus ffmpeg, a pinned
   yt-dlp standalone binary and Deno, tagged `-acquire`). `HEALTHCHECK` runs `trackside healthcheck`.
   `ENV TRACKSIDE_DATA_DIR=/data TRACKSIDE_MUSIC_DIR=/music`, `VOLUME /data`, `EXPOSE 4747`, user
   65532.

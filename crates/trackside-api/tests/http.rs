@@ -1527,3 +1527,46 @@ async fn instant_play_without_an_acquirer_job_starts_one_hls_job_per_acquisition
     assert_eq!(fake.spawned().len(), 2);
     Ok(())
 }
+
+#[tokio::test]
+async fn an_https_refusal_names_the_https_addresses() -> TestResult {
+    let server = start().await?;
+    let cookie = server.setup_admin().await?;
+    let key = server.device_key().await?;
+    let refuse = async || -> Result<Value, Box<dyn std::error::Error>> {
+        let response = server
+            .http
+            .get(server.url("/me"))
+            .header("x-test-peer", "203.0.113.7:4000")
+            // Nothing a client sends may become an address.
+            .header("host", "evil.example")
+            .header("x-forwarded-host", "evil.example")
+            .bearer_auth(&key)
+            .send()
+            .await?;
+        assert_eq!(response.status(), 403);
+        Ok(response.json().await?)
+    };
+    let before = refuse().await?;
+    assert_eq!(before["error"]["code"], "https_required");
+    assert!(
+        before["error"]["details"].is_null(),
+        "no https address yet: {before}"
+    );
+    let patched = server
+        .http
+        .patch(server.url("/admin/settings"))
+        .headers(server.session(&cookie))
+        .json(&json!({"server.public_urls": ["http://plain.example.com", "https://music.example.com/"]}))
+        .send()
+        .await?;
+    assert_eq!(patched.status(), 200);
+    let after = refuse().await?;
+    assert_eq!(
+        after["error"]["details"]["https_urls"],
+        json!([{"url": "https://music.example.com", "kind": "public", "tls": true}]),
+        "{after}"
+    );
+    assert!(after["error"]["request_id"].is_string());
+    Ok(())
+}

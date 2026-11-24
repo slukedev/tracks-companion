@@ -1089,12 +1089,13 @@ Notes on the schema:
 
 Migration 4 adds `cloud_state` (each user's own change seq), `cloud_items` (every synced record
 as the app's JSON, keyed by user, entity and client id, with its `version`), `cloud_entities`
-(items, bytes and the pruned-through version per user and entity) and `cloud_devices` (the
+(items, bytes and the pruned-through version per user and entity), `cloud_meta` and `cloud_devices` (the
 apps' device ids and what each was restored from). All cascade from `users`. They are separate
 from `change_log`: cloud writes never wake library `/sync` clients, and the cloud cursor is the
 user's own seq plus a sync epoch that changes when the database is restored or replaced (the
 `<database>.cloud-instance` sidecar file next to the database tells the server which copy it last
-ran). api.md section 19 has the API and ADR 0012 the merge rules.
+ran, and the highest count of cloud changes it saw, so a rolled-back file is caught too). A small
+`cloud_meta` row holds that count. api.md section 19 has the API and ADR 0012 the merge rules.
 
 ---
 
@@ -1296,10 +1297,18 @@ never grants. Changing a password ends every other session; revoking devices is 
 Passwords and keys (login, sessions, re-authentication, password changes, setup, invites,
 resets, pairing, bearer keys and Subsonic credentials) are refused with `403 https_required`
 over plain HTTP from any client that isn't nearby, before they are checked; `server.local_networks`
-adds networks such as a LAN's global IPv6 prefix to the nearby ranges.
+adds networks such as a LAN's global IPv6 prefix to the nearby ranges, and
+`server.tailscale_is_local = false` takes 100.64.0.0/10 out of them for hosts behind
+carrier-grade NAT. A peer that isn't a trusted proxy is judged by its own address only; if it
+sends forwarding headers it may be relaying the internet, so it is refused until the admin
+trusts it. The refusal carries `details.https_urls`, the HTTPS entries of the server's own
+address list, so a client can move to one without signing in first.
 Over plain HTTP the cookie is named `trackside_session`, because browsers refuse the `__Host-`
 prefix without `Secure`. A request over HTTPS ignores a `trackside_session` cookie, so a cookie
 set over plain HTTP (or planted by someone on the network) can't stand in for the secure one.
+The plain cookie itself is accepted only where a password would be: brought over plain HTTP
+from a client that isn't nearby (split-horizon DNS, a laptop away from home) it is refused with
+`https_required` and cleared.
 
 ### Re-authentication
 
@@ -1844,10 +1853,13 @@ silently useless, and the docs say so. Discovery is optional; pairing payloads c
 - HTTP/2 over TLS through ALPN. HTTP/3 is left to Caddy in front.
 - `server.trusted_proxies` (CIDRs; default empty) decides whose `Forwarded` and
   `X-Forwarded-For/Proto/Host` headers are believed; the client address is the rightmost
-  untrusted hop. `server.base_path` serves everything under a prefix.
+  untrusted hop. `X-Forwarded-For` wins over `Forwarded` when both are present, because nginx,
+  Caddy, Traefik and Cloudflare append to the former and pass a client's own `Forwarded`
+  through untouched. `server.base_path` serves everything under a prefix.
 - When requests with forwarding headers arrive from a local address that is not trusted (a proxy
   the admin forgot to list), the server logs one warning and `/readyz` adds a note: every client
-  then shares the proxy's address for rate limits and none counts as nearby for endpoint proofs.
+  then shares the proxy's address for rate limits, none counts as nearby for endpoint proofs,
+  and passwords and keys through it over plain HTTP are refused.
 - Documented recipes: Tailscale (default recommendation), Caddy with automatic TLS, built-in
   ACME, and Cloudflare Tunnel for the dashboard only (its terms make it a poor audio path).
 
@@ -2085,7 +2097,7 @@ host running the server, and the user's network reputation when acquisition is o
 | Member | own data, granted libraries | reading others' data or libraries, admin escalation | every query filtered by `Principal.libraries` and `user_id` in repositories (not in handlers), admin routes require an admin session, tests per endpoint for cross-user access |
 | Admin | users, settings, backups | reading members' synced history and settings | no admin route or dashboard view returns Trackside Cloud records (counts only); cloud routes take device keys only, so an admin session cannot reach them; secrets like `nearbyKey` are stored only client-encrypted (ADR 0012). The database file itself is readable by whoever runs the server |
 | Stolen device key | that user's library and data | long-lived access | keys listed with last use and IP, one-click revoke, no admin scope, media tokens bound to the device epoch |
-| Network observer on plain HTTP | traffic | credential and token theft | passwords, keys and setup, invite, reset and pairing secrets are refused over plain HTTP from addresses that aren't nearby (`403 https_required`, api.md section 2); the docs, and Tracks' server form, warn about plain HTTP addresses; media tokens expire; legacy MD5 auth is opt-in |
+| Network observer on plain HTTP | traffic | credential and token theft | passwords, keys, the plain session cookie and setup, invite, reset and pairing secrets are refused over plain HTTP from addresses that aren't nearby (`403 https_required`, api.md section 1); the docs, and Tracks' server form, warn about plain HTTP addresses; media tokens expire; legacy MD5 auth is opt-in |
 | Malicious file in the library | tag parser, image decoder | parser crash, memory exhaustion, hang | lofty and image are pure Rust; per-file timeout and quarantine; `catch_unwind` around parsing; image dimension cap (12k by 12k) before decode |
 | Malicious peer or video (acquisition) | files in staging | path traversal, non-audio payloads, decoder exploits | canonical path checks, magic-byte allowlist, size limits, full decode in an ffmpeg subprocess, names built from sanitised tags |
 | Compromised yt-dlp release | runs as the server user | code execution | hash-checked updates from the official release, disabled by default, runs with the server's privileges only (non-root, read-only music in the shipped configs), optional `acquire.ytdlp.path` to a sandboxed wrapper |

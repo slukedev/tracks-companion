@@ -486,6 +486,16 @@ async fn batches_cursors_and_limits() -> TestResult {
         .post(&key, "/cloud/plays:batch", &json!({"items": items}))
         .await?;
     assert_eq!(statuses(&replay), vec!["duplicate"; 3]);
+    // Some HTTP stacks percent-encode the colon; it is the same route.
+    let (status, encoded) = server
+        .post(&key, "/cloud/plays%3Abatch", &json!({"items": items}))
+        .await?;
+    assert_eq!(status, 200, "{encoded}");
+    assert_eq!(statuses(&encoded), vec!["duplicate"; 3]);
+    let (status, _) = server
+        .post(&key, "/cloud/plays%3abatch", &json!({"items": []}))
+        .await?;
+    assert_eq!(status, 200);
 
     let (_, first) = server.get(&key, "/cloud/plays?limit=2").await?;
     assert_eq!(first["has_more"], true);

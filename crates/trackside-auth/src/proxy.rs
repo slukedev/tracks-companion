@@ -276,7 +276,10 @@ mod tests {
             ("x-forwarded-for", "198.51.100.99"),
         ]);
         assert!(!forwarded_https(&spoofed));
-        assert!(forwarded_https(&headers(&[("forwarded", "for=192.0.2.1;proto=https")])));
+        assert!(forwarded_https(&headers(&[(
+            "forwarded",
+            "for=192.0.2.1;proto=https"
+        )])));
         assert!(forwarded_https(&headers(&[
             ("x-forwarded-proto", "https"),
             ("x-forwarded-for", "198.51.100.99"),

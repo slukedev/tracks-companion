@@ -38,9 +38,9 @@ signed with cosign and shipped with SBOM and provenance attestations.
 
 | Variant | Release tags | Edge tags | Base | Includes | For |
 |---|---|---|---|---|---|
-| standard | `latest`, `X.Y.Z`, `X.Y`, `X` | `edge`, `edge-<commit>` | distroless static | Trackside, ffmpeg | most people |
-| slim | `slim` or `latest-slim`, `X.Y.Z-slim`, `X.Y-slim`, `X-slim` | `edge-slim`, `edge-<commit>-slim` | distroless static | Trackside | the smallest image, direct play only |
-| acquire | `acquire` or `latest-acquire`, `X.Y.Z-acquire`, `X.Y-acquire`, `X-acquire` | `edge-acquire`, `edge-<commit>-acquire` | distroless cc | Trackside, ffmpeg, yt-dlp, Deno | [acquisition](acquisition.md) |
+| standard | `latest`, `X.Y.Z`, `X.Y`, `X` | `edge`, `edge-<commit>` | distroless static (Debian 13) | Trackside, ffmpeg | most people |
+| slim | `slim` or `latest-slim`, `X.Y.Z-slim`, `X.Y-slim`, `X-slim` | `edge-slim`, `edge-<commit>-slim` | distroless static (Debian 13) | Trackside | the smallest image, direct play only |
+| acquire | `acquire` or `latest-acquire`, `X.Y.Z-acquire`, `X.Y-acquire`, `X-acquire` | `edge-acquire`, `edge-<commit>-acquire` | distroless cc (Debian 13) | Trackside, ffmpeg, yt-dlp, Deno | [acquisition](acquisition.md) |
 
 `latest` is the newest release, and `X.Y.Z` is one release that never changes. `edge` is
 built from every commit to `main`: it has the newest changes, may break, and is for trying

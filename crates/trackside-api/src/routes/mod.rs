@@ -60,6 +60,10 @@ pub(crate) fn router(state: ApiState) -> Router {
         )
         .fallback(|| async { ApiError::not_found() })
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            addresses::https_urls_on_refusal,
+        ))
         .layer(from_fn(request_context))
         .with_state(state);
     Router::new().nest("/api/v1", api)

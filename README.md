@@ -70,10 +70,12 @@ Docker hides your LAN address from the server, so for the QR code to carry it, a
 `TRACKSIDE_SERVER__PUBLIC_URLS` in `compose.yaml`), or use host networking.
 
 That's it. To play away from home, read [remote access](docs/ops/remote-access.md); the short
-version is to install Tailscale on the server and your phone. Tracks uses plain `http://` only
-for addresses on your own network or tailnet; anything else needs HTTPS. A reverse proxy in
-front of Trackside has to pass `/api/v1/ping` through with its query string, because Tracks
-checks each address with it before sending any credential.
+version is to install Tailscale on the server and your phone. Passwords and keys travel over
+plain `http://` only on your own network or tailnet; from anywhere else the server refuses them
+and asks for its HTTPS address, and Tracks never sends them. A reverse proxy in front of
+Trackside has to be listed in `server.trusted_proxies` and pass `/api/v1/ping` through with its
+query string, because Tracks checks each address with it before sending any credential. Paired
+devices learn new addresses by themselves, so adding one later needs no new pairing.
 
 ## Other ways to install
 
@@ -84,9 +86,10 @@ checks each address with it before sending any credential.
 | systemd, `.deb` and `.rpm` packages | [install.md](docs/ops/install.md#systemd) |
 | Unraid, TrueNAS, Synology, CasaOS and ZimaOS | [install.md](docs/ops/install.md#nas) |
 
-There are three images. `latest` has ffmpeg, so Trackside can convert songs for phones on
-cellular and for formats Apple devices don't play. `slim` leaves ffmpeg out and plays every
-song as it is. `acquire` adds what the optional acquisition feature needs.
+There are three images, all built on Debian 13 distroless bases. `latest` has ffmpeg, so
+Trackside can convert songs for phones on cellular and for formats Apple devices don't play.
+`slim` leaves ffmpeg out and plays every song as it is. `acquire` adds what the optional
+acquisition feature needs.
 
 `latest` is the newest release. `edge` is built from every commit to `main`, so it has the
 newest changes and may break; use it only to try something before it's released.
@@ -123,8 +126,8 @@ cargo build --release
 ./target/release/trackside serve
 ```
 
-`rust-toolchain.toml` picks the compiler, so rustup installs the right one on the first
-build. ffmpeg on your `PATH` is optional. Building the container images:
+`rust-toolchain.toml` picks the compiler (Rust 1.100), so rustup installs the right one on
+the first build. ffmpeg on your `PATH` is optional. Building the container images:
 
 ```sh
 docker buildx build -f packaging/docker/Dockerfile --target standard -t trackside .

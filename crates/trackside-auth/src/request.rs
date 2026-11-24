@@ -325,7 +325,10 @@ mod tests {
                 "trackside_session=plain; theme=dark; __Host-trackside_session=secure",
             )],
         );
-        assert_eq!(session_cookie(&p).map(|c| (c.value, c.plain)), Some(("secure", false)));
+        assert_eq!(
+            session_cookie(&p).map(|c| (c.value, c.plain)),
+            Some(("secure", false))
+        );
         let only_plain = parts(Method::GET, "/", &[("cookie", "trackside_session=plain")]);
         assert_eq!(
             session_cookie(&only_plain).map(|c| (c.value, c.plain)),

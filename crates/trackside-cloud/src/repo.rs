@@ -37,10 +37,12 @@ pub(crate) fn set_seq(c: &Connection, user: UserKey, seq: i64) -> Result<(), DbE
 
 /// How many seq changes were ever committed, across users.
 pub(crate) fn issued(c: &Connection) -> Result<i64, DbError> {
-    Ok(c.prepare_cached("SELECT issued FROM cloud_meta WHERE id = 1")?
-        .query_row([], |row| row.get(0))
-        .optional()?
-        .unwrap_or(0))
+    Ok(
+        c.prepare_cached("SELECT issued FROM cloud_meta WHERE id = 1")?
+            .query_row([], |row| row.get(0))
+            .optional()?
+            .unwrap_or(0),
+    )
 }
 
 pub(crate) fn pruned_at(c: &Connection, user: UserKey) -> Result<Millis, DbError> {
