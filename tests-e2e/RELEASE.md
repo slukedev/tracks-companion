@@ -11,7 +11,7 @@ the code first.
 - [ ] `cargo clippy -p trackside-server --no-default-features -- -D warnings`
 - [ ] `cargo test --workspace --all-features` with ffmpeg installed and `TRACKSIDE_TEST_FFMPEG=1`,
       so the end-to-end scenarios and the ffmpeg tests run instead of skipping
-- [ ] `cargo test -p trackside-media -p trackside-acquire -- --ignored`
+- [ ] `TRACKSIDE_TEST_FFMPEG=1 cargo test -p trackside-media -p trackside-acquire`
 - [ ] `cargo deny check`
 - [ ] The end-to-end scenarios also as root on Linux, where the disk-full scenario can mount
       its tmpfs (`sudo -E cargo test -p trackside-e2e --test ops`)

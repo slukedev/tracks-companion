@@ -764,8 +764,8 @@ mod tests {
     #[test]
     fn schedules_fire_after_their_interval_and_never_when_off() {
         let start = Instant::now();
-        let later = start + Duration::from_secs(1800);
-        assert!(due(start, Some(Duration::from_secs(1800)), later));
+        let later = start + Duration::from_mins(30);
+        assert!(due(start, Some(Duration::from_mins(30)), later));
         assert!(!due(start, Some(Duration::from_secs(1801)), later));
         assert!(!due(start, None, later));
         assert!(!due(start, Some(Duration::ZERO), later));

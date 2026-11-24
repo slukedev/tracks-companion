@@ -202,7 +202,7 @@ fn file_env_and_overrides_layer_in_order() -> TestResult {
     assert_eq!(config.server.name, "From env");
     assert_eq!(config.server.base_path, "/music");
     assert!(!config.scanner.watch);
-    assert_eq!(config.scanner.missing_grace, Duration::from_secs(86_400));
+    assert_eq!(config.scanner.missing_grace, Duration::from_hours(24));
     assert_eq!(config.log.level, "debug");
     assert_eq!(report.source("scanner.watch"), ConfigSource::File);
     assert_eq!(

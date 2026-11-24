@@ -72,8 +72,12 @@ Device binding. A device key speaks for one app device id: the one it registered
 `PUT /cloud/devices/{id}`, else the `client_device_id` it signed in with. Pushed items and
 settings naming another id are `rejected` `device_mismatch`; registering another id from a bound
 key, or an id bound to another live key, is `403 device_mismatch`. Predecessors must be the
-user's own devices (registered, or the `client_device_id` of one of their installs), so nobody
-can claim ownership through someone else's device.
+user's own devices: registered, the `client_device_id` of one of their installs, or the
+`recordedByDeviceID` of one of their own plays (an old phone that synced plays but never
+registered). That last way never accepts another user's device or an id bound to a live key other
+than the caller's, so nobody can claim ownership through someone else's device by writing its id
+into their own plays. An expression index on the plays' `recordedByDeviceID` keeps the check one
+index lookup at 300k plays.
 
 Every push item gets `accepted`, `duplicate`, `conflict` (with the copy that stands) or
 `rejected` (with a reason). A replay is a `duplicate` even with a stale `base_version`, because

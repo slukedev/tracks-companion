@@ -105,7 +105,7 @@ jobs:
       - name: Tests that need ffmpeg
         env:
           TRACKSIDE_TEST_FFMPEG: "1"
-        run: cargo test --locked -p trackside-media -p trackside-acquire -- --ignored
+        run: cargo test --locked -p trackside-media -p trackside-acquire
       - name: End to end at 50k songs, compared with the stored baseline
         run: |
           cargo run --release --locked -p trackside-e2e -- \

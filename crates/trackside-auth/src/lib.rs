@@ -52,7 +52,7 @@ pub use trackside_core::repo::users::UserPatch;
 
 /// How far the server clock may step back without a fresh media token being refused as
 /// minted in the future. Clients' clocks are never consulted.
-pub const CLOCK_SKEW: Duration = Duration::from_secs(5 * 60);
+pub const CLOCK_SKEW: Duration = Duration::from_mins(5);
 /// Concurrent streams per user.
 pub const STREAMS_PER_USER: usize = 8;
 /// Concurrent transcodes per user.
@@ -235,7 +235,7 @@ pub struct SessionInfo {
 }
 
 /// How long a password check counts as recent for sensitive actions.
-pub const RECENT_AUTH: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+pub const RECENT_AUTH: std::time::Duration = std::time::Duration::from_mins(10);
 
 impl Principal {
     /// Whether a sensitive action may go ahead without a fresh password check: always for

@@ -38,7 +38,7 @@ pub fn random_seed() -> u64 {
 }
 
 /// How long a now-playing entry outlives the song's expected end.
-const LINGER: Duration = Duration::from_secs(30 * 60);
+const LINGER: Duration = Duration::from_mins(30);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlayState {

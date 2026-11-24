@@ -1930,10 +1930,13 @@ scrobbles).
   - It binds the calling device key to `device_id`. A key already bound to another id, or a
     `device_id` bound to another live (not revoked) key, is `403 device_mismatch`; a re-signed-in
     install keeps its key's device and so its binding.
-  - Each predecessor must be one of the caller's own devices: registered here, or the
-    `client_device_id` of one of their signed-in installs (revoked ones included). Anything else
+  - Each predecessor must be one of the caller's own devices: registered here, the
+    `client_device_id` of one of their signed-in installs (revoked ones included), or the
+    `recordedByDeviceID` of one of their own plays. An id found only in plays is refused when it
+    is another user's device or is bound to a live key other than the caller's. Anything else
     is `400 bad_request` with `details.field = "predecessors"`. A device restored from a backup
-    therefore registers its new id with the old one as predecessor.
+    therefore registers its new id with the old one as predecessor, even when the old one never
+    registered.
 
 Device `A` succeeds device `B` when `A` is `B` or `B` is among `A`'s predecessors, directly or
 through others.

@@ -295,6 +295,35 @@ async fn last_admin_cannot_be_demoted() -> TestResult {
 }
 
 #[tokio::test]
+async fn a_started_delete_keeps_the_other_admin_from_being_demoted() -> TestResult {
+    wp1(async {
+        let h = harness()?;
+        let admin = h.admin().await?;
+        let second = h.member(admin, "mia").await?;
+        let promote = UserPatch {
+            role: Some(Role::Admin),
+            ..UserPatch::default()
+        };
+        h.auth
+            .update_user(Some(admin), second, promote, None)
+            .await?;
+        h.auth.begin_delete_user(second, admin, None).await?;
+        // Between the purge and the delete, demoting the remaining admin would leave none.
+        let demote = UserPatch {
+            role: Some(Role::Member),
+            ..UserPatch::default()
+        };
+        let error = denied(h.auth.update_user(Some(second), second, demote, None).await)?;
+        assert!(matches!(error, AuthError::Conflict(_)));
+        h.auth.delete_user(second, admin, None).await?;
+        let error = denied(h.auth.begin_delete_user(second, second, None).await)?;
+        assert!(matches!(error, AuthError::Conflict(_)));
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
 async fn members_cannot_manage_users_or_invites() -> TestResult {
     wp1(async {
         let h = harness()?;
@@ -402,8 +431,8 @@ async fn session_expires_when_idle_and_at_the_absolute_limit() -> TestResult {
                     trackside_auth::RouteClass::Api,
                 )
                 .await?;
-            h.advance(Duration::from_secs(86_400));
-            elapsed += Duration::from_secs(86_400);
+            h.advance(Duration::from_hours(24));
+            elapsed += Duration::from_hours(24);
         }
         assert!(matches!(
             denied(
@@ -442,7 +471,7 @@ fn invite(role: Role) -> NewInvite {
         },
         libraries: Vec::new(),
         note: Some(String::from("for Mia")),
-        expires_in: Duration::from_secs(7 * 86_400),
+        expires_in: Duration::from_hours(7 * 24),
     }
 }
 
@@ -489,7 +518,7 @@ async fn expired_invite_is_refused() -> TestResult {
         let h = harness()?;
         let admin = h.admin().await?;
         let issued = h.auth.create_invite(admin, invite(Role::Member)).await?;
-        h.advance(Duration::from_secs(7 * 86_400));
+        h.advance(Duration::from_hours(7 * 24));
         let error = denied(
             h.auth
                 .accept_invite(&issued.token, new_user("mia", Role::Member), ip(5))
@@ -602,7 +631,7 @@ async fn password_reset_link_expires_after_a_day() -> TestResult {
         let admin = h.admin().await?;
         let mia = h.member(admin, "mia").await?;
         let reset = h.auth.create_password_reset(admin, mia).await?;
-        h.advance(Duration::from_secs(86_400));
+        h.advance(Duration::from_hours(24));
         let error = denied(
             h.auth
                 .use_password_reset(&reset.token, "fresh password")

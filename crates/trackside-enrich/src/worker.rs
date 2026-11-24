@@ -43,8 +43,8 @@ impl Default for EnrichOptions {
         Self {
             endpoint: String::from(lastfm::ENDPOINT),
             min_interval: Duration::from_millis(400),
-            ttl: Duration::from_secs(30 * 86_400),
-            unknown_ttl: Duration::from_secs(7 * 86_400),
+            ttl: Duration::from_hours(30 * 24),
+            unknown_ttl: Duration::from_hours(7 * 24),
             backoff_initial: Duration::from_secs(30),
             backoff_max: Duration::from_secs(3600),
             request_timeout: Duration::from_secs(10),

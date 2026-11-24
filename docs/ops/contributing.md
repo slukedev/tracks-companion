@@ -25,7 +25,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 cargo deny check                                   # cargo install cargo-deny
-TRACKSIDE_TEST_FFMPEG=1 cargo test -p trackside-media -p trackside-acquire -- --ignored
+TRACKSIDE_TEST_FFMPEG=1 cargo test -p trackside-media -p trackside-acquire
 cargo test -p trackside-e2e                        # end-to-end scenarios; they skip without ffmpeg on PATH
 node dashboard/dev/check-coverage.mjs              # if you touched the dashboard
 ```

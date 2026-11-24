@@ -289,7 +289,7 @@ async fn overview(
             .db
             .clock()
             .now()
-            .saturating_sub(Duration::from_secs(86_400));
+            .saturating_sub(Duration::from_hours(24));
         let today = state
             .acquire
             .admin_list(AcquisitionFilter {
@@ -698,19 +698,13 @@ async fn delete_user(
     require_recent_auth(&state, &principal)?;
     let user = find_user(&state, &id).await?;
     // Trackside Cloud data goes first, in short transactions, so the delete itself stays
-    // short. Only once the delete is sure to be allowed: never for the last admin.
-    let key = user.key;
-    let last_admin = user.role == trackside_core::Role::Admin
-        && user.disabled_at.is_none()
-        && read(&state, move |c| {
-            Ok(!users::list(c)?.iter().any(|u| {
-                u.key != key && u.role == trackside_core::Role::Admin && u.disabled_at.is_none()
-            }))
-        })
+    // short. Disabling the user first checks for the last admin in the same transaction and
+    // keeps a concurrent demotion from making the final delete fail after the purge.
+    state
+        .auth
+        .begin_delete_user(principal.access.user, user.key, Some(ip))
         .await?;
-    if !last_admin {
-        trackside_cloud::store::purge_user(&state.db, key).await?;
-    }
+    trackside_cloud::store::purge_user(&state.db, user.key).await?;
     state
         .auth
         .delete_user(principal.access.user, user.key, Some(ip))

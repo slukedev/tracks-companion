@@ -482,6 +482,27 @@ pub(crate) fn is_users_device(
     .query_row(params![user, device_id], |row| row.get(0))?)
 }
 
+/// Whether `device_id` recorded one of the user's own plays and belongs to no one else: not
+/// another user's device (registered or signed in) and not bound to a live install other
+/// than `caller`. One lookup in the `cloud_items_recorded_by` index.
+pub(crate) fn recorded_own_play(
+    c: &Connection,
+    user: UserKey,
+    device_id: &str,
+    caller: Option<DeviceKey>,
+) -> Result<bool, DbError> {
+    Ok(c.prepare_cached(
+        "SELECT EXISTS (SELECT 1 FROM cloud_items
+                 WHERE user_id = ?1 AND entity = 'plays' AND fields IS NOT NULL
+                   AND json_extract(fields, '$.recordedByDeviceID') = ?2)
+             AND NOT EXISTS (SELECT 1 FROM cloud_devices WHERE device_id = ?2 AND user_id <> ?1)
+             AND NOT EXISTS (SELECT 1 FROM devices WHERE client_device_id = ?2 AND user_id <> ?1)
+             AND NOT EXISTS (SELECT 1 FROM cloud_devices d JOIN devices s ON s.id = d.server_device
+                 WHERE d.device_id = ?2 AND s.revoked_at IS NULL AND s.id IS NOT ?3)",
+    )?
+    .query_row(params![user, device_id, caller], |row| row.get(0))?)
+}
+
 /// Deletes up to `limit` of the user's records. Returns how many went.
 pub(crate) fn delete_some(c: &Connection, user: UserKey, limit: u32) -> Result<usize, DbError> {
     Ok(c.prepare_cached(

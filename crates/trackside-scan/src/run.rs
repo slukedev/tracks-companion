@@ -202,48 +202,14 @@ pub fn execute(
     let art_cache = Arc::new(ArtworkCache::default());
     let mut readers = Vec::new();
     for _ in 0..settings.threads {
-        let rx = Arc::clone(&job_rx);
-        let tx = msg_tx.clone();
-        let reader = Arc::clone(&services.reader);
-        let artwork = Arc::clone(&services.artwork);
-        let cache = Arc::clone(&art_cache);
-        let cancel = stop.clone();
-        let timeout = settings.file_timeout;
-        let handle = std::thread::Builder::new()
-            .name("trackside-read".into())
-            .spawn(move || {
-                let mut safe = SafeReader::new(reader, timeout).with_stop(cancel.clone());
-                loop {
-                    // A timed wait, so a reader notices a stop even while the walker that
-                    // feeds it is stuck on a hung mount and never closes the queue.
-                    let job = {
-                        let guard = rx.lock().unwrap_or_else(PoisonError::into_inner);
-                        guard.recv_timeout(Duration::from_millis(200))
-                    };
-                    let job = match job {
-                        Ok(job) => job,
-                        Err(RecvTimeoutError::Timeout) if cancel.is_cancelled() => break,
-                        Err(RecvTimeoutError::Timeout) => continue,
-                        Err(RecvTimeoutError::Disconnected) => break,
-                    };
-                    if cancel.is_cancelled() {
-                        continue;
-                    }
-                    let outcome = crate::reader::process(&job, &mut safe, artwork.as_ref(), &cache);
-                    let result = Result1 {
-                        rel: job.rel,
-                        known: job.known,
-                        size: job.stat.size,
-                        mtime_ns: job.stat.mtime_ns,
-                        outcome,
-                    };
-                    if tx.send(Msg::Read(Box::new(result))).is_err() {
-                        break;
-                    }
-                }
-            })
-            .map_err(DbError::Io)?;
-        readers.push(handle);
+        readers.push(spawn_reader(
+            services,
+            settings.file_timeout,
+            Arc::clone(&job_rx),
+            msg_tx.clone(),
+            Arc::clone(&art_cache),
+            stop.clone(),
+        )?);
     }
     drop(msg_tx);
     // Only the readers hold the queue now, so if they all stop (the coordinator failed) the
@@ -282,6 +248,54 @@ pub fn execute(
     join_walker(walker, &stop);
     result?;
     coordinator.finish(&root)
+}
+
+/// Starts one tag reader: it takes jobs from the shared queue until the queue closes or the
+/// run stops, and sends each file's outcome to the coordinator.
+fn spawn_reader(
+    services: &Services,
+    timeout: Duration,
+    rx: Arc<Mutex<Receiver<Job>>>,
+    tx: SyncSender<Msg>,
+    cache: Arc<ArtworkCache>,
+    cancel: CancellationToken,
+) -> Result<std::thread::JoinHandle<()>, DbError> {
+    let reader = Arc::clone(&services.reader);
+    let artwork = Arc::clone(&services.artwork);
+    std::thread::Builder::new()
+        .name("trackside-read".into())
+        .spawn(move || {
+            let mut safe = SafeReader::new(reader, timeout).with_stop(cancel.clone());
+            loop {
+                // A timed wait, so a reader notices a stop even while the walker that feeds
+                // it is stuck on a hung mount and never closes the queue.
+                let job = {
+                    let guard = rx.lock().unwrap_or_else(PoisonError::into_inner);
+                    guard.recv_timeout(Duration::from_millis(200))
+                };
+                let job = match job {
+                    Ok(job) => job,
+                    Err(RecvTimeoutError::Timeout) if cancel.is_cancelled() => break,
+                    Err(RecvTimeoutError::Timeout) => continue,
+                    Err(RecvTimeoutError::Disconnected) => break,
+                };
+                if cancel.is_cancelled() {
+                    continue;
+                }
+                let outcome = crate::reader::process(&job, &mut safe, artwork.as_ref(), &cache);
+                let result = Result1 {
+                    rel: job.rel,
+                    known: job.known,
+                    size: job.stat.size,
+                    mtime_ns: job.stat.mtime_ns,
+                    outcome,
+                };
+                if tx.send(Msg::Read(Box::new(result))).is_err() {
+                    break;
+                }
+            }
+        })
+        .map_err(DbError::Io)
 }
 
 /// Joins the walker, or after a stop gives it [`WALKER_GRACE`] and then leaves it: it ends on

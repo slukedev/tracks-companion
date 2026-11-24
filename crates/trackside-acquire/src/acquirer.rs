@@ -123,26 +123,26 @@ pub struct Timing {
 impl Default for Timing {
     fn default() -> Self {
         Self {
-            lease: Duration::from_secs(5 * 60),
+            lease: Duration::from_mins(5),
             renew_every: Duration::from_secs(60),
             backoff: vec![
                 Duration::from_secs(60),
-                Duration::from_secs(5 * 60),
-                Duration::from_secs(30 * 60),
-                Duration::from_secs(2 * 60 * 60),
+                Duration::from_mins(5),
+                Duration::from_mins(30),
+                Duration::from_hours(2),
             ],
             idle_poll: Duration::from_secs(30),
-            janitor_every: Duration::from_secs(60 * 60),
-            part_max_age: Duration::from_secs(24 * 60 * 60),
+            janitor_every: Duration::from_hours(1),
+            part_max_age: Duration::from_hours(24),
             progress_every: Duration::from_secs(1),
-            health_every: Duration::from_secs(24 * 60 * 60),
+            health_every: Duration::from_hours(24),
             unhealthy_recheck: Duration::from_secs(60),
             min_free_bytes: 256 * 1024 * 1024,
             space_check_deadline: Duration::from_secs(5),
             max_jobs: 8,
-            search_session: Duration::from_secs(10 * 60),
+            search_session: Duration::from_mins(10),
             search_cap: Duration::from_secs(30),
-            candidate_ttl: Duration::from_secs(24 * 60 * 60),
+            candidate_ttl: Duration::from_hours(24),
             user_search_rate: Rate {
                 count: 20,
                 per: Duration::from_secs(60),
@@ -478,7 +478,7 @@ fn provider_key(name: ProviderName, field: &str) -> String {
     format!("acquire.{}.{field}", name.as_str())
 }
 
-const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+const DAY: Duration = Duration::from_hours(24);
 
 impl Inner {
     pub fn now(&self) -> Millis {

@@ -78,7 +78,7 @@ pub struct ListenRow {
 
 /// How far past the server's clock a listen may start: clocks on phones drift, and a listen
 /// from further ahead than this is not a listen that happened.
-pub const FUTURE_TOLERANCE: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+pub const FUTURE_TOLERANCE: std::time::Duration = std::time::Duration::from_hours(24);
 
 /// The longest `client_listen_id` accepted.
 const MAX_CLIENT_ID: usize = 200;

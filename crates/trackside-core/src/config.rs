@@ -662,9 +662,9 @@ impl Config {
             auth: AuthConfig {
                 secret_key_file: data_dir.join("secret.key"),
                 legacy_subsonic: true,
-                session_idle: Duration::from_secs(14 * 86_400),
-                session_max: Duration::from_secs(90 * 86_400),
-                media_token_ttl: Duration::from_secs(7 * 86_400),
+                session_idle: Duration::from_hours(14 * 24),
+                session_max: Duration::from_hours(90 * 24),
+                media_token_ttl: Duration::from_hours(7 * 24),
                 argon2_memory: 19 << 20,
                 argon2_iterations: 2,
                 login_rate: Rate {
@@ -675,7 +675,7 @@ impl Config {
                 admin_password: None,
             },
             sync: SyncConfig {
-                tombstone_retention: Duration::from_secs(90 * 86_400),
+                tombstone_retention: Duration::from_hours(90 * 24),
                 max_page: 5000,
             },
             discovery: DiscoveryConfig { mdns: true },
@@ -720,11 +720,11 @@ impl ScannerConfig {
             threads: cpus.min(4),
             watch: true,
             watch_debounce: Duration::from_secs(5),
-            quick_interval: Some(Duration::from_secs(30 * 60)),
+            quick_interval: Some(Duration::from_mins(30)),
             full_interval: None,
             settle: Duration::from_secs(10),
             follow_symlinks: true,
-            missing_grace: Duration::from_secs(30 * 86_400),
+            missing_grace: Duration::from_hours(30 * 24),
             empty_guard: 0.5,
             file_timeout: Duration::from_secs(30),
             ignore: strings(&[".trackside-ignore", ".nomedia", ".ndignore"]),
@@ -889,9 +889,9 @@ mod tests {
     fn durations_parse_every_unit() {
         assert_eq!(parse_duration("500ms"), Some(Duration::from_millis(500)));
         assert_eq!(parse_duration("30s"), Some(Duration::from_secs(30)));
-        assert_eq!(parse_duration("15m"), Some(Duration::from_secs(900)));
+        assert_eq!(parse_duration("15m"), Some(Duration::from_mins(15)));
         assert_eq!(parse_duration("6h"), Some(Duration::from_secs(21_600)));
-        assert_eq!(parse_duration("30d"), Some(Duration::from_secs(2_592_000)));
+        assert_eq!(parse_duration("30d"), Some(Duration::from_hours(30 * 24)));
         assert_eq!(parse_duration("30"), None);
         assert_eq!(parse_duration("5 weeks"), None);
     }

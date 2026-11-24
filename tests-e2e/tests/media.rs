@@ -711,7 +711,7 @@ async fn streams_transcodes_listens_and_a_scan_run_together() -> anyhow::Result<
                 let part = ranged(&c, &url, &key, Some(&format!("bytes={from}-"))).await?;
                 anyhow::ensure!(part.status == 206, "player {player}: {}", part.status);
                 anyhow::ensure!(
-                    part.body == &original[from..],
+                    part.body == original[from..],
                     "player {player}: wrong bytes"
                 );
             }

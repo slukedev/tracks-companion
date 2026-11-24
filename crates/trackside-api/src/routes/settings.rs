@@ -416,8 +416,8 @@ mod tests {
 
     #[test]
     fn durations_and_sizes_print_in_their_largest_unit() {
-        assert_eq!(duration_text(Duration::from_secs(1800)), "30m");
-        assert_eq!(duration_text(Duration::from_secs(30 * 86_400)), "30d");
+        assert_eq!(duration_text(Duration::from_mins(30)), "30m");
+        assert_eq!(duration_text(Duration::from_hours(30 * 24)), "30d");
         assert_eq!(duration_text(Duration::from_millis(1500)), "1500ms");
         assert_eq!(size_text(10 << 30), "10GiB");
         assert_eq!(size_text(1000), "1000");

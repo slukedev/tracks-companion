@@ -21,13 +21,13 @@ pub const FREE_FAILURES: u32 = 5;
 /// The first backoff delay; it doubles with each further failure.
 pub const FIRST_BACKOFF: Duration = Duration::from_secs(2);
 /// The longest backoff delay.
-pub const MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
+pub const MAX_BACKOFF: Duration = Duration::from_mins(15);
 /// Failures for one account from anywhere in an hour before attempts from addresses it has
 /// not signed in from are refused.
 pub const ACCOUNT_HOURLY_CEILING: usize = 100;
 /// How long a success from an address keeps that address past the hourly ceiling, so guesses
 /// from elsewhere cannot lock the owner out from where they usually sign in.
-pub const KNOWN_ADDRESS_FOR: Duration = Duration::from_secs(30 * 86_400);
+pub const KNOWN_ADDRESS_FOR: Duration = Duration::from_hours(30 * 24);
 const HOUR: Duration = Duration::from_secs(3600);
 /// Failed attempts an IP may make at once before its rate applies.
 pub(crate) const IP_BURST: u32 = 5;

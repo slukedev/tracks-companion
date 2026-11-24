@@ -22,7 +22,7 @@ pub struct Retention {
 }
 
 /// Uploads nothing was sent to for this long are given up.
-pub const ABANDONED_UPLOAD: Duration = Duration::from_secs(24 * 3600);
+pub const ABANDONED_UPLOAD: Duration = Duration::from_hours(24);
 
 /// One round of maintenance: expired sessions, pairings, idempotency records and candidates,
 /// abandoned uploads and their staging files, old tombstones, songs missing past the grace
@@ -46,7 +46,7 @@ pub async fn maintain(db: &Db, retention: Retention) -> Result<(), trackside_cor
     db.write(move |tx| {
         sessions::prune(tx, now)?;
         pairings::prune(tx, now)?;
-        idempotency::prune(tx, now.saturating_sub(Duration::from_secs(86_400)))?;
+        idempotency::prune(tx, now.saturating_sub(Duration::from_hours(24)))?;
         acquisitions::prune_candidates(tx, now)?;
         trackside_core::sync::prune_tombstones(tx, now.saturating_sub(retention.tombstones))?;
         trackside_core::ingest::purge_missing(tx, now.saturating_sub(retention.missing))?;
@@ -173,7 +173,7 @@ const SAMPLES_PER_WRITE: u32 = 6;
 const STORAGE_EVERY: Duration = Duration::from_secs(600);
 /// Hourly rows also mark when the server ran, which daily charts use for "not recorded", so
 /// they are kept as long as the longest daily chart.
-const HOURLY_KEEP: Duration = Duration::from_secs(90 * 86_400);
+const HOURLY_KEEP: Duration = Duration::from_hours(90 * 24);
 const DAILY_KEEP_DAYS: i64 = 400;
 
 /// Samples playback load into `stats_hourly` and storage into `stats_daily` until `stop`.
@@ -297,8 +297,8 @@ mod tests {
         test.clock
             .advance(ABANDONED_UPLOAD + Duration::from_secs(60));
         let retention = Retention {
-            tombstones: Duration::from_secs(86_400 * 90),
-            missing: Duration::from_secs(86_400 * 30),
+            tombstones: Duration::from_hours(90 * 24),
+            missing: Duration::from_hours(30 * 24),
         };
         maintain(&test.db, retention).await?;
         assert!(!staged.exists());

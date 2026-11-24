@@ -22,10 +22,10 @@ use crate::{
 const SETUP_TOKEN_HASH: &str = "setup.token_hash";
 /// File name of the setup token in the data directory.
 pub const SETUP_TOKEN_FILE: &str = "setup-token";
-const DEFAULT_INVITE_LIFETIME: Duration = Duration::from_secs(7 * 86_400);
+const DEFAULT_INVITE_LIFETIME: Duration = Duration::from_hours(7 * 24);
 const INVITE_LIFETIME: std::ops::RangeInclusive<Duration> =
-    Duration::from_secs(3600)..=Duration::from_secs(90 * 86_400);
-const RESET_LIFETIME: Duration = Duration::from_secs(86_400);
+    Duration::from_secs(3600)..=Duration::from_hours(90 * 24);
+const RESET_LIFETIME: Duration = Duration::from_hours(24);
 const MAX_NOTE_CHARS: usize = 500;
 
 /// The banner printed at start while no admin exists (architecture section 7).

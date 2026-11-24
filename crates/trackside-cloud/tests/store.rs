@@ -913,6 +913,96 @@ async fn an_install_binds_one_device_id_and_claims_only_its_users_predecessors()
     Ok(())
 }
 
+fn played_on(n: usize, device: &str) -> PushItem {
+    let mut p = play(n);
+    if let Some(fields) = p.fields.as_mut() {
+        fields.insert(String::from("recordedByDeviceID"), json!(device));
+    }
+    device.clone_into(&mut p.device_id);
+    p
+}
+
+#[tokio::test]
+async fn a_device_that_recorded_your_own_plays_can_be_a_predecessor() -> TestResult {
+    let f = open()?;
+    let luke = user(&f.db, "luke")?;
+    let nana = user(&f.db, "nana")?;
+    let limits = Limits::default();
+    let mac = install(&f.db, luke, "MAC-SIGNIN")?;
+    let nana_phone = install(&f.db, nana, "NANA-SIGNIN")?;
+    store::register_device(
+        &f.db,
+        nana,
+        Registration {
+            device_id: String::from("NANA-BOUND"),
+            ..Registration::default()
+        },
+        Some(nana_phone),
+    )
+    .await?;
+    // Luke's history names an old phone that never registered, and two ids that are Nana's.
+    let mine = vec![
+        played_on(1, "OLD-PHONE"),
+        played_on(2, "NANA-BOUND"),
+        played_on(3, "NANA-SIGNIN"),
+    ];
+    store::push(&f.db, luke, Entity::Plays, mine, None, limits).await?;
+    store::push(
+        &f.db,
+        nana,
+        Entity::Plays,
+        vec![played_on(4, "NANA-OLD")],
+        None,
+        limits,
+    )
+    .await?;
+    let register = |predecessor: &str| Registration {
+        device_id: String::from("NEW-PHONE"),
+        predecessors: vec![predecessor.to_owned()],
+        ..Registration::default()
+    };
+    assert!(
+        matches!(
+            store::register_device(&f.db, luke, register("NANA-OLD"), Some(mac)).await,
+            Err(CloudError::UnknownPredecessor(_))
+        ),
+        "a device seen only in another user's plays"
+    );
+    assert!(
+        matches!(
+            store::register_device(&f.db, luke, register("NANA-BOUND"), Some(mac)).await,
+            Err(CloudError::UnknownPredecessor(_))
+        ),
+        "bound to another live key"
+    );
+    assert!(
+        matches!(
+            store::register_device(&f.db, luke, register("NANA-SIGNIN"), Some(mac)).await,
+            Err(CloudError::UnknownPredecessor(_))
+        ),
+        "another user's signed-in install"
+    );
+    let device = store::register_device(&f.db, luke, register("OLD-PHONE"), Some(mac)).await?;
+    assert_eq!(device.predecessors, vec![String::from("OLD-PHONE")]);
+
+    let plan: Vec<String> =
+        f.db.read(|c| {
+            let mut statement = c.prepare(
+                "EXPLAIN QUERY PLAN SELECT 1 FROM cloud_items
+                 WHERE user_id = 1 AND entity = 'plays' AND fields IS NOT NULL
+                   AND json_extract(fields, '$.recordedByDeviceID') = 'X'",
+            )?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(3))?;
+            Ok(rows.collect::<Result<_, _>>()?)
+        })
+        .await?;
+    assert!(
+        plan.iter().any(|p| p.contains("cloud_items_recorded_by")),
+        "the lookup uses its index: {plan:?}"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn deleting_a_user_purges_their_cloud_data_in_chunks() -> TestResult {
     let f = open()?;

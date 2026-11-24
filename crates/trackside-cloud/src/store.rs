@@ -513,7 +513,9 @@ pub struct Registration {
 /// Registers a device or adds to its predecessors (which only grow: a restore stays a fact).
 /// `server_device` links it to the signed-in install that sent it, which binds that install
 /// to this device id: registering another id from it, or this id from another live install,
-/// is `DeviceMismatch`. Every predecessor must be one of the user's own devices.
+/// is `DeviceMismatch`. Every predecessor must be one of the user's own devices, or a device
+/// that recorded one of their plays and is no one else's (a restore whose old device never
+/// registered).
 pub async fn register_device(
     db: &Db,
     user: UserKey,
@@ -553,7 +555,10 @@ pub async fn register_device(
             let existing = known.iter().find(|d| d.device_id == device_id);
             for p in &predecessors {
                 let already = existing.is_some_and(|d| d.predecessors.contains(p));
-                if !already && !repo::is_users_device(tx, user, p)? {
+                if !already
+                    && !repo::is_users_device(tx, user, p)?
+                    && !repo::recorded_own_play(tx, user, p, server_device)?
+                {
                     return Ok(Err(CloudError::UnknownPredecessor(p.clone())));
                 }
             }

@@ -8,7 +8,6 @@ edition = "2024"
 rust-version = "1.91"
 license = "GPL-3.0-only"
 repository = "https://github.com/slukedev/tracks-companion"
-homepage = "https://github.com/slukedev/tracks-companion"
 publish = false
 
 [workspace.dependencies]
@@ -91,10 +90,8 @@ unicode-normalization = "0.1"
 
 # Dev
 proptest = "1.12"
-rstest = "0.29"
 insta = { version = "1.49", features = ["json"] }
 tempfile = "3.27"
-criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -479,8 +479,8 @@ fn cursor_below_pruned_seq_requires_reset() -> TestResult {
     let (_, cursor) = fresh(&world.test, &world.access)?;
     world.edit(&Edit::MarkMissing { library: 0 })?;
     world.edit(&Edit::Purge)?;
-    world.test.clock.advance(Duration::from_secs(91 * 86_400));
-    let cutoff = Clock::now(&*world.test.clock).saturating_sub(Duration::from_secs(90 * 86_400));
+    world.test.clock.advance(Duration::from_hours(91 * 24));
+    let cutoff = Clock::now(&*world.test.clock).saturating_sub(Duration::from_hours(90 * 24));
     let pruned = world
         .test
         .write_blocking(move |tx| sync::prune_tombstones(tx, cutoff))?;

@@ -406,7 +406,7 @@ async fn the_key_is_sealed_at_rest_and_never_sent_back() -> TestResult {
 async fn changing_the_key_needs_a_recent_password() -> TestResult {
     let server = start(Arc::new(FakeAcquireControl::new()), false).await?;
     let session = server.setup_admin().await?;
-    server.test.clock.advance(Duration::from_secs(11 * 60));
+    server.test.clock.advance(Duration::from_mins(11));
     let (status, text) = server.patch_key(&session, json!(KEY)).await?;
     assert_eq!(status, 403);
     assert!(text.contains("reauth_required"), "{text}");

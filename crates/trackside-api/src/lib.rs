@@ -395,7 +395,7 @@ impl LocalState {
 }
 
 /// Expired QR images are dropped once they are this old.
-const QR_KEEP: std::time::Duration = std::time::Duration::from_secs(8 * 86_400);
+const QR_KEEP: std::time::Duration = std::time::Duration::from_hours(8 * 24);
 
 /// What the `/api/v1` handlers need.
 #[derive(Clone)]

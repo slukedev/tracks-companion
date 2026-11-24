@@ -65,7 +65,7 @@ fn resubmitted_batch_is_all_duplicates() -> TestResult {
 #[test]
 fn future_listen_is_rejected() -> TestResult {
     let (test, user, song, _dir) = seeded()?;
-    let far = TEST_START.saturating_add(Duration::from_secs(25 * 3600));
+    let far = TEST_START.saturating_add(Duration::from_hours(25));
     let near = TEST_START.saturating_add(Duration::from_secs(3600));
     let items = vec![
         listen("far", Some(&song), far),
@@ -458,14 +458,11 @@ fn abandoned_uploads_are_pruned_with_their_staging_files() -> TestResult {
             imports::finish(tx, &row.id, ImportState::Imported, None, None)
         }
     })?;
-    test.clock.advance(Duration::from_secs(48 * 3600));
+    test.clock.advance(Duration::from_hours(2 * 24));
     let fresh = test
         .db
         .write_blocking(move |tx| imports::create(tx, &new("fresh")))?;
-    let cutoff = test
-        .clock
-        .now()
-        .saturating_sub(Duration::from_secs(24 * 3600));
+    let cutoff = test.clock.now().saturating_sub(Duration::from_hours(24));
     let pruned = test
         .db
         .write_blocking(move |tx| imports::prune_abandoned(tx, cutoff))?;

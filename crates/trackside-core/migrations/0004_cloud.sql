@@ -32,6 +32,11 @@ CREATE TABLE cloud_items (
 ) STRICT;
 CREATE UNIQUE INDEX cloud_items_version ON cloud_items(user_id, entity, version);
 CREATE INDEX cloud_items_parent ON cloud_items(user_id, entity, parent) WHERE parent IS NOT NULL;
+-- The devices that recorded a user's plays, so a restored device can name one as its
+-- predecessor without a scan. The expression must match the lookup in trackside-cloud's repo.
+CREATE INDEX cloud_items_recorded_by
+    ON cloud_items(user_id, json_extract(fields, '$.recordedByDeviceID'))
+    WHERE entity = 'plays' AND fields IS NOT NULL;
 CREATE INDEX cloud_items_tombstones ON cloud_items(user_id, entity, changed_at)
     WHERE deleted_at IS NOT NULL;
 
@@ -60,4 +65,5 @@ CREATE TABLE cloud_devices (
     updated_at     INTEGER NOT NULL,
     PRIMARY KEY (user_id, device_id)
 ) STRICT;
+CREATE INDEX cloud_devices_id ON cloud_devices(device_id);
 CREATE INDEX cloud_devices_server ON cloud_devices(server_device) WHERE server_device IS NOT NULL;

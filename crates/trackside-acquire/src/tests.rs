@@ -540,7 +540,7 @@ async fn wait_for(
             }
         }
     };
-    tokio::time::timeout(Duration::from_secs(7 * 24 * 3600), wait)
+    tokio::time::timeout(Duration::from_hours(7 * 24), wait)
         .await
         .expect("the acquisition never reached the expected state")
 }
@@ -752,11 +752,11 @@ async fn all_candidates_failed_retries_with_backoff() {
     assert_eq!(failed.failure, Some(AcquireFailure::Exhausted));
     let waited = started.elapsed();
     assert!(
-        waited >= Duration::from_secs((1 + 5 + 30 + 120) * 60),
+        waited >= Duration::from_mins(1 + 5 + 30 + 120),
         "{waited:?}"
     );
     assert!(
-        waited < Duration::from_secs((1 + 5 + 30 + 120 + 5) * 60),
+        waited < Duration::from_mins(1 + 5 + 30 + 120 + 5),
         "{waited:?}"
     );
     assert_eq!(provider.fetches.load(Ordering::SeqCst), 5);
@@ -814,9 +814,7 @@ async fn quota_exceeded_is_429_with_reset_time() {
         Err(AcquireError::QuotaExceeded { resets_at }) => {
             assert_eq!(
                 resets_at,
-                first_at
-                    .unwrap()
-                    .saturating_add(Duration::from_secs(86_400))
+                first_at.unwrap().saturating_add(Duration::from_hours(24))
             );
         }
         other => panic!("expected a quota error, got {other:?}"),
@@ -904,7 +902,7 @@ async fn disk_full_pauses_and_resumes() {
     let acquirer = world.start(vec![provider.clone()]);
     let mut events = world.events.subscribe();
     let view = acquirer.request(&world.member, halo()).await.unwrap();
-    tokio::time::sleep(Duration::from_secs(10 * 60)).await;
+    tokio::time::sleep(Duration::from_mins(10)).await;
     assert!(acquirer.paused_for_space());
     assert_eq!(provider.searches.load(Ordering::SeqCst), 0);
     assert_eq!(

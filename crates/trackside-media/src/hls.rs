@@ -27,7 +27,7 @@ use crate::{
 /// How long a part request waits for the encoder.
 pub(crate) const PART_WAIT: Duration = Duration::from_secs(10);
 /// Jobs nobody asked about for this long are stopped and deleted.
-pub(crate) const JOB_IDLE: Duration = Duration::from_secs(30 * 60);
+pub(crate) const JOB_IDLE: Duration = Duration::from_mins(30);
 /// A request further ahead of the encoder than this many segments starts a new run there.
 const SEEK_AHEAD: u32 = 3;
 const POLL: Duration = Duration::from_millis(100);
