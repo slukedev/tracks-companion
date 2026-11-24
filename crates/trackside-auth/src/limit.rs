@@ -464,7 +464,10 @@ mod tests {
         clock.advance(KNOWN_ADDRESS_FOR);
         assert!(backoff.check(&luke, A).is_ok());
         for i in 0..ACCOUNT_HOURLY_CEILING {
-            backoff.fail(&luke, IpAddr::V4(std::net::Ipv4Addr::from(0x0b00_0000 + i as u32)));
+            backoff.fail(
+                &luke,
+                IpAddr::V4(std::net::Ipv4Addr::from(0x0b00_0000 + i as u32)),
+            );
         }
         clock.advance(Duration::from_secs(1));
         assert!(backoff.check(&luke, A).is_err());
@@ -476,7 +479,10 @@ mod tests {
         let luke = Account::User(UserKey(1));
         let legacy = luke.clone().app_passwords();
         for i in 0..ACCOUNT_HOURLY_CEILING {
-            backoff.fail(&legacy, IpAddr::V4(std::net::Ipv4Addr::from(0x0a00_0000 + i as u32)));
+            backoff.fail(
+                &legacy,
+                IpAddr::V4(std::net::Ipv4Addr::from(0x0a00_0000 + i as u32)),
+            );
         }
         assert!(backoff.check(&legacy, B).is_err());
         assert!(backoff.check(&luke, B).is_ok());

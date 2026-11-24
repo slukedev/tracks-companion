@@ -174,67 +174,83 @@ macro_rules! public_id {
 
 public_id!(
     /// A song. Derived from the audio digest when the song is first seen, then stored.
-    SongId, 's'
+    SongId,
+    's'
 );
 public_id!(
     /// An album, derived from its library and identity.
-    AlbumId, 'a'
+    AlbumId,
+    'a'
 );
 public_id!(
     /// An artist, derived from its folded name.
-    ArtistId, 'r'
+    ArtistId,
+    'r'
 );
 public_id!(
     /// A library (random).
-    LibraryId, 'l'
+    LibraryId,
+    'l'
 );
 public_id!(
     /// A folder, derived from its library and relative path.
-    FolderId, 'f'
+    FolderId,
+    'f'
 );
 public_id!(
     /// Artwork, content-addressed by its image bytes.
-    ArtworkId, 'c'
+    ArtworkId,
+    'c'
 );
 public_id!(
     /// A playlist (random).
-    PlaylistId, 'p'
+    PlaylistId,
+    'p'
 );
 public_id!(
     /// A user (random).
-    UserId, 'u'
+    UserId,
+    'u'
 );
 public_id!(
     /// A device (random).
-    DeviceId, 'd'
+    DeviceId,
+    'd'
 );
 public_id!(
     /// A device key, API key or app password (random).
-    KeyId, 'k'
+    KeyId,
+    'k'
 );
 public_id!(
     /// An acquisition request (random).
-    AcquisitionId, 'q'
+    AcquisitionId,
+    'q'
 );
 public_id!(
     /// An acquisition candidate, derived from its provider and provider reference.
-    CandidateToken, 'x'
+    CandidateToken,
+    'x'
 );
 public_id!(
     /// A scan run (random).
-    ScanRunId, 'n'
+    ScanRunId,
+    'n'
 );
 public_id!(
     /// An upload or inbox import (random).
-    ImportId, 'i'
+    ImportId,
+    'i'
 );
 public_id!(
     /// A pairing offer or request (random).
-    PairingId, 'g'
+    PairingId,
+    'g'
 );
 public_id!(
     /// An invite (random).
-    InviteId, 'v'
+    InviteId,
+    'v'
 );
 
 impl SongId {

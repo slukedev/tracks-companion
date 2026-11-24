@@ -5,7 +5,7 @@ members = ["crates/*", "tests-e2e"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.91"
 license = "GPL-3.0-only"
 repository = "https://github.com/slukedev/tracks-companion"
 homepage = "https://github.com/slukedev/tracks-companion"
@@ -75,7 +75,7 @@ ipnet = { version = "2.12", features = ["serde"] }
 
 # Media, files and discovery
 lofty = "0.25"
-notify = "8.2"
+notify = "9.0"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 qrcode = { version = "0.15", default-features = false, features = ["svg"] }
 mdns-sd = "0.22"

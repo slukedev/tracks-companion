@@ -217,15 +217,7 @@ async fn setup(
         .complete_setup(&body.setup_token, admin, ip)
         .await?;
     super::audit(&state, None, Some(ip), "setup.complete", None, None).await;
-    signed_in(
-        &state,
-        user,
-        ip,
-        &headers,
-        &extensions,
-        StatusCode::CREATED,
-    )
-    .await
+    signed_in(&state, user, ip, &headers, &extensions, StatusCode::CREATED).await
 }
 
 fn zeroize_string(value: String) -> zeroize::Zeroizing<String> {
@@ -270,15 +262,7 @@ async fn session_create(
     Json(body): Json<SessionRequest>,
 ) -> ApiResult<Response> {
     let user = state.auth.login(&body.username, &body.password, ip).await?;
-    signed_in(
-        &state,
-        user,
-        ip,
-        &headers,
-        &extensions,
-        StatusCode::OK,
-    )
-    .await
+    signed_in(&state, user, ip, &headers, &extensions, StatusCode::OK).await
 }
 
 async fn session_end(
@@ -736,15 +720,7 @@ async fn invite_accept(
         libraries: Vec::new(),
     };
     let key = state.auth.accept_invite(&token, user, ip).await?;
-    signed_in(
-        &state,
-        key,
-        ip,
-        &headers,
-        &extensions,
-        StatusCode::CREATED,
-    )
-    .await
+    signed_in(&state, key, ip, &headers, &extensions, StatusCode::CREATED).await
 }
 
 async fn reset_info(

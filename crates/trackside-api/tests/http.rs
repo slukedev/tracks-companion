@@ -1091,6 +1091,52 @@ async fn events_say_hello_then_changed_after_a_write() -> TestResult {
     Ok(())
 }
 
+#[tokio::test]
+async fn a_user_may_hold_sixteen_event_streams() -> TestResult {
+    let server = start().await?;
+    server.setup_admin().await?;
+    let key = server.device_key().await?;
+    let mut open = Vec::new();
+    for _ in 0..trackside_auth::EVENT_STREAMS_PER_USER {
+        let stream = server
+            .http
+            .get(server.url("/events"))
+            .bearer_auth(&key)
+            .send()
+            .await?;
+        assert_eq!(stream.status(), 200);
+        open.push(stream);
+    }
+    let refused = server
+        .http
+        .get(server.url("/events"))
+        .bearer_auth(&key)
+        .send()
+        .await?;
+    assert_eq!(refused.status(), 429);
+    assert!(refused.headers().contains_key("retry-after"));
+    drop(open.pop());
+    let mut again = None;
+    for _ in 0..50 {
+        let response = server
+            .http
+            .get(server.url("/events"))
+            .bearer_auth(&key)
+            .send()
+            .await?;
+        if response.status() == 200 {
+            again = Some(response);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(
+        again.is_some(),
+        "a closed stream did not give its slot back"
+    );
+    Ok(())
+}
+
 fn sha256_of(bytes: &[u8]) -> [u8; 32] {
     use sha2::Digest;
     sha2::Sha256::digest(bytes).into()

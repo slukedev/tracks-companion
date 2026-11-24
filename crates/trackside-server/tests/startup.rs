@@ -221,7 +221,10 @@ async fn tls_with_certificate_files_sends_hsts() -> TestResult {
         .danger_accept_invalid_certs(true)
         .build()?;
     let response = client
-        .get(format!("https://localhost:{}/healthz", server.address.port()))
+        .get(format!(
+            "https://localhost:{}/healthz",
+            server.address.port()
+        ))
         .send()
         .await?;
     assert_eq!(response.status(), 200);

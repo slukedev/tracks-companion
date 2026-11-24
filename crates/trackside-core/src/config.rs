@@ -528,6 +528,11 @@ pub struct AcquireConfig {
     pub member_active: u32,
     pub global_daily: u32,
     pub instant_play: bool,
+    /// Songs played without being kept: how many stay fetched, and the most their files may
+    /// take together.
+    pub fetched_keep: u32,
+    #[serde(deserialize_with = "size", serialize_with = "ser::size")]
+    pub fetched_max_bytes: u64,
     pub reject_words: Vec<String>,
     pub path_template: String,
     pub ytdlp: YtdlpConfig,
@@ -739,6 +744,8 @@ impl AcquireConfig {
             member_active: 5,
             global_daily: 500,
             instant_play: false,
+            fetched_keep: 500,
+            fetched_max_bytes: 20 << 30,
             reject_words: strings(REJECT_WORDS),
             path_template: String::from("{album_artist}/{album}/{disc}-{track:02} {title}.{ext}"),
             ytdlp: YtdlpConfig {

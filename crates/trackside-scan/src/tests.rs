@@ -1425,6 +1425,180 @@ fn watcher_event_makes_song_visible_within_eight_seconds() -> TestResult {
     Ok(())
 }
 
+/// A scanner that watches its library, with a short debounce and an initial full scan done.
+fn watching(
+    runtime: &tokio::runtime::Runtime,
+    files: &[(&str, u32)],
+) -> Result<Service, Box<dyn std::error::Error>> {
+    let mut config = scanner_config();
+    config.watch_debounce = Duration::from_millis(300);
+    let options = ScannerOptions {
+        monitor: false,
+        watch: true,
+        schedule: false,
+        inbox: false,
+    };
+    let s = runtime.block_on(async { service(&config, &options, false) })?;
+    for (rel, seed) in files {
+        put_wav(&s.root, rel, *seed)?;
+    }
+    s.scanner
+        .request_scan(&s.library.id, ScanKind::Full, ScanTrigger::Admin, false)?;
+    assert!(s.scanner.wait_idle(Duration::from_secs(10)));
+    assert_eq!(s.catalog.present(s.library.key).len(), files.len());
+    Ok(s)
+}
+
+/// Waits up to eight seconds for the library's present songs to be exactly `want`.
+fn settles_to(s: &Service, want: &[&str]) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let present: Vec<Vec<u8>> = s
+            .catalog
+            .present(s.library.key)
+            .into_iter()
+            .map(|(rel, _)| rel)
+            .collect();
+        let want: Vec<Vec<u8>> = want.iter().map(|r| r.as_bytes().to_vec()).collect();
+        if present == want {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn watched_renames_move_songs_within_into_and_out_of_the_library() -> TestResult {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let s = watching(
+        &runtime,
+        &[("A/01 Song.wav", 1), ("B/keep.wav", 2), ("C/02 Song.wav", 3)],
+    )?;
+    let outside = s.root.with_file_name("outside");
+    put_wav(&outside, "D/03 Song.wav", 4)?;
+    std::fs::create_dir_all(s.root.join("E"))?;
+
+    // A file moved between folders, a folder moved out, a folder moved in, and a folder renamed
+    // in place. notify 9 reports each rename under the path the library root was watched as.
+    std::fs::rename(s.root.join("A/01 Song.wav"), s.root.join("B/01 Song.wav"))?;
+    std::fs::rename(s.root.join("C"), outside.join("C"))?;
+    std::fs::rename(outside.join("D"), s.root.join("D"))?;
+    std::fs::rename(s.root.join("E"), s.root.join("F"))?;
+    assert!(
+        settles_to(&s, &["B/01 Song.wav", "B/keep.wav", "D/03 Song.wav"]),
+        "renames were not picked up: {:?}",
+        s.catalog.present(s.library.key)
+    );
+
+    // The folders that moved in or were renamed are watched too.
+    put_wav(&s.root, "D/04 Song.wav", 5)?;
+    put_wav(&s.root, "F/05 Song.wav", 6)?;
+    assert!(
+        settles_to(
+            &s,
+            &[
+                "B/01 Song.wav",
+                "B/keep.wav",
+                "D/03 Song.wav",
+                "D/04 Song.wav",
+                "F/05 Song.wav"
+            ]
+        ),
+        "new files in moved folders were not picked up: {:?}",
+        s.catalog.present(s.library.key)
+    );
+    let last = s
+        .catalog
+        .recent_runs(s.library.key, 1)?
+        .pop()
+        .ok_or("no run")?;
+    assert_eq!(last.trigger, ScanTrigger::Watch);
+    drop(s);
+    drop(runtime);
+    Ok(())
+}
+
+#[test]
+fn watched_deletes_mark_songs_missing() -> TestResult {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let s = watching(
+        &runtime,
+        &[
+            ("A/01 Song.wav", 1),
+            ("A/02 Song.wav", 2),
+            ("B/C/03 Song.wav", 3),
+            ("D/04 Song.wav", 4),
+        ],
+    )?;
+    std::fs::remove_file(s.root.join("A/02 Song.wav"))?;
+    std::fs::remove_dir_all(s.root.join("B"))?;
+    assert!(
+        settles_to(&s, &["A/01 Song.wav", "D/04 Song.wav"]),
+        "deletes were not picked up: {:?}",
+        s.catalog.present(s.library.key)
+    );
+    assert_eq!(s.catalog.missing(s.library.key), 2);
+    drop(s);
+    drop(runtime);
+    Ok(())
+}
+
+#[test]
+fn libraries_are_unwatched_when_removed_disabled_or_moved() -> TestResult {
+    use trackside_core::control::WatchMode;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let s = watching(&runtime, &[("A/01 Song.wav", 1)])?;
+    let watched = || crate::watch::watched_roots(&s.scanner.inner);
+    assert_eq!(watched(), vec![s.root.clone()]);
+
+    // Turning watching off releases the watch; turning it on watches the root again.
+    let set_watch = |on: bool| {
+        if let Some(l) = s.catalog.lock().libraries.first_mut() {
+            l.watch = on;
+        }
+    };
+    set_watch(false);
+    s.scanner.probe_now();
+    assert_eq!(watched(), Vec::<PathBuf>::new());
+    assert_eq!(s.scanner.status()[0].watching, WatchMode::Off);
+    set_watch(true);
+    s.scanner.probe_now();
+    assert_eq!(watched(), vec![s.root.clone()]);
+    assert_eq!(s.scanner.status()[0].watching, WatchMode::Events);
+
+    // A library moved to another root watches the new root only.
+    let moved = s.root.with_file_name("moved");
+    put_wav(&moved, "B/02 Song.wav", 2)?;
+    if let Some(l) = s.catalog.lock().libraries.first_mut() {
+        l.root.clone_from(&moved);
+    }
+    s.scanner.probe_now();
+    assert_eq!(watched(), vec![moved.clone()]);
+
+    // A removed library is unwatched, and a change under its old root queues nothing.
+    s.catalog.lock().libraries.clear();
+    s.scanner.probe_now();
+    assert_eq!(watched(), Vec::<PathBuf>::new());
+    assert!(s.scanner.status().is_empty());
+    let runs = s.catalog.lock().runs.len();
+    put_wav(&moved, "B/03 Song.wav", 3)?;
+    std::thread::sleep(Duration::from_secs(1));
+    assert_eq!(s.catalog.lock().runs.len(), runs);
+    drop(s);
+    drop(runtime);
+    Ok(())
+}
+
 #[test]
 #[ignore = "throughput check; run with --release --ignored"]
 fn throughput_10k_files() -> TestResult {

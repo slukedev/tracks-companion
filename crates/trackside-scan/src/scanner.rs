@@ -197,7 +197,9 @@ impl Inner {
         self.wake.notify_all();
     }
 
-    /// Loads or reloads the library list, keeping what the monitor and runs know.
+    /// Loads or reloads the library list, keeping what the monitor and runs know. Libraries
+    /// that are gone, no longer want watching or moved to another root are unwatched; callers
+    /// watch the new roots with `watch::add_library`.
     pub fn refresh_libraries(&self) -> Vec<Library> {
         let libraries = match self.services.catalog.libraries() {
             Ok(l) => l,
@@ -206,10 +208,20 @@ impl Inner {
                 return Vec::new();
             }
         };
+        let mut unwatch = Vec::new();
         let mut state = self.lock();
         for library in &libraries {
             match state.libs.get_mut(&library.key) {
-                Some(lib) => lib.library = library.clone(),
+                Some(lib) => {
+                    if lib.watching == WatchMode::Events
+                        && (lib.library.root != library.root
+                            || !crate::watch::wants(self, library))
+                    {
+                        unwatch.push(lib.library.root.clone());
+                        lib.watching = WatchMode::Off;
+                    }
+                    lib.library = library.clone();
+                }
                 None => {
                     state.libs.insert(
                         library.key,
@@ -225,9 +237,15 @@ impl Inner {
                 }
             }
         }
-        state
-            .libs
-            .retain(|key, _| libraries.iter().any(|l| l.key == *key));
+        state.libs.retain(|key, lib| {
+            let keep = libraries.iter().any(|l| l.key == *key);
+            if !keep && lib.watching == WatchMode::Events {
+                unwatch.push(lib.library.root.clone());
+            }
+            keep
+        });
+        drop(state);
+        crate::watch::remove_roots(self, &unwatch);
         libraries
     }
 

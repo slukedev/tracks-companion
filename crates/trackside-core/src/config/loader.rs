@@ -275,6 +275,16 @@ pub const KEYS: &[KeyInfo] = &[
         "TRACKSIDE_ACQUIRE__INSTANT_PLAY",
         Bool,
     ),
+    dash(
+        "acquire.fetched_keep",
+        "TRACKSIDE_ACQUIRE__FETCHED_KEEP",
+        Integer,
+    ),
+    dash(
+        "acquire.fetched_max_bytes",
+        "TRACKSIDE_ACQUIRE__FETCHED_MAX_BYTES",
+        Text,
+    ),
     key(
         "acquire.reject_words",
         "TRACKSIDE_ACQUIRE__REJECT_WORDS",

@@ -683,11 +683,29 @@ impl Db {
     pub fn checkpoint_and_optimize(&self) -> Result<(), DbError> {
         let writer = lock(&self.inner.writer);
         writer.conn.execute_batch("PRAGMA optimize;")?;
-        writer
-            .conn
-            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
-            .optional()?;
+        // A reader in the middle of a snapshot makes the checkpoint report busy and leave the
+        // WAL as it is; such reads are short, so try again for a moment.
+        for _ in 0..50 {
+            let busy = writer
+                .conn
+                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .optional()?
+                .unwrap_or(0);
+            if busy == 0 || self.inner.path.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
         Ok(())
+    }
+
+    /// Refuses further [`Db::write`] calls with [`DbError::Closed`], for shutdown: a
+    /// background task that wakes after the final checkpoint must not grow the WAL again.
+    /// Writes already waiting are refused too; one already running finishes.
+    pub fn close_writes(&self) {
+        self.inner.write_slot.close();
     }
 }
 

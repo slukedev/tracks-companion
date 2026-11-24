@@ -1,7 +1,8 @@
 //! Filesystem watching with notify. Events are debounced per folder: a folder that has been
 //! quiet for `scanner.watch_debounce` triggers a quick scan of its library, which skips every
 //! unchanged folder by its listing hash. When the inotify watch limit is reached the library
-//! falls back to the periodic quick scans.
+//! falls back to the periodic quick scans. A library that is removed, stops wanting watching or
+//! moves to another root is unwatched.
 
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -10,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use notify::event::{AccessKind, AccessMode, MetadataKind, ModifyKind};
-use notify::{EventKind, RecursiveMode, Watcher};
+use notify::{EventKind, EventKindMask, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 use trackside_core::LibraryKey;
@@ -78,6 +79,15 @@ pub fn is_relevant(kind: EventKind) -> bool {
 
 const EVENT_QUEUE: usize = 4096;
 
+/// What the watcher passes to the debounce task.
+#[derive(Debug)]
+enum Seen {
+    /// Something changed at this path.
+    Path(PathBuf),
+    /// Events were lost or an error left coverage unknown: every library is checked.
+    Rescan,
+}
+
 /// A watched folder that went quiet.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Quiet {
@@ -87,23 +97,31 @@ enum Quiet {
 
 /// Creates the watcher, watches every library that wants it, and starts the debounce task.
 pub fn start(inner: &Arc<Inner>, handle: &tokio::runtime::Handle) {
-    let (tx, rx) = mpsc::channel::<PathBuf>(EVENT_QUEUE);
+    let (tx, rx) = mpsc::channel::<Seen>(EVENT_QUEUE);
     let overflow = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&overflow);
-    let watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
-        let Ok(event) = result else {
-            flag.store(true, Ordering::Relaxed);
-            return;
+    // Opens are never a change, so the kernel need not report them; closes after a write are.
+    let config = notify::Config::default()
+        .with_event_kinds(EventKindMask::CORE | EventKindMask::ACCESS_CLOSE);
+    let handler = move |result: notify::Result<notify::Event>| {
+        let seen = match result {
+            // A rescan request can come without paths and with any kind, so it goes first.
+            Ok(event) if event.need_rescan() => vec![Seen::Rescan],
+            Ok(event) if is_relevant(event.kind) => event.paths.into_iter().map(Seen::Path).collect(),
+            Ok(_) => return,
+            // Recursive watches report the folders they could not cover here.
+            Err(error) => {
+                tracing::debug!(%error, "filesystem watch error; checking every library");
+                vec![Seen::Rescan]
+            }
         };
-        if !is_relevant(event.kind) {
-            return;
-        }
-        for path in event.paths {
-            if tx.try_send(path).is_err() {
+        for seen in seen {
+            if tx.try_send(seen).is_err() {
                 flag.store(true, Ordering::Relaxed);
             }
         }
-    });
+    };
+    let watcher = RecommendedWatcher::new(handler, config);
     let mut watcher = match watcher {
         Ok(w) => w,
         Err(error) => {
@@ -132,13 +150,18 @@ pub fn start(inner: &Arc<Inner>, handle: &tokio::runtime::Handle) {
     handle.spawn(debounce(Arc::clone(inner), rx, overflow));
 }
 
+/// Whether a library should be watched for events.
+pub fn wants(inner: &Inner, library: &Library) -> bool {
+    library.watch && library.enabled && inner.config.watch
+}
+
 /// Watches a library's root if it wants watching and is not watched yet.
 pub fn add_library(inner: &Inner, library: &Library) {
     let current = inner.lock().libs.get(&library.key).map(|l| l.watching);
     if !matches!(current, Some(WatchMode::Off)) {
         return;
     }
-    if !library.watch || !library.enabled || !inner.config.watch {
+    if !wants(inner, library) {
         return;
     }
     let mut guard = inner
@@ -151,6 +174,8 @@ pub fn add_library(inner: &Inner, library: &Library) {
     let mode = match watcher.watch(&library.root, RecursiveMode::Recursive) {
         Ok(()) => WatchMode::Events,
         Err(error) if matches!(error.kind, notify::ErrorKind::MaxFilesWatch) => {
+            // The folders watched before the limit stay watched; give them back for others.
+            release(watcher, &library.root);
             tracing::warn!(
                 library = %library.id,
                 "the inotify watch limit is reached; this library is checked by periodic quick scans instead. Raise fs.inotify.max_user_watches to watch it"
@@ -168,6 +193,48 @@ pub fn add_library(inner: &Inner, library: &Library) {
     }
 }
 
+/// Stops watching library roots. Only the explicit watch on each root is removed; a library
+/// nested inside another watched library stays covered by the outer one.
+pub fn remove_roots(inner: &Inner, roots: &[PathBuf]) {
+    if roots.is_empty() {
+        return;
+    }
+    let mut guard = inner
+        .watcher
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(watcher) = guard.as_mut() {
+        for root in roots {
+            release(watcher, root);
+        }
+    }
+}
+
+fn release(watcher: &mut RecommendedWatcher, root: &Path) {
+    match watcher.unwatch(root) {
+        // A root that was deleted or moved away has already lost its watch.
+        Err(error) if matches!(error.kind, notify::ErrorKind::WatchNotFound) => {}
+        Err(error) => tracing::debug!(%error, root = %root.display(), "could not unwatch"),
+        Ok(()) => {}
+    }
+}
+
+/// The paths the watcher holds explicit watches on.
+#[cfg(test)]
+pub fn watched_roots(inner: &Inner) -> Vec<PathBuf> {
+    let guard = inner
+        .watcher
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    guard
+        .as_ref()
+        .and_then(|w| w.watched_paths().ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|w| w.path)
+        .collect()
+}
+
 fn classify(inner: &Inner, path: &Path) -> Option<Quiet> {
     if let Some(inbox) = &inner.uploads.inbox_dir
         && path.starts_with(inbox)
@@ -181,18 +248,24 @@ fn classify(inner: &Inner, path: &Path) -> Option<Quiet> {
     })
 }
 
-async fn debounce(inner: Arc<Inner>, mut rx: mpsc::Receiver<PathBuf>, overflow: Arc<AtomicBool>) {
+async fn debounce(inner: Arc<Inner>, mut rx: mpsc::Receiver<Seen>, overflow: Arc<AtomicBool>) {
     let mut waiting: Debouncer<Quiet> = Debouncer::new(inner.config.watch_debounce);
     loop {
         let sleep = waiting.next_deadline();
         tokio::select! {
             () = inner.shutdown.cancelled() => return,
             received = rx.recv() => {
-                let Some(path) = received else { return };
-                if let Some(quiet) = classify(&inner, &path) {
-                    waiting.touch(quiet, Instant::now());
-                }
-                if overflow.swap(false, Ordering::Relaxed) {
+                let rescan = match received {
+                    None => return,
+                    Some(Seen::Path(path)) => {
+                        if let Some(quiet) = classify(&inner, &path) {
+                            waiting.touch(quiet, Instant::now());
+                        }
+                        false
+                    }
+                    Some(Seen::Rescan) => true,
+                };
+                if overflow.swap(false, Ordering::Relaxed) || rescan {
                     let keys: Vec<LibraryKey> = inner.lock().libs.keys().copied().collect();
                     for key in keys {
                         waiting.touch(Quiet::Folder(key, Vec::new()), Instant::now());

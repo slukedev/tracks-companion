@@ -3,7 +3,7 @@
 import { h, segmented, checkbox, select, field, nextId } from '../ui.js';
 import { PERMISSIONS } from './common.js';
 
-const BITRATES = [['', 'No limit'], ['320', '320 kbps'], ['256', '256 kbps'], ['192', '192 kbps'], ['128', '128 kbps']];
+const BITRATES = [['', 'Original quality, no limit'], ['320', '320 kbps'], ['256', '256 kbps'], ['192', '192 kbps'], ['128', '128 kbps']];
 
 /**
  * value: { role, permissions, library_ids }. Libraries come from GET /admin/libraries.
@@ -14,15 +14,15 @@ export function accessForm(value, libraries, { acquisition }) {
   const name = nextId('role');
   const libraryBoxes = libraries.map((lib) => checkbox(lib.name, value.library_ids?.includes(lib.id) ?? true, { value: lib.id }));
   const libraryGroup = h('fieldset.field.plain-fieldset',
-    h('legend.label', 'Libraries'),
-    libraries.length ? h('div.list.check-list', libraryBoxes) : h('p.hint', 'No libraries yet'));
-  const adminNote = h('p.hint', 'Admins see everything.');
+    h('legend.label', 'Libraries they can see'),
+    libraries.length ? h('div.list.check-list', libraryBoxes) : h('p.hint', 'There are no libraries yet.'));
+  const adminNote = h('p.hint', 'Admins see every library and can change everything here.');
 
   const permissions = PERMISSIONS.filter(([key]) => key !== 'can_request' || acquisition)
-    .map(([key, label, sub]) => [key, checkbox(label, Boolean(value.permissions?.[key]), {})]);
+    .map(([key, label, sub]) => [key, checkbox(label, Boolean(value.permissions?.[key]), { sub })]);
   const bitrate = select(BITRATES, value.permissions?.max_bitrate_kbps ?? '');
   const permissionGroup = h('fieldset.field.plain-fieldset',
-    h('legend.label', 'Allowed'),
+    h('legend.label', 'They can'),
     h('div.list.check-list', permissions.map(([, el]) => el)));
 
   const sync = () => {
@@ -37,7 +37,7 @@ export function accessForm(value, libraries, { acquisition }) {
       adminNote),
     libraryGroup,
     permissionGroup,
-    field('Max streaming quality', bitrate));
+    field('Streaming quality limit', bitrate, { hint: 'The highest quality they can stream. A lower limit saves data and upload bandwidth.' }));
 
   return {
     el,

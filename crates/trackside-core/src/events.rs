@@ -59,6 +59,8 @@ pub enum ServerEvent {
     },
     /// A user's role, permissions or library grants changed: what they may see is read again.
     AccessChanged { user: UserKey },
+    /// The addresses the server can be reached at changed; `version` names the new list.
+    ServerUrls { version: String },
 }
 
 /// A broadcast channel of [`ServerEvent`]s. Cloning shares the channel.

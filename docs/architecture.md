@@ -186,11 +186,14 @@ that recomputes stored keys (section 13).
   digests. A walker thread feeds them paths over a bounded channel (capacity 1024), and a batcher
   sends results to the writer. Filesystem calls on library paths never run on runtime worker
   threads.
-- **Hung network filesystems.** A hard-mounted NFS share can block `stat` forever. Every
-  blocking filesystem call on a library path goes through a per-library semaphore (16 permits)
-  on the blocking pool, and the availability monitor runs its probe on a dedicated thread with a
-  5 s deadline. A hung share therefore marks its library unavailable and costs at most 16 blocked
-  threads, never the runtime.
+- **Hung network filesystems.** A hard-mounted NFS share can block `stat` forever. Opening and
+  stat-ing a library file to serve it goes through a per-library semaphore (16 permits) on the
+  blocking pool; the permit stays with the call until it returns, even if the client has gone,
+  and a request that waits 2 s for one gets `503 library_unavailable`. The availability monitor
+  runs its probe on a dedicated thread with a 5 s deadline. A hung share therefore marks its
+  library unavailable and costs at most 16 blocked threads for serving, never the runtime.
+  Async database writes wait for their turn before taking a blocking thread, so a stuck or slow
+  write holds one thread, not one per queued request.
 - **Transcoding.** ffmpeg runs as `tokio::process` children with `kill_on_drop`. A global
   semaphore (`media.transcode_max_concurrent`, default `max(1, cpus / 2)`) limits concurrent
   jobs, with three priorities: interactive playback, prefetch, download. Jobs are single-flight
@@ -1325,7 +1328,7 @@ after 7 days. Revoking a device bumps its epoch. The server redacts `mt`, `apiKe
   peers that vanished in the middle of a request.
 - Per key: 50 requests a second, burst 200, excluding media bytes.
 - Per user: 8 concurrent streams and 3 concurrent transcodes; over that, `429` with
-  `Retry-After: 1`.
+  `Retry-After: 1`. 16 open event streams; over that, `429` with `Retry-After: 5`.
 - Limiter state is pruned every minute, or sooner once it tracks 50,000 addresses or names, so
   addresses that failed once are not kept forever.
 - Auth failures log `auth_failure user=<name> ip=<ip> via=<method>` at warn, in a fixed format

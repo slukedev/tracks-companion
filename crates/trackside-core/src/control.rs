@@ -382,6 +382,20 @@ pub enum ProviderChange {
         global_daily: Option<u32>,
         prefer: Option<Vec<String>>,
     },
+    /// The limits on songs played without being kept, already stored as settings.
+    Fetched { keep: u32, max_bytes: u64 },
+}
+
+/// Songs played without being kept: what they take now, and the limits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FetchedUsage {
+    /// Complete songs on disk, and their bytes.
+    pub songs: u64,
+    pub bytes: u64,
+    /// Songs still being fetched.
+    pub fetching: u64,
+    pub keep: u32,
+    pub max_bytes: u64,
 }
 
 /// The result of `POST /admin/acquire/providers/{name}/test`.
@@ -555,6 +569,11 @@ pub trait AcquireControl: Send + Sync + 'static {
         _token: &CandidateToken,
     ) -> Result<InstantStream, AcquireError> {
         Err(AcquireError::NotFound)
+    }
+
+    /// What songs played without being kept take, or `None` without acquisition.
+    fn fetched_usage(&self) -> Option<FetchedUsage> {
+        None
     }
 
     fn providers(&self) -> BoxFuture<'_, Vec<ProviderStatus>>;

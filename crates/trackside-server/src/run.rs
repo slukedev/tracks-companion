@@ -663,6 +663,7 @@ pub async fn run_with(
             tracing::warn!(error = %e, "listener stopped with an error");
         }
     }
+    db.close_writes();
     tokio::task::spawn_blocking(move || db.checkpoint_and_optimize())
         .await
         .context("checkpoint task failed")?

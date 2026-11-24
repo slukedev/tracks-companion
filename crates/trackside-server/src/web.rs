@@ -138,9 +138,9 @@ fn exempt_from_timeout(base_path: &str, path: &str) -> bool {
     let one = |s: &str| !s.is_empty();
     match segments.as_slice() {
         ["api", "v1", "songs", id, "download"] => one(id),
-        ["api", "v1", "uploads"] | ["api", "v1", "events"] | ["api", "v1", "me", "listens", "export"] => {
-            true
-        }
+        ["api", "v1", "uploads"]
+        | ["api", "v1", "events"]
+        | ["api", "v1", "me", "listens", "export"] => true,
         ["api", "v1", "uploads", id] | ["api", "v1", "uploads", id, "complete"] => one(id),
         ["api", "v1", "admin", "backups", name] => one(name),
         ["rest", endpoint] => {
@@ -634,7 +634,10 @@ mod tests {
             "/rest/Stream.view",
         ] {
             assert!(exempt_from_timeout("", path), "{path}");
-            assert!(exempt_from_timeout("/music", &format!("/music{path}")), "{path}");
+            assert!(
+                exempt_from_timeout("/music", &format!("/music{path}")),
+                "{path}"
+            );
         }
         for path in [
             "/api/v1/search/download",
