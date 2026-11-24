@@ -109,6 +109,16 @@
     "source": "dashboard",
     "editable": true
   },
+  "acquire.fetched_keep": {
+    "value": 500,
+    "source": "default",
+    "editable": true
+  },
+  "acquire.fetched_max_bytes": {
+    "value": "20GiB",
+    "source": "default",
+    "editable": true
+  },
   "acquire.ytdlp.enabled": {
     "value": true,
     "source": "dashboard",

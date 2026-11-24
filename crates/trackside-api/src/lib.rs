@@ -32,6 +32,10 @@ pub mod build {
         listen_line, me_body, pair_result_body, qr_link, spaced_code,
     };
     pub use crate::routes::acquisition::{external_play_body, search_body};
+    pub use crate::routes::cloud::{
+        cloud_info, device_body, devices_body, page_body as cloud_page_body, push_body,
+        record_body, setting_results_body, settings_body, usage_body,
+    };
     pub use crate::routes::addresses::urls_version;
     pub use crate::routes::admin::{
         admin_library, admin_user, audit_summary, invite_state, library_problems_for,
@@ -264,6 +268,8 @@ pub struct LocalState {
     urls_version: Mutex<Option<String>>,
     now_playing: NowPlayingRegistry,
     playback: Arc<PlaybackLoad>,
+    /// Trackside Cloud pushes per user.
+    cloud_limiter: trackside_cloud::PushLimiter,
     shutdown: CancellationToken,
 }
 
@@ -289,6 +295,11 @@ impl LocalState {
     /// Live media responses and failures, sampled into the hourly stats.
     pub fn playback(&self) -> &Arc<PlaybackLoad> {
         &self.playback
+    }
+
+    /// The per-user budget of Trackside Cloud pushes.
+    pub fn cloud_limiter(&self) -> &trackside_cloud::PushLimiter {
+        &self.cloud_limiter
     }
 
     /// The registry `POST /now-playing` reports to.

@@ -621,6 +621,10 @@ input.switch:checked:active:not(:disabled)::before { transform: translateX(16px)
 .meter { position: relative; height: 6px; border-radius: 3px; background: var(--field); overflow: hidden; }
 .meter > span { position: absolute; inset: 0; transform-origin: left center; transform: scaleX(var(--value, 0)); background: var(--accent); border-radius: 3px; transition: transform 300ms var(--ease-out); }
 .meter.ink > span { background: var(--ink-2); }
+.meter.warn > span { background: var(--warn-chip); }
+.kv.fetched { flex-wrap: wrap; }
+.kv.fetched .meter { flex: 1 1 100%; margin-top: 2px; }
+.kv.fetched.over .sub { color: var(--warn); }
 
 /* ---------- Charts ---------- */
 
@@ -778,6 +782,8 @@ dialog[open]::backdrop { opacity: 1; transition-duration: var(--t-base); }
 .save-bar .btn-row { margin-left: auto; }
 .save-cell { align-self: end; }
 .save-cell .label { visibility: hidden; }
+.save-cell .btn { align-self: flex-start; }
+.setting-row .error { color: var(--bad); font-size: var(--t-sm); }
 .nowrap-row { flex-wrap: nowrap; max-width: 560px; }
 .nowrap-row .input { flex: 1; min-width: 0; }
 

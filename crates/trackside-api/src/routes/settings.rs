@@ -179,6 +179,21 @@ pub(crate) const KEYS: &[Key] = &[
         kind: Kind::Secret,
         value: |c| json!(c.enrichment.lastfm_api_key.is_some()),
     },
+    Key {
+        name: super::cloud::ENABLED,
+        kind: Kind::Bool,
+        value: |_| json!(true),
+    },
+    Key {
+        name: super::cloud::QUOTA_ITEMS,
+        kind: Kind::Count,
+        value: |_| json!(trackside_cloud::Limits::DEFAULT_ITEMS),
+    },
+    Key {
+        name: super::cloud::QUOTA_BYTES,
+        kind: Kind::Size,
+        value: |_| json!(size_text(trackside_cloud::Limits::DEFAULT_BYTES)),
+    },
 ];
 
 /// The server-wide Last.fm key for suggestions.

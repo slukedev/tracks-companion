@@ -6,6 +6,7 @@
 pub mod acquisition;
 pub mod admin;
 pub mod auth;
+pub mod cloud;
 pub mod enrichment;
 pub mod events;
 pub mod library;
@@ -312,6 +313,9 @@ pub struct Features {
     pub uploads: bool,
     pub events: bool,
     pub animated_art: bool,
+    /// Trackside Cloud is on (section 19).
+    #[serde(default)]
+    pub cloud: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -333,6 +337,9 @@ pub struct Capabilities {
     pub media: MediaFeatures,
     pub features: Features,
     pub subsonic: SubsonicInfo,
+    /// Present while Trackside Cloud is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud: Option<cloud::CloudInfo>,
 }
 
 /// `GET /readyz` status.

@@ -143,7 +143,14 @@
       }
     ],
     "active": 2,
-    "today": 14
+    "today": 14,
+    "fetched": {
+      "bytes": 7400000000,
+      "fetching": 1,
+      "keep": 500,
+      "max_bytes": 21474836480,
+      "songs": 212
+    }
   },
   "users": {
     "count": 4,

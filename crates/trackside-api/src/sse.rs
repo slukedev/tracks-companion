@@ -114,6 +114,12 @@ pub fn visible_event(event: &ServerEvent, filter: &EventFilter) -> Outgoing {
             Outgoing::Revoked
         }
         ServerEvent::AccessChanged { user } if *user == access.user => Outgoing::AccessChanged,
+        ServerEvent::CloudChanged { user, entity } if *user == access.user => Outgoing::Send {
+            event: "cloud",
+            data: data(&crate::wire::cloud::CloudEvent {
+                entity: (*entity).to_owned(),
+            }),
+        },
         ServerEvent::ServerUrls { version } => Outgoing::Send {
             event: "server_urls",
             data: data(&ServerUrlsEvent {

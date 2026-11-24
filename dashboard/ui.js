@@ -64,7 +64,7 @@ export function bytes(n) {
   let i = 0;
   let v = n;
   while (v >= 1000 && i < units.length - 1) { v /= 1000; i++; }
-  const digits = i === 0 ? 0 : v < 10 ? 1 : 0;
+  const digits = i === 0 ? 0 : v < 100 ? 1 : 0;
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: digits }).format(v)} ${units[i]}`;
 }
 

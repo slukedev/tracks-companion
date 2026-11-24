@@ -226,6 +226,22 @@ function later(ctx, title, load, id) {
   return sec;
 }
 
+/**
+ * Songs played without keeping them: how full that space is. The meter follows whichever limit
+ * is closer, songs or bytes; playing songs can push it past a limit for a while.
+ */
+function fetchedRow(f) {
+  const ratio = (value, limit) => (limit > 0 ? value / limit : value > 0 ? Infinity : 0);
+  const worst = Math.max(ratio(f.songs ?? 0, f.keep ?? 0), ratio(f.bytes ?? 0, f.max_bytes ?? 0));
+  const over = worst > 1;
+  const note = over ? 'Over the limit while songs are playing' : f.fetching ? `${num(f.fetching)} downloading` : null;
+  const bar = meter(Math.min(worst, 1), 1, 'Space for fetched songs', over ? 'warn' : 'ink');
+  return h(`div.kv.fetched${over ? '.over' : ''}`,
+    h('dt', 'Fetched songs'),
+    h('dd', `${num(f.songs ?? 0)} of ${num(f.keep ?? 0)} · ${bytes(f.bytes ?? 0)} of ${bytes(f.max_bytes ?? 0)}`, note ? h('span.sub', note) : null),
+    bar);
+}
+
 function serverSection(overview, urls, ctx) {
   const b = overview.backups;
   const s = overview.server;
@@ -240,6 +256,7 @@ function serverSection(overview, urls, ctx) {
       ? (transcodes?.running ? `${num(transcodes.running)} now${transcodes.queued ? `, ${num(transcodes.queued)} waiting` : ''}` : 'Ready')
       : 'Not available', ffmpeg?.found && ffmpeg.version ? `ffmpeg ${ffmpeg.version}` : null),
     acq && ctx.acquisition ? kv('Requests', acq.enabled ? `${num(acq.active ?? 0)} in progress` : 'Turned off', acq.enabled ? `${num(acq.today ?? 0)} today` : null) : null,
+    acq?.fetched && ctx.acquisition ? fetchedRow(acq.fetched) : null,
     s.uptime_s ? kv('Running for', duration(s.uptime_s), s.started_at ? `Since ${date(s.started_at)}` : null) : null,
   ];
   return section('Server', h('dl.list', rows), { aside: h('a', { href: '#/backups' }, 'Backups') });

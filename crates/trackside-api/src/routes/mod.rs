@@ -4,6 +4,7 @@ pub(crate) mod account;
 pub(crate) mod acquisition;
 pub(crate) mod addresses;
 pub(crate) mod admin;
+pub(crate) mod cloud;
 pub(crate) mod enrichment;
 mod events;
 mod idempotency;
@@ -50,6 +51,7 @@ pub(crate) fn router(state: ApiState) -> Router {
         .merge(events::routes())
         .merge(uploads::routes(&state))
         .merge(acquisition::routes())
+        .merge(cloud::routes())
         .nest(
             "/admin",
             admin::routes()

@@ -148,6 +148,9 @@ pub struct UserCounts {
     pub devices: u64,
     pub api_keys: u64,
     pub sessions: u64,
+    /// How much the user keeps in Trackside Cloud: counts only, never the content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud: Option<super::cloud::Amount>,
 }
 
 /// `AdminUser`. `GET /admin/users/{id}` adds the counts.

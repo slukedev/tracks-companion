@@ -91,7 +91,65 @@ async function setupView(ctx) {
     pageHead('Requests'),
     tabs('setup', providers),
     rulesSection(ctx, settings),
+    fetchedSection(ctx, settings),
     sourcesSection(ctx, providers));
+}
+
+/* ---------- Playing songs the library does not have ---------- */
+
+/**
+ * How many fetched songs (played without keeping) stay on disk. Each field saves on change,
+ * Reset sends null for the server's default, and a config-file value is shown locked.
+ */
+function fetchedSection(ctx, settings) {
+  const fieldRow = (key, title, hint, build, suffix) => {
+    const entry = settings[key];
+    if (!entry) return null;
+    const id = nextId('fk');
+    const sub = hint ? h('div.row-sub', hint) : null;
+    if (!entry.editable) {
+      return h('div.setting-row',
+        h('div.row-main', h('span.row-title', title), sub),
+        h('div.control', h('span.locked', { title: 'Set in the config file or environment, so it can only be changed there' },
+          icon('lock'), `${entry.value}${suffix ? ` ${suffix}` : ''}`, h('span.visually-hidden', ', set in the config file'))));
+    }
+    const control = build(entry.value);
+    control.id = id;
+    const error = h('p.error.small', { id: `${id}-error`, hidden: true, role: 'alert' });
+    control.setAttribute('aria-describedby', `${id}-error`);
+    const show = (message) => {
+      error.textContent = message || '';
+      error.hidden = !message;
+      if (message) control.setAttribute('aria-invalid', 'true'); else control.removeAttribute('aria-invalid');
+    };
+    const send = async (value) => {
+      show('');
+      try {
+        await call('PATCH /admin/settings', { body: { [key]: value } });
+        toast(value === null ? 'Back to the default' : 'Saved');
+        if (value === null) ctx.rerender();
+      } catch (err) {
+        show(err.code === 'bad_request' && err.message ? err.message : describe(err));
+      }
+    };
+    control.addEventListener('change', () => {
+      const raw = control.value.trim();
+      if (raw === '') return;
+      send(control.type === 'number' ? Number(raw) : raw);
+    });
+    const reset = button('Reset', { kind: 'quiet', onClick: () => send(null) });
+    reset.setAttribute('aria-label', `Reset ${title.toLowerCase()} to the default`);
+    return h('div.setting-row',
+      h('div.row-main', h('label.row-title', { for: id }, title), sub, error),
+      h('div.control', control, suffix ? h('span.small.muted', suffix) : null, reset));
+  };
+  const keep = fieldRow('acquire.fetched_keep', 'Keep the most recent',
+    'The songs played longest ago go first. A song playing now, or played in the last half hour, is never removed. 0 keeps none.',
+    (value) => { const el = input({ type: 'number', min: '0', step: '1', inputmode: 'numeric', value: String(value ?? '') }); el.classList.add('short'); return el; }, 'songs');
+  const max = fieldRow('acquire.fetched_max_bytes', 'Storage limit', 'Like 20GiB',
+    (value) => { const el = input({ value: String(value ?? ''), spellcheck: 'false' }); el.classList.add('short'); return el; });
+  if (!keep && !max) return null;
+  return section('Playing songs you don\'t have', h('div.list', keep, max));
 }
 
 /* ---------- Requests ---------- */

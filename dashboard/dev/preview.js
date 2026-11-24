@@ -74,6 +74,11 @@ const writes = {
   'POST /admin/acquire/providers/{name}/test': () => 'admin-provider-test',
   'POST /admin/enrichment/test': () => 'admin-enrichment-test',
   'POST /me/pairing-codes': () => 'me-pairing-code',
+  'PATCH /admin/settings': (_, __, body) => {
+    if (body?.['acquire.fetched_keep'] < 0) fail(400, 'bad_request', 'Use 0 or more.', { field: 'acquire.fetched_keep' });
+    if (typeof body?.['acquire.fetched_max_bytes'] === 'string' && !/^\d+(\.\d+)?\s*[KMGT]i?B$/i.test(body['acquire.fetched_max_bytes'])) fail(400, 'bad_request', 'Write a size like 20GiB.', { field: 'acquire.fetched_max_bytes' });
+    return null;
+  },
   'POST /me/api-keys': (_, __, body) => (body?.kind === 'app_password' ? 'me-app-password-created' : 'me-api-key-created'),
 };
 

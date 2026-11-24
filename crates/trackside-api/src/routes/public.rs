@@ -77,6 +77,7 @@ pub fn capabilities_body(
     name: String,
     setup_required: bool,
     uploads: bool,
+    cloud: bool,
 ) -> Capabilities {
     Capabilities {
         product: String::from("trackside"),
@@ -111,17 +112,20 @@ pub fn capabilities_body(
             uploads,
             events: true,
             animated_art: false,
+            cloud,
         },
         subsonic: SubsonicInfo {
             enabled: true,
             path: format!("{}/rest", server.base_path),
         },
+        cloud: cloud.then(super::cloud::cloud_info),
     }
 }
 
 async fn capabilities(State(state): State<ApiState>) -> ApiResult<Json<Capabilities>> {
     let setup = setup_required(&state).await?;
     let uploads = super::settings::effective_bool(&state, "uploads.enabled").await;
+    let cloud = super::settings::effective_bool(&state, super::cloud::ENABLED).await;
     let name = server_name(&state).await;
     Ok(Json(capabilities_body(
         &state.server,
@@ -129,6 +133,7 @@ async fn capabilities(State(state): State<ApiState>) -> ApiResult<Json<Capabilit
         name,
         setup,
         uploads,
+        cloud,
     )))
 }
 

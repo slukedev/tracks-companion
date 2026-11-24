@@ -45,7 +45,7 @@ const overview = {
     { ...LIB.acquired, last_scan: scanAcq, scanning: false },
   ],
   media: { ffmpeg: { found: true, version: '7.1' }, transcodes: { running: 1, queued: 0 }, transcode_cache_bytes: 2100000000 },
-  acquisition: { enabled: true, providers, active: 2, today: 14 },
+  acquisition: { enabled: true, providers, active: 2, today: 14, fetched: { bytes: 7400000000, fetching: 1, keep: 500, max_bytes: 21474836480, songs: 212 } },
   users: { count: 4, devices: 7 },
   backups: { last: { name: 'trackside-20261114T033000Z.db', at: '2026-11-14T03:30:00.000Z', bytes: 790000000 }, next_at: '2026-11-15T03:30:00.000Z' },
   problems: [
@@ -196,6 +196,8 @@ w('admin-settings', {
   'acquire.member_active': s(5),
   'acquire.global_daily': s(500),
   'acquire.instant_play': s(true, 'dashboard'),
+  'acquire.fetched_keep': s(500),
+  'acquire.fetched_max_bytes': s('20GiB'),
   'acquire.ytdlp.enabled': s(true, 'dashboard'),
   'acquire.soulseek.enabled': s(true, 'dashboard'),
   'acquire.soulseek.url': s('http://slskd:5030', 'config', false),

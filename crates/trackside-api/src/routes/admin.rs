@@ -539,6 +539,13 @@ async fn get_user(
                 .filter(|k| k.kind != KeyKind::Device && k.revoked_at.is_none())
                 .count() as u64,
             sessions: sessions::list(c, Some(key))?.len() as u64,
+            cloud: trackside_cloud::store::usage_in(c, key)
+                .map(|u| crate::wire::cloud::Amount {
+                    items: u.items,
+                    bytes: u.bytes,
+                })
+                .ok()
+                .filter(|a| a.items > 0),
         })
     })
     .await?;
