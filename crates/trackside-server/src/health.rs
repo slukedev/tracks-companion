@@ -131,6 +131,7 @@ impl Health {
                 title: String::from("Data volume nearly full"),
                 message: String::from("The data volume is nearly full."),
                 help: Some(String::from("Free some space or move the cache with cache_dir. Writes stop when it is full.")),
+                target: None,
             });
         }
         if self.ffmpeg.is_none() {
@@ -144,6 +145,7 @@ impl Health {
                 help: Some(String::from(
                     "Install ffmpeg or set media.ffmpeg_path, then restart.",
                 )),
+                target: None,
             });
         }
         if let Some(error) = &self
@@ -158,6 +160,7 @@ impl Health {
                 title: String::from("Last backup failed"),
                 message: format!("The last backup failed: {error}"),
                 help: None,
+                target: None,
             });
         }
         problems
@@ -265,7 +268,7 @@ impl HealthSource for Health {
         );
         if self.auth.untrusted_proxy_seen() {
             notes.push(String::from(
-                "Requests arrive through a proxy that is not in server.trusted_proxies. Add it so each client is limited and logged by its own address.",
+                "Requests arrive through a proxy that is not in server.trusted_proxies. Add it so each client is limited and logged by its own address, and so passwords and keys are accepted through it.",
             ));
         }
         checks.insert(

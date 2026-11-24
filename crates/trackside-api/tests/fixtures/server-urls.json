@@ -1,0 +1,21 @@
+{
+  "server_id": "5f0c2b9e-8a3d-4c1e-9b7a-2d6e4f8a1c3b",
+  "urls": [
+    {
+      "kind": "lan",
+      "tls": false,
+      "url": "http://192.168.1.20:4747"
+    },
+    {
+      "kind": "lan",
+      "tls": false,
+      "url": "http://home.local:4747"
+    },
+    {
+      "kind": "public",
+      "tls": true,
+      "url": "https://music.example.com"
+    }
+  ],
+  "version": "a746df40293cc8d2b0f1b1ea782c9d87"
+}

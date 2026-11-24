@@ -394,8 +394,8 @@ fn returning_file_after_purge_reattaches_stars_and_playlists() -> TestResult {
         )
     })?;
     test.finish_scan(lib, &[])?;
-    test.clock.advance(Duration::from_secs(31 * 86_400));
-    let cutoff = Clock::now(&*test.clock).saturating_sub(Duration::from_secs(30 * 86_400));
+    test.clock.advance(Duration::from_hours(31 * 24));
+    let cutoff = Clock::now(&*test.clock).saturating_sub(Duration::from_hours(30 * 24));
     let purged =
         test.write_blocking(move |tx| trackside_core::ingest::purge_missing(tx, cutoff))?;
     assert_eq!(purged, 1);

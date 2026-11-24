@@ -165,8 +165,15 @@ someone else already asked for, doesn't count.
 
 Playing a song the server doesn't have, such as a suggestion or a search result you haven't
 got, streams it through yt-dlp without keeping it: nothing is added to a library and it doesn't
-count as a request. The bytes stay in `<data>/cache/external/` for a few hours, so a replay
-starts at once, and that folder never grows past 1 GiB. Only Get keeps a song.
+count as a request. Only Get keeps a song.
+
+The server holds on to those songs in `<data>/cache/external/` so a replay starts at once, even
+after a restart. It keeps the 500 most recently played, up to 20 GiB; change both in the
+dashboard under **Settings** (`acquire.fetched_keep`, `acquire.fetched_max_bytes`). When either
+limit is passed, the songs played longest ago go first. A song someone is listening to, or
+played in the last half hour, is never removed, so the folder can briefly go over. The
+dashboard's overview shows how much they take. If `<data>` is on a network share that goes
+away, nothing is removed until it is back.
 
 ## What gets checked
 

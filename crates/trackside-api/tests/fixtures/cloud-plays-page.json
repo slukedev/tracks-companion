@@ -1,0 +1,57 @@
+{
+  "cursor": "3f9a0c1d7e2b4a65.918",
+  "deletes": [
+    {
+      "client_modified_at": "2026-11-14T09:29:30.000Z",
+      "deleted_at": "2026-11-14T09:29:30.000Z",
+      "device_id": "0C7B5E3A-9D1F-4E2B-8A6C-5F4E3D2C1B0A",
+      "id": "1F3B5D7F-9A1C-4E3B-8D5F-7A9C1E3B5D7F",
+      "merged_into": "6A8C0E2F-4B6D-4F8A-9C1E-3B5D7F9A1C3E",
+      "version": 918
+    }
+  ],
+  "has_more": false,
+  "upserts": [
+    {
+      "client_modified_at": "2026-11-14T08:35:00.000Z",
+      "device_id": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C",
+      "fields": {
+        "albumTitle": "I Am... Sasha Fierce",
+        "artistName": "Beyoncé",
+        "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Music/halo/600x600bb.jpg",
+        "catalogID": "1440769385",
+        "durationMs": 261640,
+        "kind": "onDemand",
+        "platform": "ios",
+        "playedAtMs": 1794645000000,
+        "playedMs": 254000,
+        "recordedByDeviceID": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C",
+        "scrobbledAt": 1794645300000,
+        "serverSongID": "s7m2k4q9x1v8b3n6c0de",
+        "sessionID": "9B2C4D6E-8F0A-4B1C-9D3E-5F7A9B1C3D5E",
+        "songKey": "halo\u001fbeyonce",
+        "source": "appleMusic",
+        "title": "Halo"
+      },
+      "id": "6A8C0E2F-4B6D-4F8A-9C1E-3B5D7F9A1C3E",
+      "version": 917
+    },
+    {
+      "client_modified_at": "2026-11-13T09:30:00.000Z",
+      "device_id": "0C7B5E3A-9D1F-4E2B-8A6C-5F4E3D2C1B0A",
+      "fields": {
+        "albumTitle": "Jazz",
+        "artistName": "Queen",
+        "kind": "lastFM",
+        "platform": "macos",
+        "playedAtMs": 1700000000000,
+        "recordedByDeviceID": "0C7B5E3A-9D1F-4E2B-8A6C-5F4E3D2C1B0A",
+        "songKey": "don't stop me now\u001fqueen",
+        "source": "appleMusic",
+        "title": "Don't Stop Me Now"
+      },
+      "id": "lastfm:1700000000:5f2b9c1d",
+      "version": 640
+    }
+  ]
+}

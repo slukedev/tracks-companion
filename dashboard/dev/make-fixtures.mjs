@@ -45,12 +45,12 @@ const overview = {
     { ...LIB.acquired, last_scan: scanAcq, scanning: false },
   ],
   media: { ffmpeg: { found: true, version: '7.1' }, transcodes: { running: 1, queued: 0 }, transcode_cache_bytes: 2100000000 },
-  acquisition: { enabled: true, providers, active: 2, today: 14 },
+  acquisition: { enabled: true, providers, active: 2, today: 14, fetched: { bytes: 7400000000, fetching: 1, keep: 500, max_bytes: 21474836480, songs: 212 } },
   users: { count: 4, devices: 7 },
   backups: { last: { name: 'trackside-20261114T033000Z.db', at: '2026-11-14T03:30:00.000Z', bytes: 790000000 }, next_at: '2026-11-15T03:30:00.000Z' },
   problems: [
-    { severity: 'warning', code: 'library_unavailable', title: 'NAS Archive offline', message: 'NAS Archive has been unavailable since 08:00.', help: 'Check that the NAS is on and its share is mounted at /mnt/nas/music. Its songs stay in the library until it is back.' },
-    { severity: 'warning', code: 'inotify_limit', title: 'Music not watched live', message: 'Watching Music for changes fell back to polling.', help: 'Raise fs.inotify.max_user_watches to 524288 on the host so new files appear within seconds.' },
+    { severity: 'warning', code: 'library_unavailable', title: 'NAS Archive offline', message: 'NAS Archive has been unavailable since 08:00.', help: 'Check that the NAS is on and its share is mounted at /mnt/nas/music. Its songs stay in the library until it is back.', target: { kind: 'library', id: LIB.nas.id } },
+    { severity: 'warning', code: 'inotify_limit', title: 'Music not watched live', message: 'Watching Music for changes fell back to polling.', help: 'Raise fs.inotify.max_user_watches to 524288 on the host so new files appear within seconds.', target: { kind: 'library', id: LIB.music.id } },
   ],
 };
 w('admin-overview', overview);
@@ -61,7 +61,7 @@ w('readyz', {
   checks: { database: 'ok', ffmpeg: 'ok', libraries: 'degraded', migrations: 'ok' },
   notes: [
     `Library ${LIB.nas.id} is unavailable`,
-    'Requests arrive through a proxy that is not in server.trusted_proxies. Add it so each client is limited and logged by its own address.',
+    'Requests arrive through a proxy that is not in server.trusted_proxies. Add it so each client is limited and logged by its own address, and so passwords and keys are accepted through it.',
   ],
 });
 
@@ -77,7 +77,7 @@ const fresh = {
   media: { ffmpeg: { found: false }, transcodes: { running: 0, queued: 0 }, transcode_cache_bytes: 0 },
   users: { count: 1, devices: 0 },
   backups: { next_at: '2026-11-15T03:30:00.000Z' },
-  problems: [{ severity: 'info', code: 'ffmpeg_missing', title: 'No ffmpeg', message: 'ffmpeg was not found, so songs play only in their original format.', help: 'Use the standard image, or install ffmpeg and restart Trackside.' }],
+  problems: [{ severity: 'info', code: 'no_ffmpeg', title: 'ffmpeg not found', message: 'ffmpeg was not found, so songs play only in their original format.', help: 'Use the standard image, or install ffmpeg and restart Trackside.' }],
 };
 w('admin-overview-fresh', fresh);
 
@@ -104,7 +104,7 @@ w('me', {
 });
 
 w('admin-users', { users });
-w('admin-user', { ...mum, devices: 2, api_keys: 0, sessions: 1 });
+w('admin-user', { ...mum, devices: 2, api_keys: 0, sessions: 1, cloud: { items: 12400, bytes: 18000000 } });
 w('admin-user-created', { ...users[2], id: 'u0f3a6b9c2d5e8f1a4b7', username: 'nana', display_name: 'Nana', created_at: '2026-11-14T10:00:00.000Z', last_seen_at: undefined });
 w('admin-password-reset', { url: 'http://192.168.1.20:4747/reset/preview-reset-token-4XQ9', expires_at: '2026-11-15T10:00:00.000Z' });
 
@@ -115,7 +115,7 @@ const invites = [
 ];
 w('admin-invites', { invites });
 w('admin-invite-created', { ...invites[0], id: 'v9k2l5z8x1c4v7b0n3m6', note: '', created_at: '2026-11-14T10:00:00.000Z', expires_at: '2026-11-21T10:00:00.000Z', url: 'http://192.168.1.20:4747/invite/preview-invite-token-7KQ2M9XD', qr_svg_url: '/api/v1/admin/invites/v9k2l5z8x1c4v7b0n3m6/qr.svg' });
-w('invite-info', { valid: true, role: 'member', expires_at: '2026-11-21T09:15:20.000Z' });
+w('invite-info', { valid: true, role: 'member', expires_at: '2026-11-21T09:15:20.000Z', invited_by: 'Luke', note: 'For Mum' });
 
 const adminLib = (l, o) => ({ ...l, enabled: true, writable: false, watch: true, quick_scan_interval_s: 1800, watching: 'events', uploads_target: false, acquire_target: false, ...o });
 w('admin-libraries', { libraries: [
@@ -147,7 +147,7 @@ w('admin-duplicates', { groups: [
     { id: 's2f4g6h8j0k2l4z6x8c0', title: 'Halo', artist: 'Beyoncé', library_id: LIB.acquired.id, path: 'Beyoncé/I Am... Sasha Fierce/Halo.flac' },
   ] },
 ] });
-w('admin-imports', { imports: [
+w('admin-imports', { next_cursor: 'aW1wb3J0czoy', imports: [
   { id: 'i5q8w1e4r7t0y3u6i9o2', file_name: '01 Halo.flac', source: 'upload', user: ref(luke), state: 'imported', song_id: 's2f4g6h8j0k2l4z6x8c0', created_at: '2026-11-14T09:30:58.000Z' },
   { id: 'i2w5e8r1t4y7u0i3o6p9', file_name: 'voice memo.m4a', source: 'inbox', state: 'rejected', error: 'The file has a video track.', created_at: '2026-11-13T12:02:11.000Z' },
 ] });
@@ -196,10 +196,15 @@ w('admin-settings', {
   'acquire.member_active': s(5),
   'acquire.global_daily': s(500),
   'acquire.instant_play': s(true, 'dashboard'),
+  'acquire.fetched_keep': s(500),
+  'acquire.fetched_max_bytes': s('20GiB'),
   'acquire.ytdlp.enabled': s(true, 'dashboard'),
   'acquire.soulseek.enabled': s(true, 'dashboard'),
   'acquire.soulseek.url': s('http://slskd:5030', 'config', false),
   'enrichment.musicbrainz': s(false),
+  'cloud.enabled': s(true),
+  'cloud.quota_items': s(2000000),
+  'cloud.quota_bytes': s('1GiB'),
   'enrichment.lastfm_api_key': s(true, 'dashboard'),
 });
 w('admin-server-urls', { urls: [
@@ -215,7 +220,7 @@ w('admin-backups', { backups: [
   { name: 'trackside-20261112T214500Z.db', kind: 'manual', at: '2026-11-12T21:45:00.000Z', bytes: 785100000, has_key: true },
   { name: 'trackside-20261112T033000Z.db', kind: 'scheduled', at: '2026-11-12T03:30:00.000Z', bytes: 784900000, has_key: true },
   { name: 'trackside-20261111T080000Z-pre-migrate-2.db', kind: 'pre_migrate', at: '2026-11-11T08:00:00.000Z', bytes: 781000000, has_key: false },
-] });
+], next_at: '2026-11-15T03:30:00.000Z' });
 
 w('admin-audit', { entries: [
   { at: '2026-11-14T09:42:10.000Z', actor: 'luke', ip: '192.168.1.41', action: 'pairing.approve', target: 'Living Room Mac', detail: 'macos' },
@@ -246,7 +251,10 @@ w('admin-provider-test', { ok: true, elapsed_ms: 1840, candidates: 12, detail: '
 w('admin-enrichment', { configured: true, artists: 1840, songs: 5210, last_fetch_at: '2026-11-14T09:28:00.000Z', last_error: { at: '2026-11-14T08:30:00.000Z', message: 'Last.fm error 29: Rate Limit Exceeded' } });
 w('admin-enrichment-test', { ok: false, elapsed_ms: 212, detail: 'Last.fm error 10: Invalid API key' });
 
-w('me-devices', { devices: devices.filter((d) => d.user.id === luke.id).map(({ user, ...d }, i) => ({ ...d, current: false })) });
+w('me-devices', { devices: devices.filter((d) => d.user.id === luke.id).map(({ user, ...d }) => ({ ...d, current: false })) });
+// The member preview signs in as Mum, so her own devices and keys.
+w('me-devices-member', { devices: devices.filter((d) => d.user.id === mum.id).map(({ user, ...d }) => ({ ...d, current: false })) });
+w('me-api-keys-member', { keys: [] });
 w('me-api-keys', { keys: [
   { id: 'k2c4e6g8i0k2m4o6q8s0', kind: 'api_key', name: 'Home Assistant', prefix: 'tsk_Hq7', scopes: ['library'], created_at: '2026-10-01T09:00:00.000Z', last_used_at: '2026-11-14T09:55:00.000Z', last_used_ip: '192.168.1.10' },
 ] });
@@ -292,7 +300,8 @@ w('admin-stats-streams', {
 const days90 = dayList(90);
 w('admin-stats-storage', {
   bucket: 'day', days: days90,
-  data_free_bytes: days90.map((_, i) => Math.round(150e9 - i * 0.33e9 + (rand() - 0.5) * 1.2e9)),
+  // The last day matches the overview's data_free_bytes, so the page shows one number for it.
+  data_free_bytes: days90.map((_, i) => (i === 89 ? overview.storage.data_free_bytes : Math.round(150e9 - i * 0.33e9 + (rand() - 0.5) * 1.2e9))),
   database_bytes: days90.map((_, i) => Math.round(700e6 + i * 1.25e6)),
   cache_bytes: days90.map((_, i) => Math.round(2.2e9 + i * 11e6 + (rand() - 0.5) * 2e8)),
   volume_bytes: 500e9,

@@ -256,8 +256,8 @@ async fn a_request_forwarded_by_an_untrusted_proxy_never_counts_as_local() -> Te
         "x-forwarded-for",
         http::HeaderValue::from_static("203.0.113.9"),
     );
-    assert!(h.auth.is_local_client(&direct, lan));
-    assert!(!h.auth.is_local_client(&forwarded, lan));
+    assert!(h.auth.is_local_client(&direct, Some(lan), lan));
+    assert!(!h.auth.is_local_client(&forwarded, Some(lan), lan));
 
     assert!(!h.auth.untrusted_proxy_seen());
     let (parts, ()) = http::Request::builder()
@@ -270,11 +270,219 @@ async fn a_request_forwarded_by_an_untrusted_proxy_never_counts_as_local() -> Te
     assert!(h.auth.untrusted_proxy_seen());
 
     let trusted = harness_with(common::config(), vec!["192.168.0.0/16".parse()?])?;
-    assert!(trusted.auth.is_local_client(&forwarded, lan));
+    assert!(trusted.auth.is_local_client(&forwarded, Some(lan), lan));
+    // A tunnel on the host forwarding the internet is not one of the trusted proxies.
+    let tunnel: std::net::IpAddr = "127.0.0.1".parse()?;
+    assert!(
+        !trusted
+            .auth
+            .is_local_client(&forwarded, Some(tunnel), tunnel)
+    );
+    assert!(!trusted.auth.is_local_client(&forwarded, None, lan));
     assert_eq!(
         trusted.auth.client_ip(&parts, peer),
         "203.0.113.9".parse::<std::net::IpAddr>()?
     );
     assert!(!trusted.auth.untrusted_proxy_seen());
+    Ok(())
+}
+
+fn arrived(
+    peer: &str,
+    headers: &[(&'static str, &'static str)],
+    https: bool,
+) -> Result<http::request::Parts, Box<dyn std::error::Error + Send + Sync>> {
+    let mut builder = http::Request::builder().uri("/api/v1/auth/login");
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+    let (mut parts, ()) = builder.body(())?.into_parts();
+    let peer: std::net::SocketAddr = peer.parse()?;
+    parts.extensions.insert(axum::extract::ConnectInfo(peer));
+    if https {
+        parts.extensions.insert(trackside_auth::Https);
+    }
+    Ok(parts)
+}
+
+#[tokio::test]
+async fn secrets_need_https_unless_the_client_is_nearby() -> TestResult {
+    let h = harness()?;
+    let allowed = |parts: &http::request::Parts| h.auth.secrets_allowed(parts);
+    for peer in [
+        "127.0.0.1:1",
+        "[::1]:1",
+        "10.0.0.5:1",
+        "172.16.3.4:1",
+        "192.168.1.20:1",
+        "169.254.1.1:1",
+        "[fe80::1]:1",
+        "[fd00::5]:1",
+        "100.64.0.9:1",
+        "[::ffff:192.168.1.20]:1",
+    ] {
+        assert!(allowed(&arrived(peer, &[], false)?), "{peer}");
+    }
+    for peer in [
+        "203.0.113.7:1",
+        "[2001:db8::5]:1",
+        "100.128.0.1:1",
+        "[::ffff:8.8.8.8]:1",
+    ] {
+        assert!(!allowed(&arrived(peer, &[], false)?), "{peer}");
+        assert!(allowed(&arrived(peer, &[], true)?), "{peer} over https");
+    }
+    // An untrusted public peer's forwarding headers count for nothing.
+    let spoofed = arrived(
+        "203.0.113.7:1",
+        &[
+            ("x-forwarded-proto", "https"),
+            ("forwarded", "for=192.168.1.2;proto=https"),
+        ],
+        false,
+    )?;
+    assert!(!allowed(&spoofed));
+    // A LAN proxy that isn't trusted is judged by its own address, and since it forwards
+    // (perhaps for the internet) nothing it says is believed: it is refused until the admin
+    // adds it to `server.trusted_proxies`, whatever proto or client it names.
+    let lan_proxy = |headers| arrived("192.168.1.2:1", headers, false);
+    for headers in [
+        &[
+            ("x-forwarded-for", "203.0.113.7"),
+            ("x-forwarded-proto", "http"),
+        ][..],
+        &[
+            ("x-forwarded-for", "203.0.113.7"),
+            ("x-forwarded-proto", "https"),
+        ][..],
+        &[("x-forwarded-for", "192.168.1.30")][..],
+        &[("x-forwarded-proto", "https")][..],
+    ] {
+        assert!(!allowed(&lan_proxy(headers)?), "{headers:?}");
+    }
+
+    let trusted = harness_with(common::config(), vec!["10.9.0.0/16".parse()?])?;
+    let via_proxy = |headers| arrived("10.9.0.2:1", headers, false);
+    let ok = |parts: &http::request::Parts| trusted.auth.secrets_allowed(parts);
+    assert!(ok(&via_proxy(&[
+        ("x-forwarded-for", "203.0.113.7"),
+        ("x-forwarded-proto", "https"),
+    ])?));
+    assert!(ok(&via_proxy(&[(
+        "forwarded",
+        "for=203.0.113.7;proto=https"
+    )])?));
+    assert!(!ok(&via_proxy(&[
+        ("x-forwarded-for", "203.0.113.7"),
+        ("x-forwarded-proto", "http"),
+    ])?));
+    assert!(!ok(&via_proxy(&[("x-forwarded-for", "203.0.113.7")])?));
+    assert!(ok(&via_proxy(&[("x-forwarded-for", "192.168.4.4")])?));
+    // nginx appends the real client to X-Forwarded-For and passes the client's own
+    // `Forwarded` through: that one is not believed.
+    assert!(!ok(&via_proxy(&[
+        ("forwarded", "for=192.168.1.5;proto=https"),
+        ("x-forwarded-for", "203.0.113.7"),
+    ])?));
+
+    // `server.local_networks` adds a LAN's global prefix.
+    let lan_v6 = trackside_auth::Auth::new(
+        h.db.db.clone(),
+        &common::config(),
+        trackside_auth::SecretKey::from_bytes([1; 32]),
+        Vec::new(),
+        h.db.clock.clone(),
+    )
+    .with_local_networks(vec!["2001:db8:1::/64".parse()?]);
+    assert!(lan_v6.secrets_allowed(&arrived("[2001:db8:1::7]:1", &[], false)?));
+    assert!(!lan_v6.secrets_allowed(&arrived("[2001:db8:2::7]:1", &[], false)?));
+    assert!(lan_v6.is_local_client(
+        &http::HeaderMap::new(),
+        Some("2001:db8:1::7".parse()?),
+        "2001:db8:1::7".parse()?
+    ));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn tailscale_addresses_can_be_treated_as_the_internet() -> TestResult {
+    let h = harness()?;
+    let tailnet = arrived("100.64.0.9:1", &[], false)?;
+    assert!(h.auth.secrets_allowed(&tailnet), "nearby by default");
+    let cgnat = trackside_auth::Auth::new(
+        h.db.db.clone(),
+        &common::config(),
+        trackside_auth::SecretKey::from_bytes([1; 32]),
+        Vec::new(),
+        h.db.clock.clone(),
+    )
+    .with_tailscale_is_local(false);
+    assert!(!cgnat.secrets_allowed(&tailnet));
+    assert!(!cgnat.is_nearby_client(&http::HeaderMap::new(), "100.64.0.9".parse()?));
+    assert!(cgnat.secrets_allowed(&arrived("192.168.1.20:1", &[], false)?));
+    Ok(())
+}
+
+#[tokio::test]
+async fn keys_and_the_plain_session_cookie_need_https_from_afar() -> TestResult {
+    let h = harness()?;
+    // A key over plain HTTP from the internet is refused before it is looked up.
+    let parts = arrived(
+        "203.0.113.7:1",
+        &[("authorization", "Bearer tsk_whatever")],
+        false,
+    )?;
+    let error = h
+        .auth
+        .authenticate(
+            &parts,
+            "203.0.113.7".parse()?,
+            trackside_auth::RouteClass::Api,
+        )
+        .await;
+    assert!(matches!(
+        error,
+        Err(trackside_auth::AuthError::HttpsRequired)
+    ));
+    // The plain session cookie is only for nearby clients: over plain HTTP to a public
+    // address (split-horizon DNS) it is refused, and the refusal clears it.
+    let cookie = [("cookie", "trackside_session=whatever")];
+    let public = arrived("203.0.113.7:1", &cookie, false)?;
+    let error = h
+        .auth
+        .authenticate(
+            &public,
+            "203.0.113.7".parse()?,
+            trackside_auth::RouteClass::Api,
+        )
+        .await;
+    let Err(error) = error else {
+        return Err("a plain cookie from the internet was accepted".into());
+    };
+    assert!(matches!(error, trackside_auth::AuthError::HttpsRequired));
+    let response = axum::response::IntoResponse::into_response(error);
+    let cleared = response
+        .headers()
+        .get(http::header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    assert!(
+        cleared.starts_with("trackside_session=;") && cleared.contains("Max-Age=0"),
+        "{cleared}"
+    );
+    let nearby = arrived("192.168.1.20:1", &cookie, false)?;
+    let error = h
+        .auth
+        .authenticate(
+            &nearby,
+            "192.168.1.20".parse()?,
+            trackside_auth::RouteClass::Api,
+        )
+        .await;
+    assert!(matches!(
+        error,
+        Err(trackside_auth::AuthError::Unauthenticated)
+    ));
     Ok(())
 }

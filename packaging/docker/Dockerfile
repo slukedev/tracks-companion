@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.28.0@sha256:bb22d9815c728170f72750f4e5b0d672e06176142e1d602c7e66c050100b7e5b
+# syntax=docker/dockerfile:1.29.0@sha256:572cebbc2b15e6f84c077742952674889cb63cd5e9b80abdffcbe587b6f19183
 
 # Trackside container images. Build from the repository root:
 #
@@ -12,15 +12,15 @@
 # Every base image and download is pinned by version and digest or checksum. To update one,
 # change the tag and the digest together; docs/ops/releasing.md has the commands.
 
-ARG RUST_VERSION=1.99.0
+ARG RUST_VERSION=1.100.0
 ARG ZIGBUILD_IMAGE=ghcr.io/rust-cross/cargo-zigbuild:0.24.1@sha256:3abe26afb5537ea225c223c6790c1bf056271ef51ea52d2c4e343c569c8f129a
 ARG ALPINE_IMAGE=docker.io/library/alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
-ARG DEBIAN_IMAGE=docker.io/library/debian:12.15-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
-ARG STATIC_BASE=gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
-ARG CC_BASE=gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f
-# ffmpeg 9.0.2, static musl build from github.com/wader/static-ffmpeg. GPL v3 build with no
+ARG STATIC_BASE=gcr.io/distroless/static-debian13:nonroot@sha256:8ce6dd87e9823c5b48dcfb2c8604714ccb351ce59607327bcc4957448da279b5
+# Debian 13 distroless cc ships zlib1g, which the yt-dlp build links; debian12 did not.
+ARG CC_BASE=gcr.io/distroless/cc-debian13:nonroot@sha256:532c7a94f9e96ba9db75eb9388f4227751131c7cb0a411d1a8521af4096135de
+# ffmpeg 9.1, static musl build from github.com/wader/static-ffmpeg. GPL v3 build with no
 # nonfree libraries (no libfdk_aac); Trackside's AAC profiles use ffmpeg's native encoder.
-ARG FFMPEG_IMAGE=docker.io/mwader/static-ffmpeg:9.0.2-1@sha256:f5d100184884eb3e82b0eb14bb5ebf98da99826ac824989720297fb9ef21c822
+ARG FFMPEG_IMAGE=docker.io/mwader/static-ffmpeg:9.1@sha256:dd09509d8c2152bfa601c8c20e3dd166bde906d37951b9f7e8bbd922267f5ac9
 ARG DENO_IMAGE=docker.io/denoland/deno:bin-2.9.8@sha256:b507583d3c68ba69f3ed2ce5969ae5b8b70f43421c781279c7aea06435263543
 ARG YTDLP_VERSION=2026.10.26
 ARG YTDLP_SHA256_AMD64=f34053415136e55073dd64ba5326d161ecc23ce0e98c081d8752867b37809450
@@ -89,10 +89,6 @@ RUN mkdir -p /out/opt/yt-dlp \
     && mv /out/opt/yt-dlp/yt-dlp_linux* /out/opt/yt-dlp/yt-dlp \
     && chmod 0755 /out/opt/yt-dlp/yt-dlp
 
-# The yt-dlp build links the system zlib, which distroless cc does not ship. Debian 12 matches
-# the distroless base, so this is the same library Debian would install.
-FROM ${DEBIAN_IMAGE} AS zlib
-
 FROM ${FFMPEG_IMAGE} AS ffmpeg
 FROM ${DENO_IMAGE} AS deno
 
@@ -129,7 +125,6 @@ ARG VERSION
 ARG REVISION
 COPY --from=skeleton --chown=65532:65532 /out/data /data
 COPY --from=skeleton /out/music /music
-COPY --from=zlib /usr/lib/*-linux-gnu/libz.so.1* /usr/lib/
 COPY --from=ffmpeg /ffmpeg /ffprobe /usr/local/bin/
 COPY --from=deno /deno /usr/local/bin/deno
 COPY --from=ytdlp /out/opt/yt-dlp /opt/yt-dlp

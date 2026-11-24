@@ -329,6 +329,46 @@ impl Auth {
         Ok(())
     }
 
+    /// The first step of deleting a user whose data is purged in several transactions: in one
+    /// write transaction, refuses the last active admin and disables the user. A disabled
+    /// user no longer counts as an admin, so a concurrent demotion of the other admins is
+    /// refused from here on and the final [`Self::delete_user`] cannot be refused after the
+    /// purge has started.
+    pub async fn begin_delete_user(
+        &self,
+        by: UserKey,
+        user: UserKey,
+        ip: Option<IpAddr>,
+    ) -> Result<(), AuthError> {
+        let disabled = self
+            .write(move |tx| {
+                let actor = active_admin(tx.conn(), by)?;
+                let current = users::get(tx.conn(), user)?.ok_or(DbError::NotFound)?;
+                ensure_not_last_admin(tx.conn(), &current)?;
+                if current.disabled_at.is_some() {
+                    return Ok(false);
+                }
+                let patch = UserPatch {
+                    disabled: Some(true),
+                    ..UserPatch::default()
+                };
+                users::update(tx, user, &patch)?;
+                log(
+                    tx,
+                    Some(&actor),
+                    ip,
+                    "user.update",
+                    Some(current.id.as_str()),
+                )?;
+                Ok(true)
+            })
+            .await?;
+        if disabled {
+            self.revoked(user, None);
+        }
+        Ok(())
+    }
+
     /// Deletes a user and their data. Refused for the last active admin.
     pub async fn delete_user(
         &self,

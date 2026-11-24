@@ -187,6 +187,7 @@ pub fn library_problems_for(
                     "Check that the disk or share is mounted at {}. Its songs stay in the library until it is back.",
                     library.root.display()
                 )),
+                target: Some(library_target(library)),
             });
         } else if status.is_some_and(|s| s.watching == trackside_core::control::WatchMode::Polling)
         {
@@ -198,10 +199,18 @@ pub fn library_problems_for(
                 help: Some(String::from(
                     "Raise fs.inotify.max_user_watches to 524288 on the host so new files appear within seconds.",
                 )),
+                target: Some(library_target(library)),
             });
         }
     }
     out
+}
+
+fn library_target(library: &Library) -> crate::wire::admin::ProblemTarget {
+    crate::wire::admin::ProblemTarget {
+        kind: String::from("library"),
+        id: library.id.to_string(),
+    }
 }
 
 /// "<name> <what>", keeping the title to six words by shortening a long name.
@@ -230,6 +239,7 @@ pub fn audit_summary(action: &str, target: Option<&str>) -> Option<String> {
         ("user.libraries", _) => String::from("Changed library access"),
         ("backup.create", _) => String::from("Started a backup"),
         ("backup.delete", Some(t)) => format!("Deleted backup {t}"),
+        ("backup.download", Some(t)) => format!("Downloaded backup {t}"),
         ("library.create", Some(t)) => format!("Added library {t}"),
         ("acquisition.request", Some(t)) => format!("Requested {t}"),
         ("settings.update", _) => String::from("Changed settings"),
@@ -288,7 +298,7 @@ async fn overview(
             .db
             .clock()
             .now()
-            .saturating_sub(Duration::from_secs(86_400));
+            .saturating_sub(Duration::from_hours(24));
         let today = state
             .acquire
             .admin_list(AcquisitionFilter {
@@ -310,6 +320,7 @@ async fn overview(
             providers: providers.iter().map(map::provider).collect(),
             active: u32::try_from(active).unwrap_or(u32::MAX),
             today: u32::try_from(today).unwrap_or(u32::MAX),
+            fetched: state.acquire.fetched_usage().map(map::fetched_usage),
         })
     };
     Ok(json_with(StatusCode::OK, &body))
@@ -537,6 +548,13 @@ async fn get_user(
                 .filter(|k| k.kind != KeyKind::Device && k.revoked_at.is_none())
                 .count() as u64,
             sessions: sessions::list(c, Some(key))?.len() as u64,
+            cloud: trackside_cloud::store::usage_in(c, key)
+                .map(|u| crate::wire::cloud::Amount {
+                    items: u.items,
+                    bytes: u.bytes,
+                })
+                .ok()
+                .filter(|a| a.items > 0),
         })
     })
     .await?;
@@ -688,6 +706,14 @@ async fn delete_user(
 ) -> ApiResult<Response> {
     require_recent_auth(&state, &principal)?;
     let user = find_user(&state, &id).await?;
+    // Trackside Cloud data goes first, in short transactions, so the delete itself stays
+    // short. Disabling the user first checks for the last admin in the same transaction and
+    // keeps a concurrent demotion from making the final delete fail after the purge.
+    state
+        .auth
+        .begin_delete_user(principal.access.user, user.key, Some(ip))
+        .await?;
+    trackside_cloud::store::purge_user(&state.db, user.key).await?;
     state
         .auth
         .delete_user(principal.access.user, user.key, Some(ip))
@@ -1496,6 +1522,13 @@ async fn patch_settings(
     })
     .await?;
     apply_acquisition_settings(&state, &changes).await;
+    if changes.iter().any(|(n, _)| *n == "server.public_urls") {
+        super::addresses::announce(&state).await;
+    }
+    if changes.iter().any(|(n, _)| *n == settings::LEGACY_SUBSONIC) {
+        let on = settings::effective_bool(&state, settings::LEGACY_SUBSONIC).await;
+        state.auth.set_legacy_subsonic(on);
+    }
     if let Some((_, key)) = changes.iter().find(|(n, _)| *n == settings::LASTFM_API_KEY) {
         state.enrich.set_key(key.as_str().map(Secret::new));
     }
@@ -1515,6 +1548,23 @@ async fn patch_settings(
     )
     .await;
     Ok(json_with(StatusCode::OK, &settings_body(&state).await?))
+}
+
+/// The effective limits on fetched songs: the dashboard's, else the configuration's. A value
+/// set back to null returns to the configuration's.
+async fn fetched_limits(state: &ApiState) -> ProviderChange {
+    let keep = match settings::effective(state, settings::FETCHED_KEEP).await {
+        Some(v) => v.as_u64().and_then(|n| u32::try_from(n).ok()),
+        None => None,
+    };
+    let max_bytes = match settings::effective(state, settings::FETCHED_MAX_BYTES).await {
+        Some(v) => v.as_str().and_then(trackside_core::config::parse_size),
+        None => None,
+    };
+    ProviderChange::Fetched {
+        keep: keep.unwrap_or(state.config.acquire.fetched_keep),
+        max_bytes: max_bytes.unwrap_or(state.config.acquire.fetched_max_bytes),
+    }
 }
 
 /// Acquisition settings take effect through the acquirer as well as the settings table.
@@ -1545,9 +1595,16 @@ async fn apply_acquisition_settings(state: &ApiState, changes: &[(&'static str, 
         n.starts_with("acquire.")
             && !n.starts_with("acquire.ytdlp")
             && !n.starts_with("acquire.soulseek")
+            && !n.starts_with("acquire.fetched_")
             && *n != "acquire.library"
     }) {
         wanted.push(global);
+    }
+    if changes
+        .iter()
+        .any(|(n, _)| *n == settings::FETCHED_KEEP || *n == settings::FETCHED_MAX_BYTES)
+    {
+        wanted.push(fetched_limits(state).await);
     }
     for provider in ["ytdlp", "soulseek"] {
         let enabled = get(&format!("acquire.{provider}.enabled")).and_then(Value::as_bool);
@@ -1823,7 +1880,8 @@ async fn list_backups(
     State(state): State<ApiState>,
 ) -> ApiResult<Response> {
     let backups = state.ops.backups().await.map_err(ops_error)?;
-    Ok(json_with(StatusCode::OK, &Backups { backups }))
+    let next_at = state.ops.next_backup().map(Into::into);
+    Ok(json_with(StatusCode::OK, &Backups { backups, next_at }))
 }
 
 async fn create_backup(
@@ -1847,6 +1905,7 @@ async fn create_backup(
 async fn download_backup(
     AdminSession(principal): AdminSession,
     State(state): State<ApiState>,
+    ClientIp(ip): ClientIp,
     Path(name): Path<String>,
 ) -> ApiResult<Response> {
     require_recent_auth(&state, &principal)?;
@@ -1865,6 +1924,15 @@ async fn download_backup(
         .await
         .map_err(|e| ApiError::internal(&e))?
         .len();
+    audit_log(
+        &state,
+        Some(&principal),
+        Some(ip),
+        "backup.download",
+        Some(name.clone()),
+        None,
+    )
+    .await;
     let stream = tokio_util::io::ReaderStream::new(file);
     let mut response = Body::from_stream(stream).into_response();
     let headers = response.headers_mut();

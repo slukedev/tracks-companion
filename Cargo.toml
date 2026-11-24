@@ -5,10 +5,9 @@ members = ["crates/*", "tests-e2e"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.91"
 license = "GPL-3.0-only"
 repository = "https://github.com/slukedev/tracks-companion"
-homepage = "https://github.com/slukedev/tracks-companion"
 publish = false
 
 [workspace.dependencies]
@@ -21,6 +20,7 @@ trackside-acquire = { path = "crates/trackside-acquire" }
 trackside-enrich = { path = "crates/trackside-enrich" }
 trackside-subsonic = { path = "crates/trackside-subsonic" }
 trackside-api = { path = "crates/trackside-api" }
+trackside-cloud = { path = "crates/trackside-cloud" }
 
 # Shared with Tracks
 tracks-model = { git = "https://github.com/slukedev/tracks", rev = "f8f07456fdf118823bccbfbbed49cdd88413ea61" }
@@ -44,8 +44,8 @@ rcgen = "0.14"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "stream"] }
 
 # Storage and serialization
-rusqlite = { version = "0.41", features = ["bundled", "functions", "blob"] }
-rusqlite_migration = "2.7"
+rusqlite = { version = "0.43", features = ["bundled", "functions", "blob"] }
+rusqlite_migration = "2.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 quick-xml = { version = "0.42", features = ["serialize"] }
@@ -57,7 +57,7 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 clap = { version = "4.6", features = ["derive", "env"] }
-jiff = "0.2"
+jiff = "1.0"
 uuid = { version = "1.29", features = ["v4", "serde"] }
 
 # Hashing and secrets
@@ -75,10 +75,10 @@ ipnet = { version = "2.12", features = ["serde"] }
 
 # Media, files and discovery
 lofty = "0.25"
-notify = "8.2"
+notify = "9.0"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
-qrcode = { version = "0.14", default-features = false, features = ["svg"] }
-mdns-sd = "0.21"
+qrcode = { version = "0.15", default-features = false, features = ["svg"] }
+mdns-sd = "0.22"
 if-addrs = "0.15"
 rust-embed = "8.14"
 mime_guess = "2.0"
@@ -90,10 +90,8 @@ unicode-normalization = "0.1"
 
 # Dev
 proptest = "1.12"
-rstest = "0.28"
 insta = { version = "1.49", features = ["json"] }
 tempfile = "3.27"
-criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -120,6 +120,15 @@ pub struct ServerUrl {
     pub fingerprint: Option<String>,
 }
 
+/// `GET /server/urls`: the addresses a paired device may use, and the version naming this list
+/// (also the `ETag`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerUrls {
+    pub server_id: String,
+    pub version: String,
+    pub urls: Vec<ServerUrl>,
+}
+
 /// The server as `PairResult` and `/me` describe it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerSummary {
@@ -237,6 +246,12 @@ pub struct InviteInfo {
     pub valid: bool,
     pub role: String,
     pub expires_at: Time,
+    /// The display name of the admin who made the invite, while their account exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invited_by: Option<String>,
+    /// The admin's note on who the invite is for, if they wrote one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// `POST /invites/{token}/accept`.

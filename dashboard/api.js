@@ -29,31 +29,31 @@ export class ApiError extends Error {
 }
 
 const messages = {
-  bad_request: 'Check the form.',
-  unauthenticated: 'Sign in again.',
-  forbidden: 'Not allowed.',
-  reauth_required: 'Confirm your password.',
-  csrf: 'Blocked. Reload the page.',
+  bad_request: 'Something in the form needs another look.',
+  unauthenticated: 'Your session ended. Sign in again.',
+  forbidden: 'Your account cannot do that.',
+  reauth_required: 'Confirm your password to continue.',
+  csrf: 'The page is out of date. Reload it and try again.',
   setup_required: 'Set up the server first.',
-  not_found: 'Not found.',
-  conflict: 'Already exists.',
-  idempotency_mismatch: 'Reload and try again.',
-  precondition_failed: 'Changed elsewhere. Reload.',
-  too_large: 'Too large.',
-  invalid_state: 'Can no longer be changed.',
-  rate_limited: 'Too many tries. Wait a moment.',
-  internal: 'Server error. See its log.',
-  library_unavailable: 'Library offline.',
-  unavailable: 'Server busy. Try again soon.',
-  insufficient_storage: 'Disk full.',
-  network: 'Server unreachable.',
+  not_found: 'It is no longer there. It may have been removed.',
+  conflict: 'That already exists.',
+  idempotency_mismatch: 'Reload the page and try again.',
+  precondition_failed: 'Someone changed this at the same time. Reload to see their change.',
+  too_large: 'That is too large for the server.',
+  invalid_state: 'It can no longer be changed.',
+  rate_limited: 'Too many tries. Wait a moment, then try again.',
+  internal: 'The server ran into a problem.',
+  library_unavailable: 'That library is offline.',
+  unavailable: 'The server is busy.',
+  insufficient_storage: 'The server is out of disk space.',
+  network: 'Cannot reach the server.',
 };
 
 const reasons = {
-  set_by_config: 'Set in the config file.',
-  last_admin: 'The only admin. Promote someone first.',
-  username_taken: 'Username taken.',
-  running: 'Already running.',
+  set_by_config: 'This is set in the config file, so it cannot be changed here.',
+  last_admin: 'This is the only admin. Make someone else an admin first.',
+  username_taken: 'That username is taken.',
+  running: 'A backup is already running.',
 };
 
 /** A message fit to show a person, preferring what the server said about a bad field. */
@@ -64,7 +64,7 @@ export function describe(error) {
   if (error.code === 'bad_request' && error.message) return error.message;
   if (error.code === 'conflict' && error.message && !reason) return error.message;
   if (error.code === 'rate_limited' && error.retryAfter) {
-    return `Too many tries. Wait ${error.retryAfter} s.`;
+    return `Too many tries. Try again in ${error.retryAfter} seconds.`;
   }
   return messages[error.code] || error.message || messages.internal;
 }

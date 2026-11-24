@@ -163,6 +163,83 @@ async fn dashboard_is_served_with_a_strict_csp_and_api_errors_are_json() -> Test
 }
 
 #[tokio::test]
+async fn idle_connections_close_and_connections_over_the_limit_are_refused() -> TestResult {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+    const REQUEST: &[u8] = b"GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    let dir = tempfile::tempdir()?;
+    let mut config = config(&dir.path().join("data"));
+    config.server.header_timeout = Duration::from_millis(500);
+    config.server.max_connections = 2;
+    let server = start(config).await?;
+    let mut buf = [0u8; 2048];
+
+    let mut kept = TcpStream::connect(server.address).await?;
+    kept.write_all(REQUEST).await?;
+    let n = kept.read(&mut buf).await?;
+    assert!(buf[..n].starts_with(b"HTTP/1.1 200"));
+    assert!(
+        !String::from_utf8_lossy(&buf[..n])
+            .to_ascii_lowercase()
+            .contains("strict-transport-security"),
+        "no HSTS over plain HTTP"
+    );
+    let _parked = TcpStream::connect(server.address).await?;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut over = TcpStream::connect(server.address).await?;
+    let _ = over.write_all(REQUEST).await;
+    let answer = tokio::time::timeout(Duration::from_secs(2), over.read(&mut buf)).await?;
+    assert!(matches!(answer, Ok(0) | Err(_)), "{answer:?}");
+
+    // A keep-alive connection that sends nothing more is closed after the header timeout.
+    let idle = tokio::time::timeout(Duration::from_secs(5), kept.read(&mut buf)).await?;
+    assert!(matches!(idle, Ok(0) | Err(_)), "{idle:?}");
+
+    let mut fresh = TcpStream::connect(server.address).await?;
+    fresh.write_all(REQUEST).await?;
+    let n = fresh.read(&mut buf).await?;
+    assert!(buf[..n].starts_with(b"HTTP/1.1 200"));
+    server.stop().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn tls_with_certificate_files_sends_hsts() -> TestResult {
+    trackside_server::tls::install_provider();
+    let dir = tempfile::tempdir()?;
+    let made = rcgen::generate_simple_self_signed(vec![String::from("localhost")])?;
+    let cert = dir.path().join("cert.pem");
+    let key = dir.path().join("key.pem");
+    std::fs::write(&cert, made.cert.pem())?;
+    std::fs::write(&key, made.signing_key.serialize_pem())?;
+    let mut config = config(&dir.path().join("data"));
+    config.tls.mode = trackside_core::config::TlsMode::Files;
+    config.tls.cert_file = Some(cert);
+    config.tls.key_file = Some(key);
+    let server = start(config).await?;
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()?;
+    let response = client
+        .get(format!(
+            "https://localhost:{}/healthz",
+            server.address.port()
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        response
+            .headers()
+            .get("strict-transport-security")
+            .and_then(|v| v.to_str().ok()),
+        Some(trackside_server::web::HSTS)
+    );
+    server.stop().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn second_server_on_same_data_dir_exits() -> TestResult {
     let dir = tempfile::tempdir()?;
     let data = dir.path().join("data");

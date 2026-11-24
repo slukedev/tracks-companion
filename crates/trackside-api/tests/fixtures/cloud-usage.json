@@ -1,0 +1,22 @@
+{
+  "bytes": 98312448,
+  "entities": {
+    "plays": {
+      "bytes": 97800000,
+      "items": 151900
+    },
+    "settings": {
+      "bytes": 9600,
+      "items": 21
+    },
+    "stations": {
+      "bytes": 502848,
+      "items": 419
+    }
+  },
+  "items": 152340,
+  "quota": {
+    "bytes": 1073741824,
+    "items": 2000000
+  }
+}

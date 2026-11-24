@@ -582,6 +582,162 @@ fn hanging_parser_times_out_and_quarantines_the_file() -> TestResult {
 }
 
 #[test]
+fn a_stalled_share_stops_the_scan_without_quarantining_or_marking_missing() -> TestResult {
+    let mut h = Harness::new()?;
+    for i in 0..20 {
+        put_wav(&h.root, &format!("{i:02}.wav"), i)?;
+    }
+    h.scan(ScanKind::Full)?;
+    std::fs::remove_file(h.root.join("19.wav"))?;
+    h.settings.file_timeout = Duration::from_millis(200);
+    let (release, rx) = std::sync::mpsc::channel::<()>();
+    h.reader
+        .on("05.wav", Behaviour::Stall(Arc::new(Mutex::new(rx))));
+    let report = h.scan(ScanKind::Full)?;
+    drop(release);
+    assert_eq!(report.state, ScanState::Unavailable);
+    assert!(
+        report
+            .unavailable
+            .as_deref()
+            .is_some_and(|r| r.contains("stopped answering"))
+    );
+    assert!(h.catalog.lock().quarantine.is_empty());
+    assert_eq!(h.catalog.missing(h.key()), 0);
+    Ok(())
+}
+
+#[test]
+fn a_failing_commit_ends_the_scan_instead_of_hanging() -> TestResult {
+    let h = Harness::new()?;
+    for i in 0..(run::JOB_QUEUE as u32 * 2) {
+        put_wav(&h.root, &format!("Singles/{i:04}.wav"), i)?;
+    }
+    h.catalog.lock().fail_commits = true;
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(h.scan(ScanKind::Full).is_err());
+    });
+    let failed = finished.recv_timeout(Duration::from_secs(60))?;
+    assert!(failed);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_followed_link_to_a_vanished_folder_keeps_its_songs() -> TestResult {
+    let mut h = Harness::new()?;
+    h.settings.follow_symlinks = true;
+    let share = h.root.with_file_name("share");
+    put_wav(&share, "Album/1.wav", 1)?;
+    put_wav(&share, "Album/2.wav", 2)?;
+    // Enough local songs that the share-of-known-files guard does not catch the loss.
+    for i in 3..8 {
+        put_wav(&h.root, &format!("Local/{i}.wav"), i)?;
+    }
+    std::os::unix::fs::symlink(share.join("Album"), h.root.join("Linked"))?;
+    std::os::unix::fs::symlink(share.join("never.wav"), h.root.join("broken.wav"))?;
+    h.scan(ScanKind::Full)?;
+    assert_eq!(h.catalog.present(h.key()).len(), 7);
+    std::fs::rename(&share, h.root.with_file_name("share-offline"))?;
+    let report = h.scan(ScanKind::Quick)?;
+    assert_eq!(report.state, ScanState::Done);
+    assert_eq!(h.catalog.missing(h.key()), 0);
+    assert!(
+        h.catalog
+            .lock()
+            .folders
+            .get(&(h.key(), b"Linked".to_vec()))
+            .is_some_and(|f| f.unreadable)
+    );
+    Ok(())
+}
+
+#[test]
+fn entries_whose_type_cannot_be_read_are_kept() -> TestResult {
+    let mut h = Harness::new()?;
+    put_wav(&h.root, "Album/1.wav", 1)?;
+    put_wav(&h.root, "Album/Disc 2/2.wav", 2)?;
+    for i in 3..8 {
+        put_wav(&h.root, &format!("Local/{i}.wav"), i)?;
+    }
+    h.scan(ScanKind::Full)?;
+    assert_eq!(h.catalog.present(h.key()).len(), 7);
+    // The network share fails the lstat that a missing d_type needs.
+    h.settings.untyped = vec![b"Album/1.wav".to_vec(), b"Album/Disc 2".to_vec()];
+    let report = h.scan(ScanKind::Full)?;
+    assert_eq!(report.state, ScanState::Done);
+    assert_eq!(h.catalog.missing(h.key()), 0);
+    assert!(
+        h.catalog
+            .lock()
+            .folders
+            .get(&(h.key(), b"Album/Disc 2".to_vec()))
+            .is_some_and(|f| f.unreadable)
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_to_a_deleted_song_is_missing() -> TestResult {
+    let mut h = Harness::new()?;
+    h.settings.follow_symlinks = true;
+    let share = h.root.with_file_name("share");
+    put_wav(&share, "solo.wav", 1)?;
+    for i in 2..8 {
+        put_wav(&h.root, &format!("Local/{i}.wav"), i)?;
+    }
+    std::os::unix::fs::symlink(share.join("solo.wav"), h.root.join("solo.wav"))?;
+    h.scan(ScanKind::Full)?;
+    assert_eq!(h.catalog.present(h.key()).len(), 7);
+    std::fs::remove_file(share.join("solo.wav"))?;
+    h.scan(ScanKind::Full)?;
+    assert_eq!(h.catalog.missing(h.key()), 1);
+    Ok(())
+}
+
+#[test]
+fn a_library_going_unavailable_stops_its_running_scan() -> TestResult {
+    let s = service(&scanner_config(), &ScannerOptions::manual(), false)?;
+    for i in 0..3 {
+        put_wav(&s.root, &format!("{i}.wav"), i)?;
+    }
+    let (release, rx) = std::sync::mpsc::channel::<()>();
+    s.reader
+        .on("1.wav", Behaviour::Hang(Arc::new(Mutex::new(rx))));
+    let (started_tx, started) = std::sync::mpsc::channel::<()>();
+    let started_tx = Mutex::new(started_tx);
+    s.reader.on(
+        "0.wav",
+        Behaviour::Before(Arc::new(move || {
+            let _ = started_tx
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .send(());
+        })),
+    );
+    s.scanner
+        .request_scan(&s.library.id, ScanKind::Full, ScanTrigger::Admin, false)?;
+    started.recv_timeout(Duration::from_secs(10))?;
+    let parked = s.root.with_file_name("parked");
+    std::fs::rename(&s.root, &parked)?;
+    let stopped_at = Instant::now();
+    s.scanner.probe_now();
+    assert!(s.scanner.wait_idle(Duration::from_secs(10)));
+    assert!(stopped_at.elapsed() < Duration::from_secs(10));
+    drop(release);
+    let last = s
+        .catalog
+        .recent_runs(s.library.key, 1)?
+        .pop()
+        .ok_or("no run")?;
+    assert_eq!(last.state, ScanState::Aborted);
+    assert_eq!(s.catalog.missing(s.library.key), 0);
+    Ok(())
+}
+
+#[test]
 fn moved_and_case_renamed_files_keep_their_ids() -> TestResult {
     let h = Harness::new()?;
     put_wav(&h.root, "Old/Song.wav", 1)?;
@@ -1104,6 +1260,27 @@ fn inbox_files_are_imported_into_the_uploads_library() -> TestResult {
 }
 
 #[test]
+fn overlapping_inbox_polls_import_each_file_once() -> TestResult {
+    let s = service(&scanner_config(), &ScannerOptions::manual(), true)?;
+    let inbox = s.scanner.inbox_dir().ok_or("no inbox")?.clone();
+    for i in 0..30 {
+        put_wav(&inbox, &format!("drop/{i:02}.wav"), i)?;
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async { tokio::join!(s.scanner.poll_inbox(), s.scanner.poll_inbox()) });
+    let states: Vec<ImportState> = s.catalog.lock().imports.iter().map(|i| i.state).collect();
+    assert_eq!(states.len(), 30, "{states:?}");
+    assert!(
+        states.iter().all(|state| *state == ImportState::Imported),
+        "{states:?}"
+    );
+    assert_eq!(s.catalog.present(s.library.key).len(), 30);
+    Ok(())
+}
+
+#[test]
 fn an_unavailable_library_refuses_scans_and_recovers() -> TestResult {
     let s = service(&scanner_config(), &ScannerOptions::manual(), false)?;
     for i in 0..3 {
@@ -1287,6 +1464,184 @@ fn watcher_event_makes_song_visible_within_eight_seconds() -> TestResult {
         .pop()
         .ok_or("no run")?;
     assert_eq!(last.trigger, ScanTrigger::Watch);
+    drop(s);
+    drop(runtime);
+    Ok(())
+}
+
+/// A scanner that watches its library, with a short debounce and an initial full scan done.
+fn watching(
+    runtime: &tokio::runtime::Runtime,
+    files: &[(&str, u32)],
+) -> Result<Service, Box<dyn std::error::Error>> {
+    let mut config = scanner_config();
+    config.watch_debounce = Duration::from_millis(300);
+    let options = ScannerOptions {
+        monitor: false,
+        watch: true,
+        schedule: false,
+        inbox: false,
+    };
+    let s = runtime.block_on(async { service(&config, &options, false) })?;
+    for (rel, seed) in files {
+        put_wav(&s.root, rel, *seed)?;
+    }
+    s.scanner
+        .request_scan(&s.library.id, ScanKind::Full, ScanTrigger::Admin, false)?;
+    assert!(s.scanner.wait_idle(Duration::from_secs(10)));
+    assert_eq!(s.catalog.present(s.library.key).len(), files.len());
+    Ok(s)
+}
+
+/// Waits up to eight seconds for the library's present songs to be exactly `want`.
+fn settles_to(s: &Service, want: &[&str]) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let present: Vec<Vec<u8>> = s
+            .catalog
+            .present(s.library.key)
+            .into_iter()
+            .map(|(rel, _)| rel)
+            .collect();
+        let want: Vec<Vec<u8>> = want.iter().map(|r| r.as_bytes().to_vec()).collect();
+        if present == want {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn watched_renames_move_songs_within_into_and_out_of_the_library() -> TestResult {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let s = watching(
+        &runtime,
+        &[
+            ("A/01 Song.wav", 1),
+            ("B/keep.wav", 2),
+            ("C/02 Song.wav", 3),
+        ],
+    )?;
+    let outside = s.root.with_file_name("outside");
+    put_wav(&outside, "D/03 Song.wav", 4)?;
+    std::fs::create_dir_all(s.root.join("E"))?;
+
+    // A file moved between folders, a folder moved out, a folder moved in, and a folder renamed
+    // in place. notify 9 reports each rename under the path the library root was watched as.
+    std::fs::rename(s.root.join("A/01 Song.wav"), s.root.join("B/01 Song.wav"))?;
+    std::fs::rename(s.root.join("C"), outside.join("C"))?;
+    std::fs::rename(outside.join("D"), s.root.join("D"))?;
+    std::fs::rename(s.root.join("E"), s.root.join("F"))?;
+    assert!(
+        settles_to(&s, &["B/01 Song.wav", "B/keep.wav", "D/03 Song.wav"]),
+        "renames were not picked up: {:?}",
+        s.catalog.present(s.library.key)
+    );
+
+    // The folders that moved in or were renamed are watched too.
+    put_wav(&s.root, "D/04 Song.wav", 5)?;
+    put_wav(&s.root, "F/05 Song.wav", 6)?;
+    assert!(
+        settles_to(
+            &s,
+            &[
+                "B/01 Song.wav",
+                "B/keep.wav",
+                "D/03 Song.wav",
+                "D/04 Song.wav",
+                "F/05 Song.wav"
+            ]
+        ),
+        "new files in moved folders were not picked up: {:?}",
+        s.catalog.present(s.library.key)
+    );
+    let last = s
+        .catalog
+        .recent_runs(s.library.key, 1)?
+        .pop()
+        .ok_or("no run")?;
+    assert_eq!(last.trigger, ScanTrigger::Watch);
+    drop(s);
+    drop(runtime);
+    Ok(())
+}
+
+#[test]
+fn watched_deletes_mark_songs_missing() -> TestResult {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let s = watching(
+        &runtime,
+        &[
+            ("A/01 Song.wav", 1),
+            ("A/02 Song.wav", 2),
+            ("B/C/03 Song.wav", 3),
+            ("D/04 Song.wav", 4),
+        ],
+    )?;
+    std::fs::remove_file(s.root.join("A/02 Song.wav"))?;
+    std::fs::remove_dir_all(s.root.join("B"))?;
+    assert!(
+        settles_to(&s, &["A/01 Song.wav", "D/04 Song.wav"]),
+        "deletes were not picked up: {:?}",
+        s.catalog.present(s.library.key)
+    );
+    assert_eq!(s.catalog.missing(s.library.key), 2);
+    drop(s);
+    drop(runtime);
+    Ok(())
+}
+
+#[test]
+fn libraries_are_unwatched_when_removed_disabled_or_moved() -> TestResult {
+    use trackside_core::control::WatchMode;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let s = watching(&runtime, &[("A/01 Song.wav", 1)])?;
+    let watched = || crate::watch::watched_roots(&s.scanner.inner);
+    assert_eq!(watched(), vec![s.root.clone()]);
+
+    // Turning watching off releases the watch; turning it on watches the root again.
+    let set_watch = |on: bool| {
+        if let Some(l) = s.catalog.lock().libraries.first_mut() {
+            l.watch = on;
+        }
+    };
+    set_watch(false);
+    s.scanner.probe_now();
+    assert_eq!(watched(), Vec::<PathBuf>::new());
+    assert_eq!(s.scanner.status()[0].watching, WatchMode::Off);
+    set_watch(true);
+    s.scanner.probe_now();
+    assert_eq!(watched(), vec![s.root.clone()]);
+    assert_eq!(s.scanner.status()[0].watching, WatchMode::Events);
+
+    // A library moved to another root watches the new root only.
+    let moved = s.root.with_file_name("moved");
+    put_wav(&moved, "B/02 Song.wav", 2)?;
+    if let Some(l) = s.catalog.lock().libraries.first_mut() {
+        l.root.clone_from(&moved);
+    }
+    s.scanner.probe_now();
+    assert_eq!(watched(), vec![moved.clone()]);
+
+    // A removed library is unwatched, and a change under its old root queues nothing.
+    s.catalog.lock().libraries.clear();
+    s.scanner.probe_now();
+    assert_eq!(watched(), Vec::<PathBuf>::new());
+    assert_eq!(s.scanner.status(), Vec::new());
+    let runs = s.catalog.lock().runs.len();
+    put_wav(&moved, "B/03 Song.wav", 3)?;
+    std::thread::sleep(Duration::from_secs(1));
+    assert_eq!(s.catalog.lock().runs.len(), runs);
     drop(s);
     drop(runtime);
     Ok(())

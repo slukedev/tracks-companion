@@ -87,7 +87,7 @@ It reuses `tracks-model` as a git dependency pinned to an exact revision of the 
 ```
 ./
   Cargo.toml                  workspace, shared dependency versions, lints (same lint set as the Tracks engine)
-  rust-toolchain.toml         channel 1.99.0; targets x86_64/aarch64 linux musl and gnu
+  rust-toolchain.toml         channel 1.100.0; targets x86_64/aarch64 linux musl and gnu
   crates/
     trackside-core/           domain types, ids, config, Db (writer + readers), migrations,
                               repositories, change log, sync, search, similarity, event bus,
@@ -103,6 +103,8 @@ It reuses `tracks-model` as a git dependency pinned to an exact revision of the 
     trackside-enrich/         read-only Last.fm client and the background enrichment worker
     trackside-subsonic/       /rest router, XML and JSON encoding, Subsonic semantics
     trackside-api/            /api/v1 router (native and admin), wire types, SSE
+    trackside-cloud/          Trackside Cloud: per-user sync of the apps' own data, its
+                              merge rules, storage and paging (ADR 0012)
     trackside-server/         the `trackside` binary: CLI, wiring, TLS, mDNS, scheduler,
                               backups, shutdown, embedded dashboard
   dashboard/                  static HTML, CSS and JavaScript modules, embedded at build time
@@ -111,7 +113,7 @@ It reuses `tracks-model` as a git dependency pinned to an exact revision of the 
   docs/
 ```
 
-Nine shipped crates. Acquisition is its own crate rather than part of `trackside-scan` so that
+Ten shipped crates. Acquisition is its own crate rather than part of `trackside-scan` so that
 its code can be owned by one work package, reviewed on its own, and compiled out with the
 `acquire` cargo feature of `trackside-server` (on by default) by anyone who builds without it.
 
@@ -126,7 +128,8 @@ its code can be owned by one work package, reviewed on its own, and compiled out
 | trackside-acquire | core, media (probes, decode check, stream-through HLS) |
 | trackside-enrich | core |
 | trackside-subsonic | core, auth, media |
-| trackside-api | core, auth, media |
+| trackside-cloud | core |
+| trackside-api | core, auth, media, cloud |
 | trackside-server | all of the above |
 
 Rules:
@@ -141,7 +144,9 @@ Rules:
 - Only `trackside-server` depends on everything. It contains no business logic: config loading,
   construction, routing composition, listeners, the scheduler, signals and the CLI.
 - SQL lives only in `trackside-core` (repositories) and the migrations. Other crates call
-  repository functions with a `&Connection` or a `WriteTx`.
+  repository functions with a `&Connection` or a `WriteTx`. The one exception is
+  `trackside-cloud`, which owns the SQL for the `cloud_*` tables of migration 4 (ADR 0012);
+  the migration itself stays in core.
 
 ### What each crate owns
 
@@ -155,6 +160,7 @@ Rules:
 | enrich | Last.fm requests and parsing, pacing and backoff, what to look up next, the on-demand queue | SQL (calls `core::repo::enrichment`), ranking (in `core::similar`) |
 | subsonic | `/rest/*` parsing (GET and formPost), XML and JSON envelopes, error codes, mapping records to Subsonic shapes | domain logic beyond mapping |
 | api | `/api/v1/*` handlers, wire types (serde), admin endpoints, SSE, fixtures for Tracks | domain logic beyond mapping |
+| cloud | the apps' synced records: merge rules, the per-user change seq, chunked writes, pruning, quotas, the device registry | HTTP, anything outside the `cloud_*` tables |
 | server | CLI, wiring, listeners, TLS, mDNS, scheduler, backups, health endpoints, dashboard asset serving, metrics text | domain logic |
 
 ### Shared code with Tracks
@@ -186,11 +192,14 @@ that recomputes stored keys (section 13).
   digests. A walker thread feeds them paths over a bounded channel (capacity 1024), and a batcher
   sends results to the writer. Filesystem calls on library paths never run on runtime worker
   threads.
-- **Hung network filesystems.** A hard-mounted NFS share can block `stat` forever. Every
-  blocking filesystem call on a library path goes through a per-library semaphore (16 permits)
-  on the blocking pool, and the availability monitor runs its probe on a dedicated thread with a
-  5 s deadline. A hung share therefore marks its library unavailable and costs at most 16 blocked
-  threads, never the runtime.
+- **Hung network filesystems.** A hard-mounted NFS share can block `stat` forever. Opening and
+  stat-ing a library file to serve it goes through a per-library semaphore (16 permits) on the
+  blocking pool; the permit stays with the call until it returns, even if the client has gone,
+  and a request that waits 2 s for one gets `503 library_unavailable`. The availability monitor
+  runs its probe on a dedicated thread with a 5 s deadline. A hung share therefore marks its
+  library unavailable and costs at most 16 blocked threads for serving, never the runtime.
+  Async database writes wait for their turn before taking a blocking thread, so a stuck or slow
+  write holds one thread, not one per queued request.
 - **Transcoding.** ffmpeg runs as `tokio::process` children with `kill_on_drop`. A global
   semaphore (`media.transcode_max_concurrent`, default `max(1, cpus / 2)`) limits concurrent
   jobs, with three priorities: interactive playback, prefetch, download. Jobs are single-flight
@@ -1076,6 +1085,18 @@ Notes on the schema:
   user gains or loses a library, when a library is deleted, and after a migration that rewrites
   ids or keys.
 
+### Trackside Cloud
+
+Migration 4 adds `cloud_state` (each user's own change seq), `cloud_items` (every synced record
+as the app's JSON, keyed by user, entity and client id, with its `version`), `cloud_entities`
+(items, bytes and the pruned-through version per user and entity), `cloud_meta` and `cloud_devices` (the
+apps' device ids and what each was restored from). All cascade from `users`. They are separate
+from `change_log`: cloud writes never wake library `/sync` clients, and the cloud cursor is the
+user's own seq plus a sync epoch that changes when the database is restored or replaced (the
+`<database>.cloud-instance` sidecar file next to the database tells the server which copy it last
+ran, and the highest count of cloud changes it saw, so a rolled-back file is caught too). A small
+`cloud_meta` row holds that count. api.md section 19 has the API and ADR 0012 the merge rules.
+
 ---
 
 ### Suggestions and enrichment
@@ -1212,7 +1233,7 @@ resolved set of visible library ids (all for admins).
 
 | Credential | Used by | Format | Stored as | Lifetime |
 |---|---|---|---|---|
-| Login password | people, at login | chosen by the user, 8 to 1024 bytes | Argon2id PHC (m 19456 KiB, t 2, p 1) | until changed |
+| Login password | people, at login | chosen by the user, 1 to 1024 bytes | Argon2id PHC (m 19456 KiB, t 2, p 1) | until changed |
 | Session | dashboard | 32 random bytes, base64url, `__Host-trackside_session` cookie | SHA-256 | idle 14 days, absolute 90 days |
 | Device key | Tracks and native clients | `tsk_` + 43 base64url chars (256 bits) | SHA-256 | until revoked |
 | API key | OpenSubsonic `apiKey` clients | same format, `kind = api_key` | SHA-256 | until revoked |
@@ -1267,13 +1288,27 @@ deleted.
 
 Dashboard login sets `__Host-trackside_session` with `HttpOnly; Secure; SameSite=Strict;
 Path=/` (the `Secure` flag and `__Host-` prefix are dropped only when the request arrived over
-plain HTTP from a private or loopback address, so a LAN-only install still works). State-changing
+plain HTTP from a private or loopback address, so a LAN-only install still works; a request with
+forwarding headers counts only when its peer is in `server.trusted_proxies`, so a tunnel on the
+host never makes internet clients look local). State-changing
 requests with a session must carry `X-Trackside-CSRF: 1` and an `Origin` matching the request's
 host; browsers cannot send that header cross-origin without a CORS preflight, which the server
 never grants. Changing a password ends every other session; revoking devices is a separate choice.
+Passwords and keys (login, sessions, re-authentication, password changes, setup, invites,
+resets, pairing, bearer keys and Subsonic credentials) are refused with `403 https_required`
+over plain HTTP from any client that isn't nearby, before they are checked; `server.local_networks`
+adds networks such as a LAN's global IPv6 prefix to the nearby ranges, and
+`server.tailscale_is_local = false` takes 100.64.0.0/10 out of them for hosts behind
+carrier-grade NAT. A peer that isn't a trusted proxy is judged by its own address only; if it
+sends forwarding headers it may be relaying the internet, so it is refused until the admin
+trusts it. The refusal carries `details.https_urls`, the HTTPS entries of the server's own
+address list, so a client can move to one without signing in first.
 Over plain HTTP the cookie is named `trackside_session`, because browsers refuse the `__Host-`
 prefix without `Secure`. A request over HTTPS ignores a `trackside_session` cookie, so a cookie
 set over plain HTTP (or planted by someone on the network) can't stand in for the secure one.
+The plain cookie itself is accepted only where a password would be: brought over plain HTTP
+from a client that isn't nearby (split-horizon DNS, a laptop away from home) it is refused with
+`https_required` and cleared.
 
 ### Re-authentication
 
@@ -1293,7 +1328,8 @@ an unlocked browser can do.
 `u`+`t`+`s` and `u`+`p` (plain or `enc:`) are verified against the user's active app passwords
 (decrypting each, there are few), only when the user has `legacy_subsonic` and the server has
 `auth.legacy_subsonic = true` (default true; per-user default off). `apiKey` is always accepted.
-Mixing `apiKey` with `u` is error 43. ADR 0005 has the reasoning.
+Mixing `apiKey` with `u` is error 43. ADR 0005 has the reasoning. Turning `auth.legacy_subsonic`
+off in the dashboard applies to the next request, so it stops every app password at once.
 
 ### Media tokens
 
@@ -1311,10 +1347,18 @@ after 7 days. Revoking a device bumps its epoch. The server redacts `mt`, `apiKe
   the same header).
 - Per username and IP pair, after 5 consecutive failures: exponential delay from 2 s up to
   15 minutes. Keyed by the pair so an attacker cannot lock a user out from elsewhere; a global
-  per-username ceiling of 100 failures an hour slows distributed guessing.
+  per-username ceiling of 100 failures an hour slows distributed guessing. The ceiling does not
+  apply at an address the account signed in from successfully in the last 30 days, so guesses
+  from elsewhere cannot lock the owner out at home. App password failures (`/rest`) are counted
+  apart from the login password, so a legacy client with a stale app password cannot hold up
+  sign-in.
+- Per server: `server.max_connections` open connections across every listener; one over that
+  is closed at once. `server.header_timeout` bounds every request's headers and idle HTTP/1
+  keep-alive connections; HTTP/2 connections are pinged every 30 s and TCP keepalive probes find
+  peers that vanished in the middle of a request.
 - Per key: 50 requests a second, burst 200, excluding media bytes.
 - Per user: 8 concurrent streams and 3 concurrent transcodes; over that, `429` with
-  `Retry-After: 1`.
+  `Retry-After: 1`. 16 open event streams; over that, `429` with `Retry-After: 5`.
 - Limiter state is pruned every minute, or sooner once it tracks 50,000 addresses or names, so
   addresses that failed once are not kept forever.
 - Auth failures log `auth_failure user=<name> ip=<ip> via=<method>` at warn, in a fixed format
@@ -1654,9 +1698,9 @@ staging. It writes no acquisition row, no library song and no change log, and is
 only a request (section 9, lifecycle) fetches a song to keep.
 
 - A song asked by name that the caller's libraries have answers with that song's id.
-- The cache is in memory and on disk: at most 1 GiB, an entry goes 6 hours after its last play,
-  and the least recently played go first when it is full. It is emptied at start. A replay
-  within that window is served from the cached file without asking the provider again.
+- Fetched songs stay for replays, which are served from the file without asking the provider
+  again, within two limits: `acquire.fetched_keep` songs (default 500) and
+  `acquire.fetched_max_bytes` (default 20 GiB). See retention below.
 - Limits: the provider's fetch concurrency and cooldown, the user's search rate limit for
   title-and-artist plays, at most 2 songs being fetched per user, and the user's usual stream
   and transcode slots when the stream is served.
@@ -1664,6 +1708,32 @@ only a request (section 9, lifecycle) fetches a song to keep.
   enabled provider that streams (`features.acquisition.external_play`); it does not need
   `acquire.instant_play`.
 - A later request for the same song downloads and keeps it as usual.
+
+Retention of fetched songs:
+
+- The index is in memory, and on disk as `entry.json` beside each finished song's file (file
+  name, size, title, artist, who started it, when it was fetched and last played, and the
+  `song_key`s it answered by name). It is written through a temporary file and a rename once the
+  fetch completes, and again when the last-played time changed, at the next sweep.
+- A sweep runs after every fetch, when either limit is changed, and on the acquirer's hourly
+  janitor round. It evicts finished songs, least recently played first (a song never streamed
+  counts from when it was fetched), until both limits hold. It never evicts a song still being
+  fetched, one whose file a stream or a transcode holds, or one played in the last 30 minutes;
+  those count toward the limits, which can be exceeded until they are free.
+- Eviction holds the same lock as starting a fetch, so it never races a new fetch of the same
+  song. A song picked for eviction is not handed out any more; a play of it waits for the sweep
+  and then fetches it again. Its folder is renamed into `<data>/cache/external/.trash/` (the
+  moment it leaves the index), then deleted. A failed rename leaves it in the index for the next
+  sweep. These songs are not in the library, so nothing goes through `/sync`; HLS for them runs
+  from the file through a per-user job, and nothing of theirs is in the transcode cache.
+- At start, and on each janitor round, the folder is reconciled with the index: the trash is
+  emptied, and a folder without a whole `entry.json`, or whose file is missing or the wrong
+  size (a crash midway), is deleted. Links are never followed.
+- `<data>/cache/external/.trackside-play-cache` is written at the first load. While it cannot be
+  read (an unmounted share), or any step takes longer than 5 s (a hung one), nothing is evicted
+  and the index is left as it is.
+- `GET /admin/overview` shows the songs, bytes, songs being fetched and the limits under
+  `acquisition.fetched`.
 
 ### 9.6 What Tracks sees
 
@@ -1693,6 +1763,20 @@ The server keeps a list of base URLs a client may use:
 - Every candidate is a base URL that already includes `server.base_path`; clients append
   `/api/v1/...`. Relative URLs in responses (decisions, QR links, instant-play streams) are
   absolute paths that start with the base path and resolve against the candidate's origin.
+- The list is built only from the interfaces and the configuration or settings, never from a
+  request header.
+
+### Address updates
+
+Paired devices learn a changed list without pairing again. `GET /api/v1/server/urls` (any
+authenticated caller with the `library` scope) returns the list with a `version`: the first 16
+bytes of SHA-256 over the list's JSON, in hex, also the `ETag`. The server compares the list
+with the last one it announced every 15 seconds and right after `server.public_urls` changes in
+the dashboard, and sends SSE `server_urls` with the new version when it differs. Tracks asks
+with `If-None-Match` when it comes to the foreground or reconnects to events, and on that event.
+An address new to the list is held to the same rules as any other: it is used only after its own
+endpoint proof and, over HTTPS, a certificate that passes the system's checks or matches
+`fingerprint`.
 
 ### Pairing
 
@@ -1769,10 +1853,13 @@ silently useless, and the docs say so. Discovery is optional; pairing payloads c
 - HTTP/2 over TLS through ALPN. HTTP/3 is left to Caddy in front.
 - `server.trusted_proxies` (CIDRs; default empty) decides whose `Forwarded` and
   `X-Forwarded-For/Proto/Host` headers are believed; the client address is the rightmost
-  untrusted hop. `server.base_path` serves everything under a prefix.
+  untrusted hop. `X-Forwarded-For` wins over `Forwarded` when both are present, because nginx,
+  Caddy, Traefik and Cloudflare append to the former and pass a client's own `Forwarded`
+  through untouched. `server.base_path` serves everything under a prefix.
 - When requests with forwarding headers arrive from a local address that is not trusted (a proxy
   the admin forgot to list), the server logs one warning and `/readyz` adds a note: every client
-  then shares the proxy's address for rate limits and none counts as nearby for endpoint proofs.
+  then shares the proxy's address for rate limits, none counts as nearby for endpoint proofs,
+  and passwords and keys through it over plain HTTP are refused.
 - Documented recipes: Tailscale (default recommendation), Caddy with automatic TLS, built-in
   ACME, and Cloudflare Tunnel for the dashboard only (its terms make it a poor audio path).
 
@@ -1809,8 +1896,10 @@ The server starts with no file at all: data in the platform default directory, l
 | `server.base_path` | `TRACKSIDE_SERVER__BASE_PATH` | `""` | URL prefix behind a proxy |
 | `server.public_urls` **D** | `TRACKSIDE_SERVER__PUBLIC_URLS` | `[]` | extra candidate URLs for pairing |
 | `server.trusted_proxies` | `TRACKSIDE_SERVER__TRUSTED_PROXIES` | `[]` | CIDRs whose forwarding headers are believed |
-| `server.max_connections` | `TRACKSIDE_SERVER__MAX_CONNECTIONS` | `1024` | accepted connections at once |
-| `server.header_timeout` | `TRACKSIDE_SERVER__HEADER_TIMEOUT` | `"30s"` | time to receive request headers |
+| `server.local_networks` | `TRACKSIDE_SERVER__LOCAL_NETWORKS` | `[]` | CIDRs that count as your own network besides the private, link-local and Tailscale ranges, such as your LAN's global IPv6 prefix: passwords and keys are accepted from them over plain HTTP |
+| `server.tailscale_is_local` | `TRACKSIDE_SERVER__TAILSCALE_IS_LOCAL` | `true` | whether Tailscale's 100.64.0.0/10 counts as your own network; turn it off if your ISP puts your server behind carrier-grade NAT in that range, where it is the internet |
+| `server.max_connections` | `TRACKSIDE_SERVER__MAX_CONNECTIONS` | `1024` | open connections at once, across listeners; more are closed at once |
+| `server.header_timeout` | `TRACKSIDE_SERVER__HEADER_TIMEOUT` | `"30s"` | time to receive request headers; also how long an idle HTTP/1 keep-alive connection stays open |
 | `server.request_timeout` | `TRACKSIDE_SERVER__REQUEST_TIMEOUT` | `"60s"` | non-streaming handlers |
 | `server.shutdown_grace` | `TRACKSIDE_SERVER__SHUTDOWN_GRACE` | `"10s"` | drain time on stop |
 | `tls.mode` | `TRACKSIDE_TLS__MODE` | `"off"` | `off`, `files`, `acme`, `self-signed` |
@@ -1880,6 +1969,8 @@ The server starts with no file at all: data in the platform default directory, l
 | `acquire.member_active` **D** | `TRACKSIDE_ACQUIRE__MEMBER_ACTIVE` | `5` | |
 | `acquire.global_daily` **D** | `TRACKSIDE_ACQUIRE__GLOBAL_DAILY` | `500` | |
 | `acquire.instant_play` **D** | `TRACKSIDE_ACQUIRE__INSTANT_PLAY` | `false` | stream-through for ytdlp candidates |
+| `acquire.fetched_keep` **D** | `TRACKSIDE_ACQUIRE__FETCHED_KEEP` | `500` | songs played without being kept that stay fetched |
+| `acquire.fetched_max_bytes` **D** | `TRACKSIDE_ACQUIRE__FETCHED_MAX_BYTES` | `"20GiB"` | the most those songs may take |
 | `acquire.reject_words` | `TRACKSIDE_ACQUIRE__REJECT_WORDS` | list in 9.1 | |
 | `acquire.path_template` | `TRACKSIDE_ACQUIRE__PATH_TEMPLATE` | see 9 | |
 | `acquire.ytdlp.enabled` **D** | `TRACKSIDE_ACQUIRE__YTDLP__ENABLED` | `false` | |
@@ -1953,6 +2044,8 @@ the source one of `default`, `file`, `environment` or `command line`; then any w
 - Litestream works alongside (WAL mode, no foreign checkpointing); a documented recipe only.
 - `GET /api/v1/me/listens/export` gives a user their listens as JSON Lines in a
   ListenBrainz-compatible shape.
+- Trackside Cloud data is in the same database, so every backup holds it. Encrypted settings
+  (`nearbyKey`) stay encrypted with a key only the user's devices have.
 
 ### Migrations and upgrades
 
@@ -1992,7 +2085,7 @@ the source one of `default`, `file`, `environment` or `command line`; then any w
 ### Assets
 
 The user's music files (read access only, except writable target libraries), listening history and
-playlists, credentials (password hashes, key hashes, sealed app passwords, the secret key), the
+playlists, the apps' synced data in Trackside Cloud, credentials (password hashes, key hashes, sealed app passwords, the secret key), the
 host running the server, and the user's network reputation when acquisition is on.
 
 ### Trust boundaries and actors
@@ -2002,8 +2095,9 @@ host running the server, and the user's network reputation when acquisition is o
 | Someone on the LAN before setup | `/setup` | claiming a new install | setup token from the log or data dir; nothing else is served before setup except health, ping and capabilities |
 | Internet attacker | every public route | credential stuffing, enumeration, DoS | Argon2id, per-IP and per-account backoff, generic auth errors, constant-time comparisons, connection and request limits, header and body size limits, no user enumeration on login or invites |
 | Member | own data, granted libraries | reading others' data or libraries, admin escalation | every query filtered by `Principal.libraries` and `user_id` in repositories (not in handlers), admin routes require an admin session, tests per endpoint for cross-user access |
+| Admin | users, settings, backups | reading members' synced history and settings | no admin route or dashboard view returns Trackside Cloud records (counts only); cloud routes take device keys only, so an admin session cannot reach them; secrets like `nearbyKey` are stored only client-encrypted (ADR 0012). The database file itself is readable by whoever runs the server |
 | Stolen device key | that user's library and data | long-lived access | keys listed with last use and IP, one-click revoke, no admin scope, media tokens bound to the device epoch |
-| Network observer on plain HTTP | traffic | credential and token theft | the docs, and Tracks' server form, warn about plain HTTP addresses; keys are sent in headers, media tokens expire; legacy MD5 auth is opt-in |
+| Network observer on plain HTTP | traffic | credential and token theft | passwords, keys, the plain session cookie and setup, invite, reset and pairing secrets are refused over plain HTTP from addresses that aren't nearby (`403 https_required`, api.md section 1); the docs, and Tracks' server form, warn about plain HTTP addresses; media tokens expire; legacy MD5 auth is opt-in |
 | Malicious file in the library | tag parser, image decoder | parser crash, memory exhaustion, hang | lofty and image are pure Rust; per-file timeout and quarantine; `catch_unwind` around parsing; image dimension cap (12k by 12k) before decode |
 | Malicious peer or video (acquisition) | files in staging | path traversal, non-audio payloads, decoder exploits | canonical path checks, magic-byte allowlist, size limits, full decode in an ffmpeg subprocess, names built from sanitised tags |
 | Compromised yt-dlp release | runs as the server user | code execution | hash-checked updates from the official release, disabled by default, runs with the server's privileges only (non-root, read-only music in the shipped configs), optional `acquire.ytdlp.path` to a sandboxed wrapper |
@@ -2028,8 +2122,10 @@ Response headers (set in `trackside-server/src/web.rs`):
 | isolation set | `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Resource-Policy: same-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()` |
 | `/rest` | only the first row, because web Subsonic players on other origins load covers and audio |
 
-There is no `Strict-Transport-Security`: TLS is often terminated by a proxy that sets it, and a
-LAN install on plain HTTP must keep working.
+With `tls.mode = "acme"` or `"files"`, responses on the TLS listeners also carry
+`Strict-Transport-Security: max-age=31536000` (this host only, no `includeSubDomains`). It is
+not sent with a self-signed certificate, where browsers would then refuse to let anyone click
+through the warning, nor over plain HTTP; behind a proxy, the proxy sets it.
 
 ---
 

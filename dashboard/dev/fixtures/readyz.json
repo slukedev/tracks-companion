@@ -8,6 +8,6 @@
   },
   "notes": [
     "Library l7c2d9f4a1e8b6m3n5k0 is unavailable",
-    "Requests arrive through a proxy that is not in server.trusted_proxies. Add it so each client is limited and logged by its own address."
+    "Requests arrive through a proxy that is not in server.trusted_proxies. Add it so each client is limited and logged by its own address, and so passwords and keys are accepted through it."
   ]
 }

@@ -52,9 +52,9 @@ impl TokenBucket {
 }
 
 /// The first cooldown after a bot check or throttling.
-pub const FIRST_COOLDOWN: Duration = Duration::from_secs(15 * 60);
+pub const FIRST_COOLDOWN: Duration = Duration::from_mins(15);
 /// The longest cooldown.
-pub const MAX_COOLDOWN: Duration = Duration::from_secs(6 * 60 * 60);
+pub const MAX_COOLDOWN: Duration = Duration::from_hours(6);
 
 /// A provider's cooldown: 15 minutes, doubling each time up to 6 hours, reset by a success.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

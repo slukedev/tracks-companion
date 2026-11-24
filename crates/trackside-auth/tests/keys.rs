@@ -210,7 +210,7 @@ async fn media_token_minted_by_a_clock_far_ahead_is_refused() -> TestResult {
             .issue_device_key(admin, device("phone", "Phone"))
             .await?;
         let now = trackside_core::Clock::now(h.db.clock.as_ref());
-        h.advance(Duration::from_secs(86_400));
+        h.advance(Duration::from_hours(24));
         let token = h.auth.mint_media_token(&phone.principal)?;
         h.db.clock.set(now);
         assert!(matches!(

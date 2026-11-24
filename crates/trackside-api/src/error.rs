@@ -154,6 +154,9 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let mut response = (self.status, Json(self.envelope())).into_response();
         response.extensions_mut().insert(ErrorCode(self.code));
+        if self.code == "https_required" {
+            trackside_auth::extract::clear_plain_cookie(&mut response);
+        }
         if let Some(after) = self.retry_after
             && let Ok(value) = HeaderValue::from_str(&after.as_secs().max(1).to_string())
         {
@@ -321,6 +324,7 @@ impl From<MediaError> for ApiError {
                 "insufficient_storage",
                 "There is not enough free space for the transcode.",
             ),
+            MediaError::LibraryUnavailable => Self::library_unavailable(),
             MediaError::Db(db) => db.into(),
             other => Self::internal(&other),
         }
@@ -391,6 +395,15 @@ mod tests {
         assert_eq!(
             ApiError::from(MediaError::InsufficientStorage).status,
             StatusCode::INSUFFICIENT_STORAGE
+        );
+        let offline = ApiError::from(MediaError::LibraryUnavailable).into_response();
+        assert_eq!(offline.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            offline
+                .headers()
+                .get(header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok()),
+            Some("30")
         );
     }
 }

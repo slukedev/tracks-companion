@@ -65,7 +65,7 @@ pub(super) fn routes() -> Router<ApiState> {
 
 const MAX_LISTENS: usize = 1000;
 /// A listen more than this far after the client's own clock is rejected as `future`.
-const FUTURE_SLACK: Duration = Duration::from_secs(24 * 3600);
+const FUTURE_SLACK: Duration = Duration::from_hours(24);
 
 /// One listen, checked: either ready for core or already decided.
 #[derive(Debug, PartialEq, Eq)]

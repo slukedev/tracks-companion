@@ -573,3 +573,76 @@ fn integrity_check_and_current_seq() -> TestResult {
     assert!(Db::check_file(&dir.path().join("junk.db"), false).is_err());
     Ok(())
 }
+
+/// Writes queued behind a long one wait without a blocking thread each, so reads still get one.
+#[test]
+fn queued_writes_do_not_take_the_blocking_pool() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let db = open(&options(&dir))?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .max_blocking_threads(4)
+        .enable_all()
+        .build()?;
+    let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let long = db.clone();
+    let holder = std::thread::spawn(move || {
+        long.write_blocking(|_| {
+            let _ = started_tx.send(());
+            let _ = release_rx.recv();
+            Ok(())
+        })
+    });
+    started_rx.recv()?;
+    let read = runtime.block_on(async {
+        let mut queued = Vec::new();
+        for _ in 0..16 {
+            let db = db.clone();
+            queued.push(tokio::spawn(async move { db.write(|_| Ok(())).await }));
+        }
+        tokio::task::yield_now().await;
+        let read = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            db.read(settings::server_id),
+        )
+        .await;
+        let _ = release_tx.send(());
+        for write in queued {
+            let _ = write.await;
+        }
+        read
+    });
+    holder.join().map_err(|_| "writer panicked")??;
+    assert!(read.is_ok(), "a read waited behind queued writes");
+    Ok(())
+}
+
+/// `current_seq` is read from async code (`ETag`s, event ids), so it must not wait for a write.
+#[test]
+fn current_seq_does_not_wait_for_a_running_write() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let db = open(&options(&dir))?;
+    let before = db.current_seq();
+    let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let long = db.clone();
+    let holder = std::thread::spawn(move || {
+        long.write_blocking(|_| {
+            let _ = started_tx.send(());
+            let _ = release_rx.recv();
+            Ok(())
+        })
+    });
+    started_rx.recv()?;
+    let (seq_tx, seq_rx) = std::sync::mpsc::channel();
+    let reader = db.clone();
+    std::thread::spawn(move || {
+        let _ = seq_tx.send(reader.current_seq());
+    });
+    let seen = seq_rx.recv_timeout(std::time::Duration::from_secs(5));
+    let _ = release_tx.send(());
+    holder.join().map_err(|_| "writer panicked")??;
+    assert_eq!(seen?, before);
+    Ok(())
+}

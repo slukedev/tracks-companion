@@ -1,0 +1,38 @@
+{
+  "results": [
+    {
+      "id": "6A8C0E2F-4B6D-4F8A-9C1E-3B5D7F9A1C3E",
+      "status": "accepted",
+      "version": 918
+    },
+    {
+      "id": "lastfm:1700000000:5f2b9c1d",
+      "status": "duplicate",
+      "version": 640
+    },
+    {
+      "current": {
+        "client_modified_at": "2026-11-14T09:26:40.000Z",
+        "device_id": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C",
+        "fields": {
+          "artistName": "Beyoncé",
+          "kind": "onDemand",
+          "playedAtMs": 1794645000000,
+          "recordedByDeviceID": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C",
+          "songKey": "halo\u001fbeyonce",
+          "source": "appleMusic",
+          "title": "Halo"
+        },
+        "id": "1F3B5D7F-9A1C-4E3B-8D5F-7A9C1E3B5D7F",
+        "version": 911
+      },
+      "id": "1F3B5D7F-9A1C-4E3B-8D5F-7A9C1E3B5D7F",
+      "status": "conflict"
+    },
+    {
+      "id": "8E0A2C4E-6F8A-4B0C-9E2A-4C6E8A0C2E4A",
+      "reason": "deleted",
+      "status": "rejected"
+    }
+  ]
+}

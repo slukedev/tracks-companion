@@ -2,6 +2,13 @@
   "acquisition": {
     "active": 2,
     "enabled": true,
+    "fetched": {
+      "bytes": 7400000000,
+      "fetching": 1,
+      "keep": 500,
+      "max_bytes": 21474836480,
+      "songs": 212
+    },
     "providers": [
       {
         "configured": true,
@@ -73,6 +80,10 @@
       "help": "Check that the disk or share is mounted at /music. Its songs stay in the library until it is back.",
       "message": "Music is unavailable.",
       "severity": "warning",
+      "target": {
+        "id": "ldhmwjvv1e9320kfeh1mp",
+        "kind": "library"
+      },
       "title": "Music offline"
     }
   ],

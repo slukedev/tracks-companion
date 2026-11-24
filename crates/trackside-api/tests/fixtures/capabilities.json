@@ -11,8 +11,27 @@
     "pairing": true,
     "password_login": true
   },
+  "cloud": {
+    "entities": [
+      "plays",
+      "sessions",
+      "stations",
+      "forgotten-songs",
+      "blocked-artists",
+      "excluded-stations",
+      "playlists",
+      "playlist-entries",
+      "likes",
+      "settings"
+    ],
+    "epoch": "3f9a0c1d7e2b4a65",
+    "max_batch": 1000,
+    "max_page": 2000,
+    "version": 1
+  },
   "features": {
     "animated_art": false,
+    "cloud": true,
     "events": true,
     "lyrics": true,
     "uploads": false

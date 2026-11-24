@@ -54,7 +54,7 @@ pub fn parse_name(name: &str) -> Option<(&'static str, Millis)> {
     };
     let at = jiff::civil::DateTime::strptime("%Y%m%dT%H%M%SZ", stamp)
         .ok()?
-        .to_zoned(TimeZone::UTC)
+        .to_zoned_datetime(TimeZone::UTC)
         .ok()?
         .timestamp();
     Some((kind, Millis(at.as_millisecond())))
@@ -104,7 +104,16 @@ impl Backups {
             let Some((kind, at)) = parse_name(&name) else {
                 continue;
             };
-            let bytes = entry.metadata().map_or(0, |m| m.len());
+            let meta = entry.metadata().ok();
+            // Backups written before they were made private, or copied in by hand.
+            if meta.as_ref().is_some_and(is_shared) {
+                restrict(&entry.path());
+                let key = self.dir.join(format!("{name}.key"));
+                if key.exists() {
+                    restrict(&key);
+                }
+            }
+            let bytes = meta.map_or(0, |m| m.len());
             out.push(Backup {
                 has_key: self.dir.join(format!("{name}.key")).exists(),
                 name,
@@ -141,7 +150,7 @@ impl Backups {
     }
 
     fn create_inner(&self, db: &Db, kind: BackupKind, now: Millis) -> Result<PathBuf, OpsError> {
-        std::fs::create_dir_all(&self.dir).map_err(OpsError::Io)?;
+        create_private_dir(&self.dir).map_err(OpsError::Io)?;
         if let Some(size) = db
             .path()
             .and_then(|p| std::fs::metadata(p).ok())
@@ -155,6 +164,12 @@ impl Backups {
         let target = self.dir.join(backup_name(kind, now));
         db.backup_into(&target)
             .map_err(|e| OpsError::Io(std::io::Error::other(e.to_string())))?;
+        // A restore of this copy must look like a different database to cloud sync.
+        if let Err(e) = trackside_cloud::epoch::rotate(db) {
+            tracing::warn!(error = %e, "cannot rotate the cloud instance token after a backup");
+        }
+        // The copy holds password and key hashes and sealed secrets, like the database.
+        restrict(&target);
         if let Some(key) = &self.secret_key
             && key.exists()
         {
@@ -194,6 +209,33 @@ fn restrict(path: &Path) {
 #[cfg(not(unix))]
 fn restrict(_path: &Path) {}
 
+#[cfg(unix)]
+fn is_shared(meta: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    meta.permissions().mode() & 0o077 != 0
+}
+
+#[cfg(not(unix))]
+fn is_shared(_meta: &std::fs::Metadata) -> bool {
+    false
+}
+
+/// Creates the backups folder readable by the server's user only, so a backup is never
+/// readable by others, even for the moment before [`restrict`] runs on it.
+#[cfg(unix)]
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+}
+
+#[cfg(not(unix))]
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)
+}
+
 /// The next time `schedule` fires after `now`, in the server's local zone. Skipped and repeated
 /// DST times resolve to the later instant.
 pub fn next_run(schedule: BackupSchedule, now: Timestamp, zone: &TimeZone) -> Option<Timestamp> {
@@ -206,7 +248,7 @@ pub fn next_run(schedule: BackupSchedule, now: Timestamp, zone: &TimeZone) -> Op
             minute,
         } => (Some(weekday), hour, minute),
     };
-    let today = now.to_zoned(zone.clone()).date();
+    let today = now.to_zoned_datetime(zone.clone()).date();
     for offset in 0..9 {
         let date = today.checked_add(jiff::Span::new().days(offset)).ok()?;
         if weekday.is_some_and(|w| date.weekday() != w) {
@@ -216,7 +258,7 @@ pub fn next_run(schedule: BackupSchedule, now: Timestamp, zone: &TimeZone) -> Op
             jiff::civil::Time::new(i8::try_from(hour).ok()?, i8::try_from(minute).ok()?, 0, 0)
                 .ok()?;
         let at = zone
-            .to_ambiguous_zoned(date.to_datetime(time))
+            .to_ambiguous_zoned_datetime(date.to_datetime(time))
             .later()
             .ok()?
             .timestamp();
@@ -231,12 +273,21 @@ pub fn next_run(schedule: BackupSchedule, now: Timestamp, zone: &TimeZone) -> Op
 #[derive(Debug)]
 pub struct Ops {
     pub backups: Arc<Backups>,
+    /// What the backup scheduler last did, shared with the overview.
+    pub status: Arc<std::sync::Mutex<crate::health::BackupStatus>>,
     pub db: Db,
     pub http: reqwest::Client,
     pub server_id: uuid::Uuid,
 }
 
 impl ServerOps for Ops {
+    fn next_backup(&self) -> Option<Millis> {
+        self.status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .next_at
+    }
+
     fn backups(&self) -> BoxFuture<'_, Result<Vec<Backup>, OpsError>> {
         let backups = Arc::clone(&self.backups);
         Box::pin(async move {
@@ -434,6 +485,18 @@ mod tests {
         assert_eq!(list.iter().filter(|b| b.kind == "scheduled").count(), 2);
         assert_eq!(list.iter().filter(|b| b.kind == "manual").count(), 1);
         assert_eq!(list[0].name, "trackside-20261114T123000Z.db");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = backups.path(&list[0].name).ok_or("no backup file")?;
+            assert_eq!(std::fs::metadata(&path)?.permissions().mode() & 0o077, 0);
+            let folder = std::fs::metadata(dir.path().join("backups"))?;
+            assert_eq!(folder.permissions().mode() & 0o777, 0o700);
+            // One left readable by an older version is made private when listed.
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))?;
+            backups.list()?;
+            assert_eq!(std::fs::metadata(&path)?.permissions().mode() & 0o077, 0);
+        }
         Ok(())
     }
 }

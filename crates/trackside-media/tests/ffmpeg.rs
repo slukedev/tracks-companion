@@ -169,13 +169,31 @@ async fn m4a_has_an_edit_list_for_priming() -> TestResult {
         .position(|w| w == b"mdat")
         .ok_or("no mdat")?;
     assert!(moov < mdat, "faststart puts moov first");
-    let (segment_ms, media_time) = edit_list(&bytes).ok_or("no edit list")?;
+    let (segment, media_time) = edit_list(&bytes).ok_or("no edit list")?;
     assert_eq!(media_time, 1024, "the edit skips the AAC encoder's priming");
+    // ffmpeg 9.1 writes the movie header in the sample rate's timescale (44100) where earlier
+    // versions used 1000, so the duration is compared in seconds.
+    let timescale = movie_timescale(&bytes).ok_or("no movie header")?;
     assert_eq!(
-        segment_ms, 3000,
-        "the edit ends where the source does, before the padding"
+        u64::from(segment),
+        3 * u64::from(timescale),
+        "the edit ends where the source does, before the padding (timescale {timescale})"
     );
     Ok(())
+}
+
+/// The timescale of the `mvhd` box, which edit list segment durations are counted in.
+fn movie_timescale(bytes: &[u8]) -> Option<u32> {
+    let at = bytes.windows(4).position(|w| w == b"mvhd")?;
+    // version 0 has 32-bit creation and modification times, version 1 64-bit ones
+    let offset = match bytes.get(at + 4)? {
+        0 => 16,
+        1 => 24,
+        _ => return None,
+    };
+    Some(u32::from_be_bytes(
+        bytes.get(at + offset..at + offset + 4)?.try_into().ok()?,
+    ))
 }
 
 /// The first entry of the first version 0 `elst` box: (segment duration in the movie

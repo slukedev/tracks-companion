@@ -35,7 +35,8 @@ async fn events(
     ClientIp(ip): ClientIp,
     parts: http::request::Parts,
     headers: HeaderMap,
-) -> Response {
+) -> Result<Response, crate::error::ApiError> {
+    let slot = state.auth.event_stream_slot(&principal)?;
     let receiver = state.events.subscribe();
     let filter = filter_for(&state, &principal);
     let parts = Arc::new(parts);
@@ -84,5 +85,6 @@ async fn events(
     let headers = response.headers_mut();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
-    response
+    // The slot is held until the client goes away and the body is dropped.
+    Ok(trackside_media::hold(response, slot))
 }

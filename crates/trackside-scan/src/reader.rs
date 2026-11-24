@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::time::Duration;
 
+use tokio_util::sync::CancellationToken;
 use trackside_core::ingest::ScannedFile;
 use trackside_core::records::Container;
 use trackside_core::{ArtworkId, AudioDigest, FolderId};
@@ -21,7 +22,14 @@ use crate::{DigestMode, ParsedFile, ReadError};
 pub trait FileReader: Send + Sync + 'static {
     fn read(&self, path: &Path, hints: &ReadHints) -> Result<ParsedFile, ReadError>;
     fn digest(&self, path: &Path, container: Container) -> io::Result<(AudioDigest, DigestMode)>;
+    /// Whether the file's storage still answers, asked after a read missed its deadline.
+    fn probe(&self, path: &Path) -> io::Result<()> {
+        std::fs::metadata(path).map(|_| ())
+    }
 }
+
+/// How long the storage probe after a missed deadline may take.
+pub const STALL_PROBE: Duration = Duration::from_secs(5);
 
 /// lofty for tags, the payload locators for digests.
 #[derive(Debug, Default, Clone, Copy)]
@@ -123,6 +131,8 @@ pub enum Outcome {
     Failed(String),
     /// The reader hung or crashed on this file; skip it until it changes.
     Quarantine(String),
+    /// The library's storage stopped answering; the run stops without judging the file.
+    Stalled(String),
 }
 
 type Task = (PathBuf, ReadHints);
@@ -164,6 +174,7 @@ pub struct SafeReader {
     reader: Arc<dyn FileReader>,
     timeout: Duration,
     helper: Option<Helper>,
+    stop: Option<CancellationToken>,
 }
 
 impl std::fmt::Debug for SafeReader {
@@ -179,7 +190,13 @@ impl std::fmt::Debug for SafeReader {
 pub enum Guarded {
     Done(Box<Result<(ParsedFile, AudioDigest, DigestMode), ReadError>>),
     Panicked,
+    /// The parser hung on a file whose storage still answers.
     TimedOut,
+    /// The read missed its deadline and the storage did not answer a stat either: a hung or
+    /// vanished network share, not a bad file.
+    Stalled,
+    /// The run stopped while the read was in progress.
+    Stopped,
 }
 
 impl SafeReader {
@@ -188,6 +205,43 @@ impl SafeReader {
             reader,
             timeout,
             helper: None,
+            stop: None,
+        }
+    }
+
+    /// Gives up on a read in progress once `stop` is cancelled, so a stopped run does not wait
+    /// out the deadline of a read stuck on hung storage.
+    #[must_use]
+    pub fn with_stop(mut self, stop: CancellationToken) -> Self {
+        self.stop = Some(stop);
+        self
+    }
+
+    fn wait(&self, results: &Receiver<TaskResult>) -> Result<TaskResult, Waited> {
+        let deadline = std::time::Instant::now() + self.timeout;
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let slice = if self.stop.is_some() {
+                left.min(Duration::from_millis(100))
+            } else {
+                left
+            };
+            match results.recv_timeout(slice) {
+                Ok(result) => return Ok(result),
+                Err(RecvTimeoutError::Disconnected) => return Err(Waited::Gone),
+                Err(RecvTimeoutError::Timeout) => {
+                    if self
+                        .stop
+                        .as_ref()
+                        .is_some_and(CancellationToken::is_cancelled)
+                    {
+                        return Err(Waited::Stopped);
+                    }
+                    if left.is_zero() || std::time::Instant::now() >= deadline {
+                        return Err(Waited::Late);
+                    }
+                }
+            }
         }
     }
 
@@ -208,7 +262,7 @@ impl SafeReader {
         {
             return Guarded::Panicked;
         }
-        match helper.results.recv_timeout(self.timeout) {
+        match self.wait(&helper.results) {
             Ok(Ok(result)) => {
                 self.helper = Some(helper);
                 Guarded::Done(Box::new(result))
@@ -217,10 +271,37 @@ impl SafeReader {
                 self.helper = Some(helper);
                 Guarded::Panicked
             }
-            Err(RecvTimeoutError::Timeout) => Guarded::TimedOut,
-            Err(RecvTimeoutError::Disconnected) => Guarded::Panicked,
+            Err(Waited::Stopped) => Guarded::Stopped,
+            Err(Waited::Late) => {
+                if storage_answers(&self.reader, path, STALL_PROBE.min(self.timeout)) {
+                    Guarded::TimedOut
+                } else {
+                    Guarded::Stalled
+                }
+            }
+            Err(Waited::Gone) => Guarded::Panicked,
         }
     }
+}
+
+enum Waited {
+    Late,
+    Stopped,
+    Gone,
+}
+
+/// Stats `path` on a separate thread, giving up after `deadline`; a stat stuck on a hung
+/// mount leaves that thread behind.
+fn storage_answers(reader: &Arc<dyn FileReader>, path: &Path, deadline: Duration) -> bool {
+    let (tx, rx) = mpsc::sync_channel(1);
+    let reader = Arc::clone(reader);
+    let path = path.to_path_buf();
+    let spawned = std::thread::Builder::new()
+        .name("trackside-stall-probe".into())
+        .spawn(move || {
+            let _ = tx.send(reader.probe(&path).is_ok());
+        });
+    spawned.is_ok() && rx.recv_timeout(deadline).unwrap_or(false)
 }
 
 /// Reads one job: stat, guarded read, stat again, artwork.
@@ -239,9 +320,16 @@ pub fn process(
             Err(e) => return Outcome::Failed(e.to_string()),
         },
         Guarded::Panicked => return Outcome::Quarantine(String::from("the tag reader panicked")),
+        Guarded::Stopped => return Outcome::Deferred,
         Guarded::TimedOut => {
             return Outcome::Quarantine(format!(
                 "the tag reader took longer than {} s",
+                reader.timeout.as_secs()
+            ));
+        }
+        Guarded::Stalled => {
+            return Outcome::Stalled(format!(
+                "reading a file took longer than {} s and its folder stopped answering; is the share still mounted?",
                 reader.timeout.as_secs()
             ));
         }

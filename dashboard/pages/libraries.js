@@ -1,11 +1,11 @@
 import { call, describe } from '../api.js';
 import {
   h, pageHead, section, list, row, badge, nextId, button, busy, field, input, select, toggle, checkbox, empty,
-  ago, agoInline, num, plural, confirm, toast, failed, formError, setFieldError, icon, copyButton,
+  ago, agoInline, num, plural, confirm, toast, failed, formError, setFieldError, icon, codeLine, segmented,
 } from '../ui.js';
 import { libraryBadge, songs, scanKind, scanSummary } from './common.js';
 
-const INTERVALS = [['0', 'Off'], ['900', 'Every 15 minutes'], ['1800', 'Every 30 minutes'], ['3600', 'Every hour'], ['21600', 'Every 6 hours'], ['86400', 'Every day']];
+const INTERVALS = [['0', 'Never'], ['900', 'Every 15 minutes'], ['1800', 'Every 30 minutes'], ['3600', 'Every hour'], ['21600', 'Every 6 hours'], ['86400', 'Every day']];
 
 export async function render(ctx) {
   const [id] = ctx.args;
@@ -17,16 +17,16 @@ export async function render(ctx) {
 async function libraryList(ctx) {
   const [{ libraries }, imports, duplicates] = await Promise.all([
     call('GET /admin/libraries'),
-    call('GET /admin/imports', { query: { limit: 20 } }).catch(() => ({ imports: [] })),
+    call('GET /admin/imports', { query: { limit: 10 } }).catch(() => ({ imports: [] })),
     call('GET /admin/duplicates', { query: { limit: 20 } }).catch(() => ({ groups: [] })),
   ]);
-  const head = pageHead('Libraries', { actions: h('a.btn.primary', { href: '#/libraries/add' }, 'Add Library') });
+  const head = pageHead('Libraries', { actions: h('a.btn.primary', { href: '#/libraries/add' }, 'Add a library') });
   if (!libraries.length) {
-    return h('div.page', head, list(empty('No music yet', null, h('a.btn.primary', { href: '#/libraries/add' }, 'Add Library'))));
+    return h('div.page', head, list(empty('No music yet', 'A library is a folder of music on the server. Trackside reads it and never changes your files unless you allow it.', h('a.btn.primary', { href: '#/libraries/add' }, 'Add a library'))));
   }
   return h('div.page',
     head,
-    section(plural(libraries.length, 'library', 'libraries'), list(libraries.map((lib) => row({
+    section('Folders', list(libraries.map((lib) => row({
       icon: lib.state === 'unavailable' ? 'warning' : 'library',
       tint: lib.state === 'unavailable' ? 'warn' : 'blue',
       title: [lib.name, libraryBadge(lib)],
@@ -34,7 +34,7 @@ async function libraryList(ctx) {
       href: `#/libraries/${encodeURIComponent(lib.id)}`,
     })), { iconInset: true })),
     targetsSection(ctx, libraries),
-    imports.imports.length ? importsSection(imports.imports) : null,
+    imports.imports.length ? importsSection(ctx, imports) : null,
     duplicates.groups.length ? duplicatesSection(duplicates.groups, libraries) : null);
 }
 
@@ -55,33 +55,66 @@ function targetsSection(ctx, libraries) {
   uploads.addEventListener('change', save);
   acquire?.addEventListener('change', save);
   const rowFor = (title, sub, control) => h('div.setting-row', h('div.row-main', h('label.row-title', { for: (control.id = nextId('t')) }, title), h('div.row-sub', sub)), h('div.control', control));
-  return section('Where New Songs Go', h('div.list',
-    rowFor('Uploads', null, uploads),
-    acquire ? rowFor('Requests', null, acquire) : null),
-  { foot: writable.length ? null : 'Make a library writable first.' });
+  return section('Where new songs go', h('div.list',
+    rowFor('Uploaded songs', 'Files people upload from Tracks', uploads),
+    acquire ? rowFor('Requested songs', 'Songs Trackside finds for requests', acquire) : null),
+  { foot: writable.length ? null : 'Only a library that allows adding songs can take them. Turn that on in a library\'s settings.' });
 }
 
-const IMPORT_STATE = { receiving: ['Uploading', ''], staged: ['Checking', ''], imported: ['Added', 'good'], duplicate: ['Already there', ''], rejected: ['Rejected', 'warn'], failed: ['Failed', 'bad'] };
+const IMPORT_STATE = { receiving: ['Uploading', ''], staged: ['Checking', ''], imported: ['Added', 'good'], duplicate: ['Already there', ''], rejected: ['Not added', 'warn'], failed: ['Failed', 'bad'] };
+const IMPORT_FILTERS = [['', 'All'], ['imported', 'Added'], ['rejected', 'Not added'], ['failed', 'Failed']];
 
-function importsSection(imports) {
-  return section('Recent Uploads', list(imports.map((i) => {
-    const [label, kind] = IMPORT_STATE[i.state] || [i.state, ''];
-    return row({
-      icon: 'download', tint: 'muted',
-      title: i.file_name,
-      sub: [[i.source === 'inbox' ? 'Inbox folder' : i.user?.display_name || 'Upload', agoInline(i.created_at)].join(', '), i.error ? h('div', i.error) : null],
-      trail: badge(label, kind),
-    });
-  }), { iconInset: true }));
+function importRow(i) {
+  const [label, kind] = IMPORT_STATE[i.state] || [i.state, ''];
+  return row({
+    icon: 'download', tint: 'muted',
+    title: i.file_name,
+    sub: [[i.source === 'inbox' ? 'From the inbox folder' : `Uploaded by ${i.user?.display_name || 'someone'}`, agoInline(i.created_at)].join(', '), i.error ? h('div', i.error) : null],
+    trail: badge(label, kind),
+  });
+}
+
+/** Recent uploads, filtered by outcome and paged with the server's cursor. */
+function importsSection(ctx, first) {
+  const body = h('div.form.tight');
+  const more = button('Show more', {});
+  let cursor = first.next_cursor;
+  let state = '';
+  let rows = list(first.imports.map(importRow), { iconInset: true });
+  body.append(rows, h('div.btn-row', more));
+  more.hidden = !cursor;
+  const load = async (reset) => {
+    const query = { limit: 10, state: state || undefined };
+    if (!reset) query.cursor = cursor;
+    try {
+      const page = await call('GET /admin/imports', { query });
+      cursor = page.next_cursor;
+      if (reset) {
+        const next = list(page.imports.length ? page.imports.map(importRow) : [empty('Nothing here')], { iconInset: true });
+        rows.replaceWith(next);
+        rows = next;
+      } else {
+        rows.append(...page.imports.map(importRow));
+      }
+      more.hidden = !cursor;
+    } catch (err) { failed(err); }
+  };
+  more.addEventListener('click', () => busy(more, () => load(false)));
+  const filter = segmented(nextId('imp'), IMPORT_FILTERS, '', (v) => { state = v; load(true); }, 'Show uploads');
+  filter.classList.add('compact');
+  return section('Recent uploads', body, { aside: filter });
 }
 
 function duplicatesSection(groups, libraries) {
-  const libName = (id) => libraries.find((l) => l.id === id)?.name || 'Unknown library';
+  const lib = (id) => libraries.find((l) => l.id === id);
   return section('Duplicates', list(groups.map((g) => h('div.row',
+    icon('copy', 'tint-muted'),
     h('div.row-main',
       h('div.row-title', `${g.songs[0].title}, ${g.songs[0].artist}`),
-      g.songs.map((s) => h('div.row-sub', h('span', `${libName(s.library_id)}: `), h('span.mono', s.path))))))),
-  {});
+      g.songs.map((s) => h('div.row-sub',
+        lib(s.library_id) ? h('a', { href: `#/libraries/${encodeURIComponent(s.library_id)}` }, lib(s.library_id).name) : 'Unknown library',
+        ': ', h('span.mono', s.path)))))), { iconInset: true }),
+  { foot: 'The same file is in more than one place. Delete the copy you do not want from the folder on disk and the next scan tidies up.' });
 }
 
 /* ---------- Add ---------- */
@@ -89,11 +122,11 @@ function duplicatesSection(groups, libraries) {
 async function addLibrary(ctx) {
   const name = input({ autocomplete: 'off', required: true, maxlength: '64' });
   const root = input({ autocomplete: 'off', spellcheck: 'false', required: true, mono: true, placeholder: '/music' });
-  const writable = checkbox('Writable', false);
-  const watch = checkbox('Watch for changes', true);
-  const grant = checkbox('Everyone can see it', true);
+  const writable = checkbox('Allow adding songs', false, { sub: 'Uploads and requests can save new files into this folder' });
+  const watch = checkbox('Pick up new files straight away', true, { sub: 'Otherwise new files appear on the next scan' });
+  const grant = checkbox('Everyone can see it', true, { sub: 'You can change who sees it per person later' });
   const error = formError();
-  const submit = button('Add Library', { kind: 'primary', type: 'submit' });
+  const submit = button('Add library', { kind: 'primary', type: 'submit' });
   const form = h('form.form', {
     novalidate: true,
     on: {
@@ -102,8 +135,8 @@ async function addLibrary(ctx) {
         error.hide();
         setFieldError(name, '');
         setFieldError(root, '');
-        if (!name.value.trim()) { setFieldError(name, 'Name the library.'); name.focus(); return; }
-        if (!root.value.trim().startsWith('/') && !/^[A-Za-z]:[\\/]/.test(root.value.trim())) { setFieldError(root, 'Use a full path, like /music.'); root.focus(); return; }
+        if (!name.value.trim()) { setFieldError(name, 'Give the library a name.'); name.focus(); return; }
+        if (!root.value.trim().startsWith('/') && !/^[A-Za-z]:[\\/]/.test(root.value.trim())) { setFieldError(root, 'Use the full path from the top of the server, like /music.'); root.focus(); return; }
         await busy(submit, async () => {
           try {
             const created = await call('POST /admin/libraries', { body: {
@@ -125,11 +158,11 @@ async function addLibrary(ctx) {
   },
   h('div.panel.form',
     field('Name', name),
-    field('Folder', root, { hint: 'Path on the server' })),
+    field('Folder', root, { hint: 'The path on the server, or inside the container if you use Docker' })),
   h('div.panel.form', writable, watch, grant),
   error.el,
   h('div.btn-row.end', h('a.btn', { href: '#/libraries' }, 'Cancel'), submit));
-  return h('div.page.narrow', pageHead('Add Library'), form);
+  return h('div.page.narrow', pageHead('Add a library', { crumb: ['Libraries', '#/libraries'] }), form);
 }
 
 /* ---------- Detail ---------- */
@@ -142,7 +175,7 @@ async function libraryDetail(ctx, id) {
   ]);
   const lib = libraries.find((l) => l.id === id);
   if (!lib) {
-    return h('div.page', pageHead('Library not found'), list(empty('This library no longer exists', null, h('a.btn', { href: '#/libraries' }, 'All Libraries'))));
+    return h('div.page', pageHead('Library not found', { crumb: ['Libraries', '#/libraries'] }), list(empty('This library no longer exists', null, h('a.btn', { href: '#/libraries' }, 'See all libraries'))));
   }
   const running = scans.find((s) => s.state === 'running');
   const lastAborted = scans[0]?.state === 'aborted';
@@ -156,14 +189,14 @@ async function libraryDetail(ctx, id) {
   const page = h('div.page.narrow',
     h('header.page-head',
       h('div',
-        h('p.small', h('a', { href: '#/libraries' }, 'Libraries')),
+        h('p.crumb', h('a', { href: '#/libraries' }, 'Libraries')),
         h('h1', { tabindex: '-1', 'data-page-title': '' }, lib.name),
-        h('p.lede', h('span.mono', lib.root))),
-      h('div.actions', scanButton('full', 'Full Scan', false), scanButton('quick', 'Scan Now', true))),
+        h('p.lede', h('span.mono', lib.root), `, ${songs(lib.song_count)}`)),
+      h('div.actions', scanButton('full', 'Reread every file', false), scanButton('quick', 'Check for new files', true))),
     lib.state === 'unavailable' ? h('div.callout', { role: 'status' }, icon('warning', 'tint-warn'),
       h('div.form',
         h('p', h('strong', 'Offline'), lib.unavailable_since ? ` since ${agoInline(lib.unavailable_since)}. ` : '. ', lib.unavailable_reason || ''),
-        h('p.muted', 'Songs are kept until it is back.'))) : null,
+        h('p.muted', 'Check that the disk or share is mounted. Its songs stay in everyone\'s apps until it is back.'))) : null,
     lib.watching === 'polling' && lib.watch ? watchLimit() : null,
     lastAborted && lib.state !== 'unavailable' ? forceScan(ctx, lib, scans[0]) : null,
     scansSection(ctx, lib, scans),
@@ -197,21 +230,21 @@ async function startScan(ctx, lib, kind, force) {
 }
 
 function forceScan(ctx, lib, run) {
-  const btn = button('Scan Anyway', {});
+  const btn = button('Scan anyway', {});
   btn.addEventListener('click', async () => {
     const ok = await confirm({
       title: 'Scan an empty folder?',
-      text: 'Every song in this library will be marked missing.',
-      action: 'Scan Anyway',
+      text: 'Every song in this library will be marked missing, and disappear from apps after a while.',
+      action: 'Scan anyway',
     });
     if (ok) await busy(btn, () => startScan(ctx, lib, 'full', true));
   });
   return h('div.callout', icon('warning', 'tint-warn'),
-    h('div.form', h('p', 'Last scan stopped: the folder looked empty.'), h('div.btn-row', btn)));
+    h('div.form', h('p', 'The last scan stopped because the folder looked empty. If you really emptied it, scan anyway.'), h('div.btn-row', btn)));
 }
 
 function scansSection(ctx, lib, scans) {
-  if (!scans.length) return section('Scans', list(empty('No scans yet', null)));
+  if (!scans.length) return section('Scans', list(empty('No scans yet')));
   return section('Scans', list(scans.map((run) => {
     if (run.state === 'running') {
       return h('div.row',
@@ -225,14 +258,14 @@ function scansSection(ctx, lib, scans) {
     const detail = h('div.detail', { hidden: true });
     const sub = ago(run.finished_at || run.started_at);
     if (!errors) {
-      return row({ icon: 'scan', tint, title: [`${scanKind(run.kind)}: ${run.state === 'done' ? scanSummary(run) : run.state}`], sub: run.message ? `${sub}. ${run.message}` : sub });
+      return row({ icon: 'scan', tint, title: [`${scanKind(run.kind)}: ${run.state === 'done' ? scanSummary(run).toLowerCase() : { aborted: 'stopped early', failed: 'failed' }[run.state] || run.state}`], sub: run.message ? `${sub}. ${run.message}` : sub });
     }
-    const toggleBtn = button(`Show ${plural(errors, 'Error')}`, { kind: 'plain' });
+    const toggleBtn = button(`Show ${plural(errors, 'error')}`, { kind: 'plain' });
     toggleBtn.setAttribute('aria-expanded', 'false');
     toggleBtn.addEventListener('click', async () => {
       const open = toggleBtn.getAttribute('aria-expanded') === 'true';
       toggleBtn.setAttribute('aria-expanded', String(!open));
-      toggleBtn.lastChild.textContent = open ? `Show ${plural(errors, 'Error')}` : 'Hide Errors';
+      toggleBtn.lastChild.textContent = open ? `Show ${plural(errors, 'error')}` : 'Hide errors';
       detail.hidden = open;
       if (!open && !detail.childElementCount) {
         try {
@@ -241,7 +274,7 @@ function scansSection(ctx, lib, scans) {
         } catch (err) { detail.append(h('p.small', describe(err))); }
       }
     });
-    return h('div', row({ icon: 'scan', tint, title: `${scanKind(run.kind)}: ${scanSummary(run)}`, sub, trail: toggleBtn }), detail);
+    return h('div', row({ icon: 'scan', tint, title: `${scanKind(run.kind)}: ${scanSummary(run).toLowerCase()}`, sub, trail: toggleBtn }), detail);
   }), { iconInset: true }));
 }
 
@@ -249,27 +282,26 @@ function problemsSection(p) {
   const rows = [
     ...p.tag_problems.map((t) => row({ icon: 'info', tint: 'muted', title: h('span.mono', t.path), sub: t.problem })),
     ...p.quarantined.map((q) => row({ icon: 'warning', tint: 'warn', title: h('span.mono', q.path), sub: `Skipped: ${q.error}` })),
-    ...p.unreadable_folders.map((f) => row({ icon: 'lock', tint: 'warn', title: h('span.mono', f.path), sub: 'Unreadable' })),
+    ...p.unreadable_folders.map((f) => row({ icon: 'lock', tint: 'warn', title: h('span.mono', f.path), sub: 'Trackside is not allowed to read this folder' })),
   ];
   if (!rows.length) return null;
-  return section('Files with Problems', list(rows, { iconInset: true }), {});
+  return section('Files with problems', list(rows, { iconInset: true }));
 }
 
 /** File watching fell back to polling: the fix is one command on the host. */
 function watchLimit() {
-  const command = 'sudo sysctl -w fs.inotify.max_user_watches=524288';
   return h('div.callout', icon('warning', 'tint-warn'),
     h('div.form.tight',
-      h('p', h('strong', 'Not watched live.'), ' New files show up on the next scan. Run on the host:'),
-      h('div.secret', h('code.input.mono', command), copyButton(command))));
+      h('p', h('strong', 'New songs wait for the next scan.'), ' The host limits how many folders Trackside can watch. Run this on the host so new files show up within seconds:'),
+      codeLine('sudo sysctl -w fs.inotify.max_user_watches=524288', 'Copy command')));
 }
 
 function settingsSection(ctx, lib) {
-  const name = input({ value: lib.name, maxlength: '64', 'aria-label': 'Library name' });
-  const enabled = toggle(lib.enabled, { 'aria-label': 'Enabled' });
-  const watch = toggle(lib.watch, { 'aria-label': 'Watch for changes' });
-  const writable = toggle(lib.writable, { 'aria-label': 'Writable' });
-  const interval = select(INTERVALS.some(([v]) => Number(v) === lib.quick_scan_interval_s) ? INTERVALS : [...INTERVALS, [String(lib.quick_scan_interval_s), `Every ${lib.quick_scan_interval_s} seconds`]], String(lib.quick_scan_interval_s ?? 1800), { 'aria-label': 'Quick scan' });
+  const name = input({ value: lib.name, maxlength: '64' });
+  const enabled = toggle(lib.enabled);
+  const watch = toggle(lib.watch);
+  const writable = toggle(lib.writable);
+  const interval = select(INTERVALS.some(([v]) => Number(v) === lib.quick_scan_interval_s) ? INTERVALS : [...INTERVALS, [String(lib.quick_scan_interval_s), `Every ${lib.quick_scan_interval_s} seconds`]], String(lib.quick_scan_interval_s ?? 1800));
   const patch = async (body, revert) => {
     try {
       await call('PATCH /admin/libraries/{id}', { values: { id: lib.id }, body });
@@ -282,22 +314,25 @@ function settingsSection(ctx, lib) {
   writable.addEventListener('change', () => patch({ writable: writable.checked }, () => { writable.checked = !writable.checked; }));
   interval.addEventListener('change', () => patch({ quick_scan_interval_s: Number(interval.value) }));
 
-  const setting = (title, sub, control) => h('div.setting-row', h('div.row-main', h('div.row-title', title), sub ? h('div.row-sub', sub) : null), h('div.control', control));
+  const setting = (title, sub, control) => {
+    control.id = nextId('ls');
+    return h('div.setting-row', h('div.row-main', h('label.row-title', { for: control.id }, title), sub ? h('div.row-sub', sub) : null), h('div.control', control));
+  };
 
   return section('Settings', h('div.list',
     setting('Name', null, name),
-    setting('Enabled', null, enabled),
-    setting('Watch for changes', null, watch),
-    setting('Quick scan', null, interval),
-    setting('Writable', null, writable)));
+    setting('In use', 'Turn off to hide its songs from everyone without removing it', enabled),
+    setting('Pick up new files straight away', 'Watches the folder, so new files appear within seconds', watch),
+    setting('Regular check for new files', 'A quick look for added and changed files', interval),
+    setting('Allow adding songs', 'Uploads and requests can save files into this folder', writable)));
 }
 
 function removeSection(ctx, lib) {
-  const btn = button('Remove Library', { kind: 'danger', iconName: 'trash' });
+  const btn = button('Remove library', { kind: 'danger', iconName: 'trash' });
   btn.addEventListener('click', async () => {
     const ok = await confirm({
       title: `Remove ${lib.name}?`,
-      text: `Its ${songs(lib.song_count)} disappear from everyone's apps. Files on disk stay.`,
+      text: `Its ${songs(lib.song_count)} disappear from everyone's apps. The files on disk are not touched.`,
       action: 'Remove',
     });
     if (!ok) return;

@@ -27,7 +27,7 @@ use crate::{
 /// How long a part request waits for the encoder.
 pub(crate) const PART_WAIT: Duration = Duration::from_secs(10);
 /// Jobs nobody asked about for this long are stopped and deleted.
-pub(crate) const JOB_IDLE: Duration = Duration::from_secs(30 * 60);
+pub(crate) const JOB_IDLE: Duration = Duration::from_mins(30);
 /// A request further ahead of the encoder than this many segments starts a new run there.
 const SEEK_AHEAD: u32 = 3;
 const POLL: Duration = Duration::from_millis(100);
@@ -388,7 +388,10 @@ async fn poll(job: &HlsJob) {
         if !alive {
             run.scanned_after_exit = true;
             changed = true;
-        } else if next >= run.stop {
+        } else if next >= run.stop && run.stop < job.count() {
+            // Cut short where a later run took over. A run that goes to the end is left to
+            // exit by itself: stopping it after its last segment, while ffmpeg finishes up,
+            // would record it as stopped and the song would never be cached.
             run.cancel.cancel();
         }
     }

@@ -38,9 +38,9 @@ signed with cosign and shipped with SBOM and provenance attestations.
 
 | Variant | Release tags | Edge tags | Base | Includes | For |
 |---|---|---|---|---|---|
-| standard | `latest`, `X.Y.Z`, `X.Y`, `X` | `edge`, `edge-<commit>` | distroless static | Trackside, ffmpeg | most people |
-| slim | `slim` or `latest-slim`, `X.Y.Z-slim`, `X.Y-slim`, `X-slim` | `edge-slim`, `edge-<commit>-slim` | distroless static | Trackside | the smallest image, direct play only |
-| acquire | `acquire` or `latest-acquire`, `X.Y.Z-acquire`, `X.Y-acquire`, `X-acquire` | `edge-acquire`, `edge-<commit>-acquire` | distroless cc | Trackside, ffmpeg, yt-dlp, Deno | [acquisition](acquisition.md) |
+| standard | `latest`, `X.Y.Z`, `X.Y`, `X` | `edge`, `edge-<commit>` | distroless static (Debian 13) | Trackside, ffmpeg | most people |
+| slim | `slim` or `latest-slim`, `X.Y.Z-slim`, `X.Y-slim`, `X-slim` | `edge-slim`, `edge-<commit>-slim` | distroless static (Debian 13) | Trackside | the smallest image, direct play only |
+| acquire | `acquire` or `latest-acquire`, `X.Y.Z-acquire`, `X.Y-acquire`, `X-acquire` | `edge-acquire`, `edge-<commit>-acquire` | distroless cc (Debian 13) | Trackside, ffmpeg, yt-dlp, Deno | [acquisition](acquisition.md) |
 
 `latest` is the newest release, and `X.Y.Z` is one release that never changes. `edge` is
 built from every commit to `main`: it has the newest changes, may break, and is for trying
@@ -115,6 +115,15 @@ services:
 
 Docker Desktop on a Mac or Windows runs containers in a VM, so host networking there doesn't
 reach your LAN. Add the address in the dashboard instead.
+
+Published ports can also hide who is connecting. Docker Desktop, and Docker's userland proxy
+on Linux (used for IPv6 when the container has no IPv6 address, or with `userland-proxy`
+on), hand every connection to Trackside from a private gateway address such as `172.17.0.1`.
+Trackside then sees internet clients as local: they share one address for rate limits, and
+over plain HTTP they may sign in and send keys, which Trackside otherwise refuses from the
+internet, and get a session cookie that isn't marked secure. If the
+server is reachable from the internet, use host networking on Linux, or put a reverse proxy in
+front with HTTPS and list it in `server.trusted_proxies`.
 
 ## Binary
 

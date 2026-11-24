@@ -14,9 +14,9 @@ use trackside_core::config::{AcquireConfig, Rate};
 use trackside_core::control::{
     AcquireControl, AcquireError, AcquireFeature, AcquireRequest, AcquisitionFilter,
     AcquisitionState, AcquisitionView, AdminAcquisitionView, AdminCandidate, CandidateFormat,
-    CandidateView, ExternalPlay, ExternalPlayRequest, ExternalQuery, ExternalSearch, GrowingFile,
-    HlsJobId, InstantStream, InstantStreamUrls, ProviderChange, ProviderHealthState, ProviderStats,
-    ProviderStatus, ProviderTest, Quality, ScanControl,
+    CandidateView, ExternalPlay, ExternalPlayRequest, ExternalQuery, ExternalSearch, FetchedUsage,
+    GrowingFile, HlsJobId, InstantStream, InstantStreamUrls, ProviderChange, ProviderHealthState,
+    ProviderStats, ProviderStatus, ProviderTest, Quality, ScanControl,
 };
 use trackside_core::ids::PublicId;
 use trackside_core::records::Page;
@@ -104,6 +104,9 @@ pub struct Timing {
     pub unhealthy_recheck: Duration,
     /// The queue pauses while staging or the library has less than this free.
     pub min_free_bytes: u64,
+    /// How long the free-space check may take before the queue pauses as if the volume were
+    /// full: `statfs` on a hung network mount never returns.
+    pub space_check_deadline: Duration,
     pub max_jobs: usize,
     pub search_session: Duration,
     /// How long provider searches of a session may keep running after the response.
@@ -111,42 +114,41 @@ pub struct Timing {
     pub candidate_ttl: Duration,
     pub user_search_rate: Rate,
     pub ytdlp_release_base: String,
-    /// Songs played without being kept: the most their files may take together, how long
-    /// one stays after its last play, and how many one user may be fetching at once.
-    pub external_max_bytes: u64,
-    pub external_ttl: Duration,
+    /// Songs played without being kept: how long one stays protected from eviction after it
+    /// was last played, and how many one user may be fetching at once.
+    pub external_in_use: Duration,
     pub external_per_user: usize,
 }
 
 impl Default for Timing {
     fn default() -> Self {
         Self {
-            lease: Duration::from_secs(5 * 60),
+            lease: Duration::from_mins(5),
             renew_every: Duration::from_secs(60),
             backoff: vec![
                 Duration::from_secs(60),
-                Duration::from_secs(5 * 60),
-                Duration::from_secs(30 * 60),
-                Duration::from_secs(2 * 60 * 60),
+                Duration::from_mins(5),
+                Duration::from_mins(30),
+                Duration::from_hours(2),
             ],
             idle_poll: Duration::from_secs(30),
-            janitor_every: Duration::from_secs(60 * 60),
-            part_max_age: Duration::from_secs(24 * 60 * 60),
+            janitor_every: Duration::from_hours(1),
+            part_max_age: Duration::from_hours(24),
             progress_every: Duration::from_secs(1),
-            health_every: Duration::from_secs(24 * 60 * 60),
+            health_every: Duration::from_hours(24),
             unhealthy_recheck: Duration::from_secs(60),
             min_free_bytes: 256 * 1024 * 1024,
+            space_check_deadline: Duration::from_secs(5),
             max_jobs: 8,
-            search_session: Duration::from_secs(10 * 60),
+            search_session: Duration::from_mins(10),
             search_cap: Duration::from_secs(30),
-            candidate_ttl: Duration::from_secs(24 * 60 * 60),
+            candidate_ttl: Duration::from_hours(24),
             user_search_rate: Rate {
                 count: 20,
                 per: Duration::from_secs(60),
             },
             ytdlp_release_base: String::from(update::DEFAULT_RELEASE_BASE),
-            external_max_bytes: 1 << 30,
-            external_ttl: Duration::from_secs(6 * 60 * 60),
+            external_in_use: Duration::from_mins(30),
             external_per_user: 2,
         }
     }
@@ -186,6 +188,8 @@ pub(crate) struct Live {
     pub member_active: u32,
     pub global_daily: u32,
     pub prefer: Vec<ProviderName>,
+    pub fetched_keep: u32,
+    pub fetched_max_bytes: u64,
 }
 
 /// Today's counters.
@@ -294,7 +298,7 @@ pub(crate) struct Inner {
     pub update: Mutex<UpdateStatus>,
     pub external: Mutex<crate::external::ExternalCache>,
     /// Held while a play without keeping starts, so two plays of one song start one fetch.
-    pub external_start: tokio::sync::Mutex<()>,
+    pub external_start: Arc<tokio::sync::Mutex<()>>,
     pub external_dir: PathBuf,
 }
 
@@ -403,6 +407,8 @@ impl Acquirer {
                 member_active: config.member_active,
                 global_daily: config.global_daily,
                 prefer,
+                fetched_keep: config.fetched_keep,
+                fetched_max_bytes: config.fetched_max_bytes,
             }),
             config,
             events: deps.events,
@@ -422,7 +428,7 @@ impl Acquirer {
             disk_paused: AtomicBool::new(false),
             update: Mutex::new(UpdateStatus::default()),
             external: Mutex::default(),
-            external_start: tokio::sync::Mutex::new(()),
+            external_start: Arc::new(tokio::sync::Mutex::new(())),
             external_dir,
         });
         let runner = Arc::clone(&inner);
@@ -464,13 +470,15 @@ mod keys {
     pub const MEMBER_ACTIVE: &str = "acquire.member_active";
     pub const GLOBAL_DAILY: &str = "acquire.global_daily";
     pub const PREFER: &str = "acquire.prefer";
+    pub const FETCHED_KEEP: &str = "acquire.fetched_keep";
+    pub const FETCHED_MAX_BYTES: &str = "acquire.fetched_max_bytes";
 }
 
 fn provider_key(name: ProviderName, field: &str) -> String {
     format!("acquire.{}.{field}", name.as_str())
 }
 
-const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+const DAY: Duration = Duration::from_hours(24);
 
 impl Inner {
     pub fn now(&self) -> Millis {
@@ -509,7 +517,7 @@ impl Inner {
                 let stored = self.db.read(settings::all).await?;
                 self.apply_stored(&stored);
                 self.refresh_target().await?;
-                self.clear_external().await;
+                self.load_external().await;
                 Ok::<(), DbError>(())
             })
             .await?;
@@ -539,6 +547,15 @@ impl Inner {
             }
             if let Some(v) = number(keys::GLOBAL_DAILY) {
                 live.global_daily = v;
+            }
+            if let Some(v) = number(keys::FETCHED_KEEP) {
+                live.fetched_keep = v;
+            }
+            if let Some(v) = get(keys::FETCHED_MAX_BYTES)
+                .and_then(serde_json::Value::as_str)
+                .and_then(trackside_core::config::parse_size)
+            {
+                live.fetched_max_bytes = v;
             }
             if let Some(v) = get(keys::PREFER)
                 .and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok())
@@ -1394,6 +1411,10 @@ impl AcquireControl for Acquirer {
             .ok_or(AcquireError::NotFound)
     }
 
+    fn fetched_usage(&self) -> Option<FetchedUsage> {
+        Some(self.inner.fetched_usage())
+    }
+
     fn providers(&self) -> BoxFuture<'_, Vec<ProviderStatus>> {
         Box::pin(async move {
             let inner = &self.inner;
@@ -1489,6 +1510,18 @@ impl AcquireControl for Acquirer {
             inner.ensure_ready().await?;
             let mut stored: Vec<(String, serde_json::Value)> = Vec::new();
             let detail = match change {
+                ProviderChange::Fetched { keep, max_bytes } => {
+                    {
+                        let mut live = inner.live.write().unwrap_or_else(PoisonError::into_inner);
+                        live.fetched_keep = keep;
+                        live.fetched_max_bytes = max_bytes;
+                    }
+                    let sweeper = Arc::clone(inner);
+                    inner
+                        .tracker
+                        .spawn(async move { sweeper.sweep_external().await });
+                    return Ok(());
+                }
                 ProviderChange::Provider {
                     name,
                     enabled,

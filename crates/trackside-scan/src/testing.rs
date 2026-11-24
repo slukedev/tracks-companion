@@ -63,6 +63,8 @@ pub struct Mem {
     pub artist_artwork: HashMap<String, ArtworkId>,
     pub gone_marked: usize,
     pub folder_finishes: Vec<Vec<u8>>,
+    /// Every commit fails, as on a full disk.
+    pub fail_commits: bool,
 }
 
 /// The catalog tests use.
@@ -323,6 +325,9 @@ impl Catalog for MemCatalog {
         mut batch: Batch,
     ) -> Result<Vec<Resolution>, DbError> {
         let mut mem = self.lock();
+        if mem.fail_commits {
+            return Err(DbError::Full);
+        }
         mem.largest_batch = mem.largest_batch.max(batch.files.len());
         let lib_id = mem
             .libraries
@@ -554,6 +559,9 @@ pub enum Behaviour {
     Grow,
     /// Runs a callback, then reads normally.
     Before(Arc<dyn Fn() + Send + Sync>),
+    /// A hung network share: the read blocks like [`Behaviour::Hang`] and so does a stat of
+    /// the file afterwards.
+    Stall(Arc<Mutex<std::sync::mpsc::Receiver<()>>>),
 }
 
 /// lofty underneath, counting reads and misbehaving for chosen file names.
@@ -605,7 +613,7 @@ impl FileReader for TestReader {
             .cloned();
         match behaviour {
             Some(Behaviour::Panic) => panic!("injected parser panic"),
-            Some(Behaviour::Hang(rx)) => {
+            Some(Behaviour::Hang(rx) | Behaviour::Stall(rx)) => {
                 let _ = rx.lock().unwrap_or_else(PoisonError::into_inner).recv();
             }
             Some(Behaviour::Grow) => {
@@ -622,6 +630,24 @@ impl FileReader for TestReader {
 
     fn digest(&self, path: &Path, container: Container) -> io::Result<(AudioDigest, DigestMode)> {
         LoftyReader.digest(path, container)
+    }
+
+    fn probe(&self, path: &Path) -> io::Result<()> {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let behaviour = self
+            .behaviours
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&name)
+            .cloned();
+        if let Some(Behaviour::Stall(rx)) = behaviour {
+            let _ = rx.lock().unwrap_or_else(PoisonError::into_inner).recv();
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        std::fs::metadata(path).map(|_| ())
     }
 }
 

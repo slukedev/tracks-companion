@@ -49,6 +49,10 @@
       "help": "Check that the disk or share is mounted at /music. Its songs stay in the library until it is back.",
       "message": "Music is unavailable.",
       "severity": "warning",
+      "target": {
+        "id": "ldhmwjvv1e9320kfeh1mp",
+        "kind": "library"
+      },
       "title": "Music offline"
     }
   ],

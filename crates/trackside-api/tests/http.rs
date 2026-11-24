@@ -252,7 +252,7 @@ async fn start_with_transcoder(
         ops: Arc::new(NoOps),
         local: Arc::new(LocalState::new(stop.clone())),
     };
-    let app = trackside_api::router(state);
+    let app = trackside_api::router(state).layer(axum::middleware::from_fn(test_peer));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let address: SocketAddr = listener.local_addr()?;
     let shutdown = stop.clone();
@@ -273,6 +273,28 @@ async fn start_with_transcoder(
         data,
         stop,
     })
+}
+
+/// Lets a test pose as another client: `x-test-peer` replaces the peer address, and
+/// `x-test-https` marks the request as arrived over HTTPS, as the server's middleware would.
+async fn test_peer(
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if let Some(peer) = request
+        .headers()
+        .get("x-test-peer")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<SocketAddr>().ok())
+    {
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(peer));
+    }
+    if request.headers().contains_key("x-test-https") {
+        request.extensions_mut().insert(trackside_auth::Https);
+    }
+    next.run(request).await
 }
 
 async fn start() -> Result<Server, Box<dyn std::error::Error>> {
@@ -546,6 +568,27 @@ async fn admin_endpoints_need_a_session_and_csrf() -> TestResult {
         .json()
         .await?;
     assert_eq!(info.role, "member");
+    assert_eq!(info.note.as_deref(), Some("For Nana"));
+    assert!(info.invited_by.is_some(), "the admin's display name");
+    Ok(())
+}
+
+#[tokio::test]
+async fn turning_legacy_subsonic_off_in_the_dashboard_applies_at_once() -> TestResult {
+    let server = start().await?;
+    let cookie = server.setup_admin().await?;
+    assert!(server.auth.legacy_subsonic());
+    for (value, expected) in [(json!(false), false), (Value::Null, true)] {
+        let response = server
+            .http
+            .patch(server.url("/admin/settings"))
+            .headers(server.session(&cookie))
+            .json(&json!({ "auth.legacy_subsonic": value }))
+            .send()
+            .await?;
+        assert_eq!(response.status(), 200, "{:?}", response.text().await);
+        assert_eq!(server.auth.legacy_subsonic(), expected);
+    }
     Ok(())
 }
 
@@ -1072,6 +1115,146 @@ async fn events_say_hello_then_changed_after_a_write() -> TestResult {
     Ok(())
 }
 
+#[tokio::test]
+async fn a_user_may_hold_sixteen_event_streams() -> TestResult {
+    let server = start().await?;
+    server.setup_admin().await?;
+    let key = server.device_key().await?;
+    let mut open = Vec::new();
+    for _ in 0..trackside_auth::EVENT_STREAMS_PER_USER {
+        let stream = server
+            .http
+            .get(server.url("/events"))
+            .bearer_auth(&key)
+            .send()
+            .await?;
+        assert_eq!(stream.status(), 200);
+        open.push(stream);
+    }
+    let refused = server
+        .http
+        .get(server.url("/events"))
+        .bearer_auth(&key)
+        .send()
+        .await?;
+    assert_eq!(refused.status(), 429);
+    assert!(refused.headers().contains_key("retry-after"));
+    drop(open.pop());
+    let mut again = None;
+    for _ in 0..50 {
+        let response = server
+            .http
+            .get(server.url("/events"))
+            .bearer_auth(&key)
+            .send()
+            .await?;
+        if response.status() == 200 {
+            again = Some(response);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(
+        again.is_some(),
+        "a closed stream did not give its slot back"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn passwords_and_keys_over_plain_http_from_the_internet_are_refused() -> TestResult {
+    let server = start().await?;
+    let cookie = server.setup_admin().await?;
+    let key = server.device_key().await?;
+    // Every route that takes a password, a setup, invite, reset or pairing secret, or hands
+    // out a key; and an ordinary route reached with a key.
+    let posts = [
+        "/setup",
+        "/auth/session",
+        "/auth/login",
+        "/auth/reauth",
+        "/me/password",
+        "/me/api-keys",
+        "/invites/abc123/accept",
+        "/password-resets/abc123",
+        "/pair/claim",
+        "/pair/requests",
+    ];
+    let call = |method: reqwest::Method, path: &str, peer: &str, https: bool| {
+        let mut request = server
+            .http
+            .request(method, server.url(path))
+            .header("x-test-peer", peer)
+            .header("cookie", &cookie)
+            .header("x-trackside-csrf", "1")
+            .header("origin", &server.host)
+            .json(&json!({}));
+        if https {
+            request = request.header("x-test-https", "1");
+        }
+        request.send()
+    };
+    let code = |body: Value| body["error"]["code"].as_str().unwrap_or("").to_owned();
+    for path in posts {
+        let refused = call(reqwest::Method::POST, path, "203.0.113.7:4000", false).await?;
+        assert_eq!(refused.status(), 403, "{path}");
+        assert_eq!(code(refused.json().await?), "https_required", "{path}");
+        for (peer, https) in [
+            ("203.0.113.7:4000", true),
+            ("192.168.1.20:4000", false),
+            ("[fd12::7]:4000", false),
+            ("100.101.102.103:4000", false),
+        ] {
+            let allowed = call(reqwest::Method::POST, path, peer, https).await?;
+            let status = allowed.status();
+            let body: Value = allowed.json().await.unwrap_or(Value::Null);
+            assert_ne!(
+                code(body),
+                "https_required",
+                "{path} from {peer}, https {https}"
+            );
+            assert_ne!(status, 500, "{path}");
+        }
+    }
+    let poll = server
+        .http
+        .get(server.url("/pair/requests/p123"))
+        .header("x-test-peer", "203.0.113.7:4000")
+        .header("authorization", "Pair secret")
+        .send()
+        .await?;
+    assert_eq!(code(poll.json().await?), "https_required");
+
+    let with_key = |peer: &'static str, https: bool| {
+        let mut request = server
+            .http
+            .get(server.url("/me"))
+            .header("x-test-peer", peer)
+            .bearer_auth(&key);
+        if https {
+            request = request.header("x-test-https", "1");
+        }
+        request.send()
+    };
+    let refused = with_key("[2001:db8::9]:4000", false).await?;
+    assert_eq!(refused.status(), 403);
+    assert_eq!(code(refused.json().await?), "https_required");
+    assert_eq!(with_key("[2001:db8::9]:4000", true).await?.status(), 200);
+    assert_eq!(with_key("10.1.2.3:4000", false).await?.status(), 200);
+    // A forwarding header from a peer that isn't a trusted proxy changes nothing.
+    let spoofed = server
+        .http
+        .get(server.url("/me"))
+        .header("x-test-peer", "203.0.113.7:4000")
+        .header("x-forwarded-proto", "https")
+        .header("x-forwarded-for", "192.168.1.20")
+        .bearer_auth(&key)
+        .send()
+        .await?;
+    assert_eq!(code(spoofed.json().await?), "https_required");
+    Ok(())
+}
+
 fn sha256_of(bytes: &[u8]) -> [u8; 32] {
     use sha2::Digest;
     sha2::Sha256::digest(bytes).into()
@@ -1342,5 +1525,48 @@ async fn instant_play_without_an_acquirer_job_starts_one_hls_job_per_acquisition
     assert_eq!(fake.spawned().len(), 1, "one job for one acquisition");
     assert_eq!(ask(&other).await?.status(), 200);
     assert_eq!(fake.spawned().len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_https_refusal_names_the_https_addresses() -> TestResult {
+    let server = start().await?;
+    let cookie = server.setup_admin().await?;
+    let key = server.device_key().await?;
+    let refuse = async || -> Result<Value, Box<dyn std::error::Error>> {
+        let response = server
+            .http
+            .get(server.url("/me"))
+            .header("x-test-peer", "203.0.113.7:4000")
+            // Nothing a client sends may become an address.
+            .header("host", "evil.example")
+            .header("x-forwarded-host", "evil.example")
+            .bearer_auth(&key)
+            .send()
+            .await?;
+        assert_eq!(response.status(), 403);
+        Ok(response.json().await?)
+    };
+    let before = refuse().await?;
+    assert_eq!(before["error"]["code"], "https_required");
+    assert!(
+        before["error"]["details"].is_null(),
+        "no https address yet: {before}"
+    );
+    let patched = server
+        .http
+        .patch(server.url("/admin/settings"))
+        .headers(server.session(&cookie))
+        .json(&json!({"server.public_urls": ["http://plain.example.com", "https://music.example.com/"]}))
+        .send()
+        .await?;
+    assert_eq!(patched.status(), 200);
+    let after = refuse().await?;
+    assert_eq!(
+        after["error"]["details"]["https_urls"],
+        json!([{"url": "https://music.example.com", "kind": "public", "tls": true}]),
+        "{after}"
+    );
+    assert!(after["error"]["request_id"].is_string());
     Ok(())
 }

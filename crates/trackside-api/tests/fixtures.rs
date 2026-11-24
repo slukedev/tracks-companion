@@ -524,7 +524,14 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
     };
     put(
         "capabilities.json",
-        &build::capabilities_body(&info, &media, String::from("Home"), false, false),
+        &build::capabilities_body(
+            &info,
+            &media,
+            String::from("Home"),
+            false,
+            false,
+            Some(cloud::EPOCH),
+        ),
     )?;
     put(
         "setup-status.json",
@@ -540,6 +547,20 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
                 message: String::from("Not found."),
                 details: None,
                 request_id: Some(String::from("0b3f9c2e7d4a4f1e8c6b5a4d3e2f1a0b")),
+            },
+        },
+    )?;
+    put(
+        "error-https-required.json",
+        &wire::ErrorEnvelope {
+            error: wire::ErrorBody {
+                code: String::from("https_required"),
+                message: trackside_auth::AuthError::HttpsRequired.to_string(),
+                details: Some(serde_json::json!({"https_urls": [
+                    {"url": "https://music.example.com", "kind": "public", "tls": true},
+                    {"url": "https://home.tail4a2c.ts.net", "kind": "tailnet", "tls": true},
+                ]})),
+                request_id: Some(String::from("7a1e4c9b2d8f4a6c9e3b5d7f1a2c4e6b")),
             },
         },
     )?;
@@ -656,6 +677,8 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             valid: true,
             role: String::from("member"),
             expires_at: at(7 * 86_400).into(),
+            invited_by: Some(String::from("Luke")),
+            note: Some(String::from("For Mum")),
         },
     )?;
     put("user.json", &map::user(&s.user))?;
@@ -1178,6 +1201,21 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             "",
         ),
     )?;
+    let urls = server_summary(false).urls;
+    put(
+        "server-urls.json",
+        &wire::auth::ServerUrls {
+            server_id: SERVER_ID.to_owned(),
+            version: build::urls_version(&urls),
+            urls,
+        },
+    )?;
+    put(
+        "server-urls-event.json",
+        &wire::events::ServerUrlsEvent {
+            version: build::urls_version(&server_summary(false).urls),
+        },
+    )?;
     put(
         "acquisition-downloading.json",
         &map::acquisition(&view(&s, AcquisitionState::Downloading), ""),
@@ -1239,6 +1277,13 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             providers: vec![map::provider(&provider())],
             active: 2,
             today: 14,
+            fetched: Some(wire::admin::FetchedUsage {
+                songs: 212,
+                bytes: 7_400_000_000,
+                fetching: 1,
+                keep: 500,
+                max_bytes: 20 << 30,
+            }),
         }),
         users: wire::admin::OverviewUsers {
             count: 4,
@@ -1281,6 +1326,10 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
                 devices: 2,
                 api_keys: 1,
                 sessions: 1,
+                cloud: Some(wire::cloud::Amount {
+                    items: 152_340,
+                    bytes: 98_312_448,
+                }),
             }),
         ),
     )?;
@@ -1292,14 +1341,14 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
                     &s.library,
                     Some(&status),
                     true,
-                    Some(Duration::from_secs(1800)),
+                    Some(Duration::from_mins(30)),
                     &targets,
                 ),
                 build::admin_library(
                     &s.acquired,
                     None,
                     true,
-                    Some(Duration::from_secs(1800)),
+                    Some(Duration::from_mins(30)),
                     &targets,
                 ),
             ],
@@ -1380,6 +1429,7 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
                 bytes: 790_000_000,
                 has_key: true,
             }],
+            next_at: Some(at(64_800).into()),
         },
     )?;
     let settings: wire::admin::Settings = BTreeMap::from([
@@ -1432,6 +1482,9 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
     )?;
     drop(put);
     for (name, value) in admin_extras(&s)? {
+        out.insert(name, value);
+    }
+    for (name, value) in cloud::fixtures()? {
         out.insert(name, value);
     }
     Ok(out)
@@ -1669,7 +1722,7 @@ fn admin_extras(s: &Seed) -> Result<Vec<(&'static str, serde_json::Value)>, serd
                 &s.library,
                 None,
                 true,
-                Some(Duration::from_secs(1800)),
+                Some(Duration::from_mins(30)),
                 &targets,
             ))?,
         ),
@@ -1679,7 +1732,7 @@ fn admin_extras(s: &Seed) -> Result<Vec<(&'static str, serde_json::Value)>, serd
                 &unavailable,
                 None,
                 false,
-                Some(Duration::from_secs(1800)),
+                Some(Duration::from_mins(30)),
                 &targets,
             ))?,
         ),
@@ -1699,6 +1752,9 @@ fn admin_extras(s: &Seed) -> Result<Vec<(&'static str, serde_json::Value)>, serd
 fn uuid_of(text: &str) -> uuid::Uuid {
     uuid::Uuid::parse_str(text).unwrap_or_default()
 }
+
+#[path = "support/cloud_fixtures.rs"]
+mod cloud;
 
 mod erased {
     pub trait Json {
@@ -1768,8 +1824,11 @@ fn fixtures_match_wire_types() -> TestResult {
     }
     for (name, value) in &built {
         // The stats series are the one place null is sent: "not recorded", as opposed to 0.
+        // Cloud settings are the other: a cleared setting is an explicit null.
         assert!(
-            name.starts_with("admin/stats-") || !has_null(value),
+            name.starts_with("admin/stats-")
+                || name.starts_with("cloud-setting")
+                || !has_null(value),
             "{name} sends null; absent fields are left out"
         );
         let path = root.join(name);
@@ -1848,12 +1907,41 @@ fn fixtures_deserialize_into_their_wire_types() -> TestResult {
         ("decision-hls.json", back::<wire::playback::Decision>),
         ("acquisition-search.json", back::<wire::acquisition::Search>),
         ("admin/overview.json", back::<wire::admin::Overview>),
+        ("server-urls.json", back::<wire::auth::ServerUrls>),
+        (
+            "server-urls-event.json",
+            back::<wire::events::ServerUrlsEvent>,
+        ),
         ("admin/user.json", back::<wire::admin::AdminUser>),
         (
             "admin/acquisitions.json",
             back::<wire::admin::AdminAcquisitions>,
         ),
         ("starred.json", back::<wire::library::Starred>),
+        ("capabilities.json", back::<wire::Capabilities>),
+        ("cloud-push-plays.json", back::<wire::cloud::PushBatch>),
+        ("cloud-push-results.json", back::<wire::cloud::PushResults>),
+        ("cloud-plays-page.json", back::<wire::cloud::Page>),
+        (
+            "cloud-playlist-entries-page.json",
+            back::<wire::cloud::Page>,
+        ),
+        ("cloud-settings.json", back::<wire::cloud::Settings>),
+        (
+            "cloud-settings-patch.json",
+            back::<wire::cloud::SettingsPatch>,
+        ),
+        (
+            "cloud-setting-results.json",
+            back::<wire::cloud::SettingResults>,
+        ),
+        ("cloud-devices.json", back::<wire::cloud::CloudDevices>),
+        (
+            "cloud-device-registration.json",
+            back::<wire::cloud::DeviceRegistration>,
+        ),
+        ("cloud-usage.json", back::<wire::cloud::Usage>),
+        ("cloud-event.json", back::<wire::cloud::CloudEvent>),
     ];
     for (name, check) in checks {
         let value = built.get(name).ok_or(*name)?;
@@ -1918,6 +2006,7 @@ fn dashboard_fixtures_match_server_shapes() -> TestResult {
             "admin/overview.json",
             "admin-overview.json",
             &[
+                "acquisition.fetched",
                 "acquisition.providers[].cooldown_until",
                 "acquisition.providers[].latest_known",
                 "acquisition.providers[].settings.",
@@ -1929,7 +2018,7 @@ fn dashboard_fixtures_match_server_shapes() -> TestResult {
             "admin-users.json",
             &["users[].permissions.max_bitrate_kbps"],
         ),
-        ("admin/user.json", "admin-user.json", &[]),
+        ("admin/user.json", "admin-user.json", &["cloud"]),
         (
             "admin/user-created.json",
             "admin-user-created.json",
@@ -2085,7 +2174,11 @@ fn dashboard_fixtures_match_server_shapes() -> TestResult {
         ("pairing-code.json", "me-pairing-code.json", &[]),
         ("invite-info.json", "invite-info.json", &[]),
         ("setup-status.json", "setup-status.json", &[]),
-        ("capabilities.json", "capabilities.json", &[]),
+        (
+            "capabilities.json",
+            "capabilities.json",
+            &["features.cloud", "cloud"],
+        ),
     ];
     let mut problems = Vec::new();
     for (ours, theirs, optional) in pairs {

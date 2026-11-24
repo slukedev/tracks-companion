@@ -2,7 +2,9 @@
 
 pub(crate) mod account;
 pub(crate) mod acquisition;
+pub(crate) mod addresses;
 pub(crate) mod admin;
+pub(crate) mod cloud;
 pub(crate) mod enrichment;
 mod events;
 mod idempotency;
@@ -41,6 +43,7 @@ pub(crate) fn router(state: ApiState) -> Router {
     let api = Router::new()
         .merge(public::routes())
         .merge(account::routes())
+        .merge(addresses::routes())
         .merge(library::routes())
         .merge(sync::routes())
         .merge(media::routes())
@@ -48,6 +51,7 @@ pub(crate) fn router(state: ApiState) -> Router {
         .merge(events::routes())
         .merge(uploads::routes(&state))
         .merge(acquisition::routes())
+        .merge(cloud::routes())
         .nest(
             "/admin",
             admin::routes()
@@ -56,6 +60,10 @@ pub(crate) fn router(state: ApiState) -> Router {
         )
         .fallback(|| async { ApiError::not_found() })
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            addresses::https_urls_on_refusal,
+        ))
         .layer(from_fn(request_context))
         .with_state(state);
     Router::new().nest("/api/v1", api)

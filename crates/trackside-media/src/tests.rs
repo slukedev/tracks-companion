@@ -749,6 +749,47 @@ async fn progressive_aac_is_fragmented_stdout() -> TestResult {
     Ok(())
 }
 
+#[tokio::test]
+async fn a_job_that_dies_fails_its_waiters_and_the_next_request_starts_afresh() -> TestResult {
+    let f = fixture()?;
+    let song = f.flac("a.flac")?;
+    f.fake.panic_next();
+    let first = tokio::time::timeout(
+        Duration::from_secs(5),
+        f.media
+            .ensure_cached(&song, Profile::Aac128, Priority::Download),
+    )
+    .await?;
+    assert!(first.is_err());
+    let second = f
+        .media
+        .ensure_cached(&song, Profile::Aac128, Priority::Download)
+        .await?;
+    assert!(second.size > 0);
+    assert_eq!(f.media.transcode_load().0, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_stuck_progressive_transcode_gives_its_slot_back_when_the_client_leaves() -> TestResult {
+    let f = fixture()?;
+    let song = f.flac("a.flac")?;
+    f.fake.stall_stdout();
+    let response = f
+        .media
+        .progressive_transcode(&song, Profile::Aac256, None, false)
+        .await?;
+    assert_eq!(f.media.transcode_load().0, 1);
+    drop(response);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while f.media.transcode_load().0 != 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
+    Ok(())
+}
+
 fn hls_song(
     f: &Fixture,
     name: &str,
@@ -899,6 +940,41 @@ async fn a_complete_hls_run_caches_a_file_transcode_with_its_edit_list() -> Test
             .iter()
             .any(|s| matches!(s.output, TranscodeOutput::Remux(_)))
     );
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_run_still_finishing_after_its_last_segment_is_not_stopped() -> TestResult {
+    let f = fixture()?;
+    f.fake.hold();
+    f.fake.set_hls(FakeHls::ProduceThenLinger(3));
+    let song = hls_song(&f, "a.flac", 15_000)?;
+    let job = f
+        .media
+        .start_hls(
+            HlsInput::File(song.clone()),
+            Profile::Aac256,
+            Priority::Interactive,
+            HlsOwner::default(),
+        )
+        .await?;
+    let seg = f
+        .media
+        .hls_part(&job, HlsPart::Segment(2), &get(&[]))
+        .await?;
+    assert_eq!(body(seg).await?, &b"segment 2"[..]);
+    // Many polls see every segment while the encoder is still running.
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    f.fake.release(tokio::sync::Semaphore::MAX_PERMITS / 2);
+    let mut cached = None;
+    for _ in 0..100 {
+        cached = f.media.cached(&song, Profile::Aac256).await;
+        if cached.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    cached.ok_or("the finished run was not cached")?;
     Ok(())
 }
 
@@ -1087,6 +1163,76 @@ async fn lost_artwork_is_restored_from_its_source_file() -> TestResult {
     std::fs::write(&cover, b"a different picture now")?;
     let gone = f.media.artwork(&meta.id, None, &get(&[])).await;
     assert!(matches!(gone, Err(MediaError::NotFound)), "{gone:?}");
+    Ok(())
+}
+
+/// Reading a lost original back from a library file goes through that library's semaphore, so
+/// a hung share answers "not found" quickly instead of taking another blocking thread.
+#[tokio::test]
+async fn restoring_artwork_waits_its_turn_on_the_library() -> TestResult {
+    use trackside_core::repo::artwork::{
+        self as art_repo, ArtworkSourceKind as RowKind, NewArtwork,
+    };
+    use trackside_core::repo::libraries::{self, NewLibrary};
+    let f = fixture()?;
+    let root = f.dir.path().join("music");
+    let library =
+        f.db.db
+            .write({
+                let root = root.clone();
+                move |tx| {
+                    libraries::create(
+                        tx,
+                        &NewLibrary {
+                            name: String::from("Music"),
+                            root,
+                            writable: false,
+                            watch: false,
+                            grant_all_users: true,
+                            granted_by: None,
+                        },
+                    )
+                }
+            })
+            .await?;
+    let png = tiny_png()?;
+    let cover = root.join("cover.png");
+    std::fs::write(&cover, &png)?;
+    assert_eq!(f.media.library_of(&cover).await, Some(library.key));
+    assert_eq!(f.media.library_of(f.dir.path()).await, None);
+    let meta = f.media.artwork_store().put_original(
+        &png,
+        ArtworkSource {
+            kind: ArtworkSourceKind::Sidecar,
+            path: Some(cover.clone()),
+        },
+    )?;
+    let row = NewArtwork {
+        id: meta.id.clone(),
+        mime: meta.mime.to_owned(),
+        width: meta.width,
+        height: meta.height,
+        bytes: meta.bytes,
+        source: RowKind::Sidecar,
+        source_path: Some(cover.clone()),
+    };
+    f.db.db.write(move |tx| art_repo::put(tx, &row)).await?;
+    std::fs::remove_file(f.media.artwork_store().original_path(&meta.id))?;
+
+    let stuck = f
+        .media
+        .libraries
+        .semaphore(library.key)
+        .acquire_many_owned(u32::try_from(gate::LIBRARY_PERMITS)?)
+        .await?;
+    let started = std::time::Instant::now();
+    let refused = f.media.artwork(&meta.id, None, &get(&[])).await;
+    assert!(matches!(refused, Err(MediaError::NotFound)), "{refused:?}");
+    assert!(started.elapsed() < gate::LIBRARY_WAIT * 3);
+    assert!(!f.media.artwork_store().has(&meta.id));
+    drop(stuck);
+    let response = f.media.artwork(&meta.id, None, &get(&[])).await?;
+    assert_eq!(response.status(), StatusCode::OK);
     Ok(())
 }
 

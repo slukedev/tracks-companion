@@ -249,6 +249,13 @@ pub struct ServerConfig {
     pub base_path: String,
     pub public_urls: Vec<String>,
     pub trusted_proxies: Vec<ipnet::IpNet>,
+    /// Networks that count as local besides the private, loopback, link-local and Tailscale
+    /// ranges, such as a LAN's global IPv6 prefix: their clients may send passwords and keys
+    /// over plain HTTP.
+    pub local_networks: Vec<ipnet::IpNet>,
+    /// Whether 100.64.0.0/10 counts as local. Tailscale gives out addresses there, but so
+    /// do some ISPs for carrier-grade NAT, where it is the internet.
+    pub tailscale_is_local: bool,
     pub max_connections: u32,
     #[serde(deserialize_with = "duration", serialize_with = "ser::duration")]
     pub header_timeout: Duration,
@@ -528,6 +535,11 @@ pub struct AcquireConfig {
     pub member_active: u32,
     pub global_daily: u32,
     pub instant_play: bool,
+    /// Songs played without being kept: how many stay fetched, and the most their files may
+    /// take together.
+    pub fetched_keep: u32,
+    #[serde(deserialize_with = "size", serialize_with = "ser::size")]
+    pub fetched_max_bytes: u64,
     pub reject_words: Vec<String>,
     pub path_template: String,
     pub ytdlp: YtdlpConfig,
@@ -618,6 +630,8 @@ impl Config {
                 base_path: String::new(),
                 public_urls: Vec::new(),
                 trusted_proxies: Vec::new(),
+                local_networks: Vec::new(),
+                tailscale_is_local: true,
                 max_connections: 1024,
                 header_timeout: Duration::from_secs(30),
                 request_timeout: Duration::from_secs(60),
@@ -652,9 +666,9 @@ impl Config {
             auth: AuthConfig {
                 secret_key_file: data_dir.join("secret.key"),
                 legacy_subsonic: true,
-                session_idle: Duration::from_secs(14 * 86_400),
-                session_max: Duration::from_secs(90 * 86_400),
-                media_token_ttl: Duration::from_secs(7 * 86_400),
+                session_idle: Duration::from_hours(14 * 24),
+                session_max: Duration::from_hours(90 * 24),
+                media_token_ttl: Duration::from_hours(7 * 24),
                 argon2_memory: 19 << 20,
                 argon2_iterations: 2,
                 login_rate: Rate {
@@ -665,7 +679,7 @@ impl Config {
                 admin_password: None,
             },
             sync: SyncConfig {
-                tombstone_retention: Duration::from_secs(90 * 86_400),
+                tombstone_retention: Duration::from_hours(90 * 24),
                 max_page: 5000,
             },
             discovery: DiscoveryConfig { mdns: true },
@@ -710,11 +724,11 @@ impl ScannerConfig {
             threads: cpus.min(4),
             watch: true,
             watch_debounce: Duration::from_secs(5),
-            quick_interval: Some(Duration::from_secs(30 * 60)),
+            quick_interval: Some(Duration::from_mins(30)),
             full_interval: None,
             settle: Duration::from_secs(10),
             follow_symlinks: true,
-            missing_grace: Duration::from_secs(30 * 86_400),
+            missing_grace: Duration::from_hours(30 * 24),
             empty_guard: 0.5,
             file_timeout: Duration::from_secs(30),
             ignore: strings(&[".trackside-ignore", ".nomedia", ".ndignore"]),
@@ -739,6 +753,8 @@ impl AcquireConfig {
             member_active: 5,
             global_daily: 500,
             instant_play: false,
+            fetched_keep: 500,
+            fetched_max_bytes: 20 << 30,
             reject_words: strings(REJECT_WORDS),
             path_template: String::from("{album_artist}/{album}/{disc}-{track:02} {title}.{ext}"),
             ytdlp: YtdlpConfig {
@@ -877,9 +893,9 @@ mod tests {
     fn durations_parse_every_unit() {
         assert_eq!(parse_duration("500ms"), Some(Duration::from_millis(500)));
         assert_eq!(parse_duration("30s"), Some(Duration::from_secs(30)));
-        assert_eq!(parse_duration("15m"), Some(Duration::from_secs(900)));
+        assert_eq!(parse_duration("15m"), Some(Duration::from_mins(15)));
         assert_eq!(parse_duration("6h"), Some(Duration::from_secs(21_600)));
-        assert_eq!(parse_duration("30d"), Some(Duration::from_secs(2_592_000)));
+        assert_eq!(parse_duration("30d"), Some(Duration::from_hours(30 * 24)));
         assert_eq!(parse_duration("30"), None);
         assert_eq!(parse_duration("5 weeks"), None);
     }

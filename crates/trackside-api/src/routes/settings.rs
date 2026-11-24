@@ -85,7 +85,7 @@ pub(crate) const KEYS: &[Key] = &[
         value: |c| json!(c.media.cellular_profile),
     },
     Key {
-        name: "auth.legacy_subsonic",
+        name: LEGACY_SUBSONIC,
         kind: Kind::Bool,
         value: |c| json!(c.auth.legacy_subsonic),
     },
@@ -145,6 +145,16 @@ pub(crate) const KEYS: &[Key] = &[
         value: |c| json!(c.acquire.instant_play),
     },
     Key {
+        name: FETCHED_KEEP,
+        kind: Kind::Count,
+        value: |c| json!(c.acquire.fetched_keep),
+    },
+    Key {
+        name: FETCHED_MAX_BYTES,
+        kind: Kind::Size,
+        value: |c| json!(size_text(c.acquire.fetched_max_bytes)),
+    },
+    Key {
         name: "acquire.ytdlp.enabled",
         kind: Kind::Bool,
         value: |c| json!(c.acquire.ytdlp.enabled),
@@ -169,10 +179,46 @@ pub(crate) const KEYS: &[Key] = &[
         kind: Kind::Secret,
         value: |c| json!(c.enrichment.lastfm_api_key.is_some()),
     },
+    Key {
+        name: super::cloud::ENABLED,
+        kind: Kind::Bool,
+        value: |_| json!(true),
+    },
+    Key {
+        name: super::cloud::QUOTA_ITEMS,
+        kind: Kind::Count,
+        value: |_| json!(trackside_cloud::Limits::DEFAULT_ITEMS),
+    },
+    Key {
+        name: super::cloud::QUOTA_BYTES,
+        kind: Kind::Size,
+        value: |_| json!(size_text(trackside_cloud::Limits::DEFAULT_BYTES)),
+    },
 ];
 
 /// The server-wide Last.fm key for suggestions.
 pub const LASTFM_API_KEY: &str = "enrichment.lastfm_api_key";
+/// How many songs played without being kept stay fetched, and the most they may take.
+pub(crate) const FETCHED_KEEP: &str = "acquire.fetched_keep";
+pub(crate) const FETCHED_MAX_BYTES: &str = "acquire.fetched_max_bytes";
+/// Whether legacy Subsonic auth (app passwords) is on server-wide.
+pub(crate) const LEGACY_SUBSONIC: &str = "auth.legacy_subsonic";
+
+/// Hands the `auth.*` settings the dashboard stored to `auth`, unless the configuration sets
+/// them. The server calls it once at start; `PATCH /admin/settings` keeps it current after.
+pub async fn apply_stored_auth(db: &Db, auth: &Auth, report: &trackside_core::ConfigReport) {
+    if report.source(LEGACY_SUBSONIC) != ConfigSource::Default {
+        return;
+    }
+    let stored = db
+        .read(|c| trackside_core::repo::settings::get::<Value>(c, LEGACY_SUBSONIC))
+        .await;
+    match stored {
+        Ok(Some(Value::Bool(on))) => auth.set_legacy_subsonic(on),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "cannot read auth.legacy_subsonic"),
+    }
+}
 
 /// What a secret setting is stored as: `{"sealed": "<base64>"}`.
 pub(crate) fn sealed_value(auth: &Auth, name: &str, plain: &str) -> Result<Value, String> {
@@ -370,8 +416,8 @@ mod tests {
 
     #[test]
     fn durations_and_sizes_print_in_their_largest_unit() {
-        assert_eq!(duration_text(Duration::from_secs(1800)), "30m");
-        assert_eq!(duration_text(Duration::from_secs(30 * 86_400)), "30d");
+        assert_eq!(duration_text(Duration::from_mins(30)), "30m");
+        assert_eq!(duration_text(Duration::from_hours(30 * 24)), "30d");
         assert_eq!(duration_text(Duration::from_millis(1500)), "1500ms");
         assert_eq!(size_text(10 << 30), "10GiB");
         assert_eq!(size_text(1000), "1000");

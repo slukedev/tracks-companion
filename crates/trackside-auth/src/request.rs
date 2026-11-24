@@ -57,8 +57,15 @@ pub(crate) fn bearer(parts: &Parts) -> Option<&str> {
         .filter(|t| !t.is_empty())
 }
 
+/// A session cookie's value, and whether it is the plain cookie rather than `__Host-`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CookieValue<'a> {
+    pub(crate) value: &'a str,
+    pub(crate) plain: bool,
+}
+
 /// The session cookie value, preferring the `__Host-` cookie.
-pub(crate) fn session_cookie(parts: &Parts) -> Option<&str> {
+pub(crate) fn session_cookie(parts: &Parts) -> Option<CookieValue<'_>> {
     // Over HTTPS only the `__Host-` cookie counts: the plain one can be planted by anyone
     // who can answer the browser's plain HTTP requests, fixing a session they know.
     let over_tls = parts.extensions.get::<Https>().is_some();
@@ -76,10 +83,13 @@ pub(crate) fn session_cookie(parts: &Parts) -> Option<&str> {
                 continue;
             }
             if name == SESSION_COOKIE {
-                return Some(value);
+                return Some(CookieValue {
+                    value,
+                    plain: false,
+                });
             }
             if name == PLAIN_SESSION_COOKIE && !over_tls {
-                plain = Some(value);
+                plain = Some(CookieValue { value, plain: true });
             }
         }
     }
@@ -315,9 +325,15 @@ mod tests {
                 "trackside_session=plain; theme=dark; __Host-trackside_session=secure",
             )],
         );
-        assert_eq!(session_cookie(&p), Some("secure"));
+        assert_eq!(
+            session_cookie(&p).map(|c| (c.value, c.plain)),
+            Some(("secure", false))
+        );
         let only_plain = parts(Method::GET, "/", &[("cookie", "trackside_session=plain")]);
-        assert_eq!(session_cookie(&only_plain), Some("plain"));
+        assert_eq!(
+            session_cookie(&only_plain).map(|c| (c.value, c.plain)),
+            Some(("plain", true))
+        );
     }
 
     #[test]

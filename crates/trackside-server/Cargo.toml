@@ -6,7 +6,6 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 publish.workspace = true
 
 [[bin]]
@@ -27,6 +26,7 @@ trackside-acquire = { workspace = true, optional = true }
 trackside-enrich.workspace = true
 trackside-subsonic.workspace = true
 trackside-api.workspace = true
+trackside-cloud.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 futures-util.workspace = true

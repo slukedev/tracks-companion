@@ -109,6 +109,16 @@
     "source": "dashboard",
     "editable": true
   },
+  "acquire.fetched_keep": {
+    "value": 500,
+    "source": "default",
+    "editable": true
+  },
+  "acquire.fetched_max_bytes": {
+    "value": "20GiB",
+    "source": "default",
+    "editable": true
+  },
   "acquire.ytdlp.enabled": {
     "value": true,
     "source": "dashboard",
@@ -126,6 +136,21 @@
   },
   "enrichment.musicbrainz": {
     "value": false,
+    "source": "default",
+    "editable": true
+  },
+  "cloud.enabled": {
+    "value": true,
+    "source": "default",
+    "editable": true
+  },
+  "cloud.quota_items": {
+    "value": 2000000,
+    "source": "default",
+    "editable": true
+  },
+  "cloud.quota_bytes": {
+    "value": "1GiB",
     "source": "default",
     "editable": true
   },

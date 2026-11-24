@@ -238,6 +238,10 @@ async fn authenticate(
             return Err(ApiError::missing("p, or t and s"));
         }
     }
+    // Refused before anything is checked: the secret has crossed the network in the clear.
+    if !inner.state.auth.secrets_allowed(parts) {
+        return Err(ApiError::https_required());
+    }
     inner
         .state
         .auth

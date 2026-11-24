@@ -117,8 +117,10 @@ keep = 14
 | `server.base_path` | `TRACKSIDE_SERVER__BASE_PATH` | `""` | URL prefix behind a proxy, such as `/music`; a missing leading `/` is added and a trailing one removed |
 | `server.public_urls` **D** | `TRACKSIDE_SERVER__PUBLIC_URLS` | `[]` | extra candidate URLs for pairing |
 | `server.trusted_proxies` | `TRACKSIDE_SERVER__TRUSTED_PROXIES` | `[]` | CIDRs whose forwarding headers are believed |
-| `server.max_connections` | `TRACKSIDE_SERVER__MAX_CONNECTIONS` | `1024` | accepted connections at once |
-| `server.header_timeout` | `TRACKSIDE_SERVER__HEADER_TIMEOUT` | `"30s"` | time to receive request headers |
+| `server.local_networks` | `TRACKSIDE_SERVER__LOCAL_NETWORKS` | `[]` | CIDRs that count as your own network besides the private, link-local and Tailscale ranges, such as your LAN's global IPv6 prefix: passwords and keys are accepted from them over plain HTTP |
+| `server.tailscale_is_local` | `TRACKSIDE_SERVER__TAILSCALE_IS_LOCAL` | `true` | whether Tailscale's 100.64.0.0/10 counts as your own network; turn it off if your ISP puts your server behind carrier-grade NAT in that range, where it is the internet |
+| `server.max_connections` | `TRACKSIDE_SERVER__MAX_CONNECTIONS` | `1024` | open connections at once, across listeners; more are closed at once |
+| `server.header_timeout` | `TRACKSIDE_SERVER__HEADER_TIMEOUT` | `"30s"` | time to receive request headers; also how long an idle HTTP/1 keep-alive connection stays open |
 | `server.request_timeout` | `TRACKSIDE_SERVER__REQUEST_TIMEOUT` | `"60s"` | non-streaming handlers |
 | `server.shutdown_grace` | `TRACKSIDE_SERVER__SHUTDOWN_GRACE` | `"10s"` | drain time on stop |
 
@@ -247,6 +249,8 @@ keep = 14
 | `acquire.member_active` **D** | `TRACKSIDE_ACQUIRE__MEMBER_ACTIVE` | `5` | |
 | `acquire.global_daily` **D** | `TRACKSIDE_ACQUIRE__GLOBAL_DAILY` | `500` | |
 | `acquire.instant_play` **D** | `TRACKSIDE_ACQUIRE__INSTANT_PLAY` | `false` | stream-through for ytdlp candidates |
+| `acquire.fetched_keep` **D** | `TRACKSIDE_ACQUIRE__FETCHED_KEEP` | `500` | songs played without being kept that stay for replays |
+| `acquire.fetched_max_bytes` **D** | `TRACKSIDE_ACQUIRE__FETCHED_MAX_BYTES` | `"20GiB"` | the most those songs may take |
 | `acquire.reject_words` | `TRACKSIDE_ACQUIRE__REJECT_WORDS` | `live`, `remix`, `karaoke`, `instrumental`, `cover`, `nightcore`, `sped up`, `slowed`, `8d`, `reverb`, `acapella`, `tribute` | |
 | `acquire.path_template` | `TRACKSIDE_ACQUIRE__PATH_TEMPLATE` | `"{album_artist}/{album}/{disc}-{track:02} {title}.{ext}"`, or `{artist}/Singles/{title}.{ext}` without an album | |
 | `acquire.ytdlp.enabled` **D** | `TRACKSIDE_ACQUIRE__YTDLP__ENABLED` | `false` | |
@@ -290,3 +294,18 @@ secret key and never shown again; a key from this file or the environment shows 
 
 This page follows the key table in `crates/trackside-core/src/config/loader.rs`. If
 `trackside config show` and this page disagree, the server is right; please open an issue.
+
+## Trackside Cloud (dashboard only)
+
+The Tracks apps can sync their own data (listening history, sessions, stations, app settings,
+blocked artists, playlists, likes) to your server instead of iCloud. Three dashboard settings
+control it; they are not configuration keys:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `cloud.enabled` | `true` | off makes every cloud route answer `404` and hides it from `capabilities` |
+| `cloud.quota_items` | `2000000` | records per user, deletes included; new records past it are refused |
+| `cloud.quota_bytes` | `"1GiB"` | bytes per user, the same way |
+
+Each person sees only their own synced data. Admins see how many records and bytes a user keeps
+on that user's page, never the records themselves, and the dashboard has no view of them.

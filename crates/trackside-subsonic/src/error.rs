@@ -58,6 +58,12 @@ impl ApiError {
         Self::new(50, message)
     }
 
+    /// Credentials sent over plain HTTP from outside the server's network: error 50 (HTTP 403
+    /// on media endpoints), so clients don't ask for the password again.
+    pub fn https_required() -> Self {
+        Self::not_authorized(trackside_auth::AuthError::HttpsRequired.to_string())
+    }
+
     pub fn not_supported(endpoint: &str) -> Self {
         Self::new(0, format!("{endpoint} is not supported by this server"))
     }
@@ -149,6 +155,9 @@ impl From<MediaError> for ApiError {
                     .with_status(StatusCode::NOT_IMPLEMENTED)
             }
             MediaError::JobExpired => Self::not_found("Transcode"),
+            MediaError::LibraryUnavailable => {
+                Self::unavailable("The song's library is offline", Duration::from_secs(30))
+            }
             MediaError::Unimplemented(what) => {
                 Self::generic(format!("Not implemented yet: {what}"))
             }

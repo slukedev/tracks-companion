@@ -40,6 +40,7 @@ impl Auth {
             if class == RouteClass::Admin {
                 return Err(AuthError::Forbidden);
             }
+            self.require_secure_transport(parts)?;
             return self.authenticate_key(token, ip, class).await;
         }
         if class == RouteClass::Media
@@ -48,8 +49,14 @@ impl Auth {
             return self.authenticate_media_token(&token).await;
         }
         if let Some(cookie) = request::session_cookie(parts) {
+            // The plain cookie is only ever set for nearby clients. Reaching a public address
+            // over plain HTTP with it (split-horizon DNS, a laptop that left home) would send
+            // the session in the clear, so it is refused and cleared.
+            if cookie.plain && !self.secrets_allowed(parts) {
+                return Err(AuthError::HttpsRequired);
+            }
             request::check_csrf(parts, self.trusted_forwarded(parts, "x-forwarded-host"))?;
-            return self.authenticate_session(cookie).await;
+            return self.authenticate_session(cookie.value).await;
         }
         if self.setup_state().await? == SetupState::NeedsAdmin {
             return Err(AuthError::SetupRequired);

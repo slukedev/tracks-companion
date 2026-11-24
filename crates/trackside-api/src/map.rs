@@ -460,6 +460,16 @@ pub fn provider_health(state: ProviderHealthState) -> &'static str {
     }
 }
 
+pub fn fetched_usage(usage: trackside_core::control::FetchedUsage) -> wire::admin::FetchedUsage {
+    wire::admin::FetchedUsage {
+        songs: usage.songs,
+        bytes: usage.bytes,
+        fetching: usage.fetching,
+        keep: usage.keep,
+        max_bytes: usage.max_bytes,
+    }
+}
+
 pub fn provider(status: &ProviderStatus) -> wire::admin::ProviderStatus {
     wire::admin::ProviderStatus {
         name: status.name.clone(),

@@ -1,0 +1,46 @@
+{
+  "cursor": "3f9a0c1d7e2b4a65.918",
+  "settings": {
+    "autoAddToPlaylist": {
+      "device_id": "0C7B5E3A-9D1F-4E2B-8A6C-5F4E3D2C1B0A",
+      "modified_at": "1970-01-01T00:00:00.000Z",
+      "value": true,
+      "version": 3
+    },
+    "forgottenSongs": {
+      "device_id": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C",
+      "modified_at": "2026-11-14T07:30:00.000Z",
+      "value": [
+        "halo\u001fbeyonce",
+        "lion\u001felevation"
+      ],
+      "version": 305
+    },
+    "nearbyKey": {
+      "device_id": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C",
+      "modified_at": "2026-11-14T09:20:00.000Z",
+      "value": {
+        "$encrypted": {
+          "alg": "chachapoly",
+          "ct": "kJ4w0bQ2Xx9lY8cC1dRk3mXz5Q7pN6vT2sH8gF4aE0iL9oK3uJ1yW6rD5bM7nC2Z",
+          "kid": "icloud-keychain-1",
+          "nonce": "3q2+7wABAgMEBQYH",
+          "v": 1
+        }
+      },
+      "version": 412
+    },
+    "playlistID": {
+      "device_id": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C",
+      "modified_at": "2026-11-14T08:30:00.000Z",
+      "value": null,
+      "version": 310
+    },
+    "playlistName": {
+      "device_id": "0C7B5E3A-9D1F-4E2B-8A6C-5F4E3D2C1B0A",
+      "modified_at": "2026-11-13T09:30:00.000Z",
+      "value": "Heard on the radio",
+      "version": 12
+    }
+  }
+}

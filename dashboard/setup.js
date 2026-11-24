@@ -8,20 +8,20 @@ async function main() {
     location.replace(dashboardUrl());
     return;
   }
-  document.title = 'Set Up Trackside';
+  document.title = 'Set up Trackside';
   const token = input({ autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', required: true, mono: true });
   const name = input({ autocomplete: 'name', required: true });
   const username = usernameInput();
   const passwords = passwordFields();
 
   const form = submitForm([
-    field('Setup Token', token, { hint: 'In the server log' }),
-    field('Your Name', name),
-    field('Username', username),
+    field('Setup token', token, { hint: 'Printed in the server log when Trackside starts' }),
+    field('Your name', name),
+    field('Username', username, { hint: 'What you type to sign in' }),
     ...passwords.fields,
-  ], 'Create Admin Account', async (error) => {
+  ], 'Create admin account', async (error) => {
     setFieldError(token, '');
-    if (!token.value.trim()) { setFieldError(token, 'Paste the token.'); token.focus(); return; }
+    if (!token.value.trim()) { setFieldError(token, 'Paste the token from the server log.'); token.focus(); return; }
     const user = checkUsername(username);
     if (!user || !passwords.validate()) return;
     try {
@@ -33,15 +33,15 @@ async function main() {
       }, quietAuth: true });
       location.replace(dashboardUrl('#/overview'));
     } catch (err) {
-      if (err.code === 'unauthenticated') { setFieldError(token, 'Wrong token.'); token.focus(); return; }
+      if (err.code === 'unauthenticated') { setFieldError(token, 'That token is wrong. Copy it again from the log.'); token.focus(); return; }
       if (err.code === 'conflict') { location.replace(dashboardUrl()); return; }
       error.show(describe(err));
     }
   });
 
   frame({
-    title: 'Set Up Trackside',
-    text: null,
+    title: 'Set up your server',
+    text: 'Make the first account. It can manage everything.',
     body: form,
   });
   token.focus();

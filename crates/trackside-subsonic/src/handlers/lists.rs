@@ -124,10 +124,15 @@ pub async fn songs_by_genre(call: &Call<'_>) -> Result<Reply, ApiError> {
     Ok(Body::one("songsByGenre", Node::new().many("song", songs)).into())
 }
 
+/// What is playing: everyone's for an admin, a member's own otherwise, so members of one server
+/// don't see each other's listening. Songs the caller cannot see are left out either way.
 pub async fn now_playing(call: &Call<'_>) -> Result<Reply, ApiError> {
     call.require(Scopes::LIBRARY)?;
     let now = call.now();
-    let entries = call.inner.now_playing.list(now);
+    let me = call.principal.access.user;
+    let admin = call.is_admin();
+    let mut entries = call.inner.now_playing.list(now);
+    entries.retain(|e| admin || e.user == me);
     let ids: Vec<SongId> = entries.iter().map(|e| e.song.clone()).collect();
     let nodes = call
         .read(move |c, a| {

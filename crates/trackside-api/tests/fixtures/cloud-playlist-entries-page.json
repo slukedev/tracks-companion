@@ -1,0 +1,28 @@
+{
+  "cursor": "3f9a0c1d7e2b4a65.1204",
+  "deletes": [],
+  "has_more": true,
+  "upserts": [
+    {
+      "client_modified_at": "2026-11-14T09:20:00.000Z",
+      "device_id": "0C7B5E3A-9D1F-4E2B-8A6C-5F4E3D2C1B0A",
+      "fields": {
+        "addedAtMs": 1794648000000,
+        "order": "a0V",
+        "playlistID": "C3E5A7C9-1B3D-4F5A-8C7E-9A1B3C5D7E9F",
+        "track": {
+          "album": "I Am... Sasha Fierce",
+          "artist": "Beyoncé",
+          "ids": {
+            "appleMusic": "1440769385",
+            "spotify": "4JehYebiI9JE8sR8MisGVb",
+            "trackside": "s7m2k4q9x1v8b3n6c0de"
+          },
+          "title": "Halo"
+        }
+      },
+      "id": "5D7F9B1C-3E5A-4C7E-8F1B-3D5F7A9C1E3B",
+      "version": 1204
+    }
+  ]
+}

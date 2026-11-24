@@ -40,9 +40,23 @@ pub(crate) fn client_ip(trusted: &[ipnet::IpNet], headers: &HeaderMap, peer: Soc
     client
 }
 
-/// The `for` addresses of `Forwarded` when present, else of `X-Forwarded-For`, from the
-/// first hop to the last. `None` marks a hop that is not an address.
+/// The `X-Forwarded-For` addresses when present, else the `for` addresses of `Forwarded`,
+/// from the first hop to the last. `None` marks a hop that is not an address.
+///
+/// `X-Forwarded-For` wins because nginx, Caddy, Traefik and Cloudflare append to it and pass a
+/// client's own `Forwarded` through untouched, so a `Forwarded` beside it may be forged.
 fn forwarded_for(headers: &HeaderMap) -> Vec<Option<IpAddr>> {
+    if headers.contains_key("x-forwarded-for") {
+        return headers
+            .get_all("x-forwarded-for")
+            .iter()
+            .map(|v| v.to_str().ok())
+            .flat_map(|v| match v {
+                Some(v) => v.split(',').map(|hop| parse_node(hop.trim())).collect(),
+                None => vec![None],
+            })
+            .collect();
+    }
     let forwarded: Vec<&str> = headers
         .get_all(http::header::FORWARDED)
         .iter()
@@ -62,15 +76,7 @@ fn forwarded_for(headers: &HeaderMap) -> Vec<Option<IpAddr>> {
             })
             .collect();
     }
-    headers
-        .get_all("x-forwarded-for")
-        .iter()
-        .map(|v| v.to_str().ok())
-        .flat_map(|v| match v {
-            Some(v) => v.split(',').map(|hop| parse_node(hop.trim())).collect(),
-            None => vec![None],
-        })
-        .collect()
+    Vec::new()
 }
 
 /// `192.0.2.1`, `192.0.2.1:80`, `2001:db8::1`, `[2001:db8::1]` or `[2001:db8::1]:80`.
@@ -106,6 +112,37 @@ pub(crate) fn forwarded_value<'h>(
         .next()
         .map(str::trim)
         .filter(|v| !v.is_empty())
+}
+
+/// Whether the forwarding headers say the client used HTTPS: the first `X-Forwarded-Proto`
+/// value, or the first `proto` of `Forwarded` when the proxy sent no `X-Forwarded-For`. Only
+/// meaningful from a proxy whose word counts.
+pub(crate) fn forwarded_https(headers: &HeaderMap) -> bool {
+    let https = |v: &str| v.trim().trim_matches('"').eq_ignore_ascii_case("https");
+    if let Some(proto) = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+    {
+        return https(proto);
+    }
+    if headers.contains_key("x-forwarded-for") {
+        // The proxy speaks `X-Forwarded-*`, so a `Forwarded` beside it is the client's own.
+        return false;
+    }
+    headers
+        .get(http::header::FORWARDED)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .and_then(|element| {
+            element.split(';').find_map(|pair| {
+                let (name, value) = pair.split_once('=')?;
+                name.trim()
+                    .eq_ignore_ascii_case("proto")
+                    .then(|| https(value))
+            })
+        })
+        .unwrap_or(false)
 }
 
 /// Whether a request carries any forwarding header, as a reverse proxy adds.
@@ -214,16 +251,39 @@ mod tests {
     }
 
     #[test]
-    fn rfc_7239_forwarded_wins_over_x_forwarded_for() {
+    fn x_forwarded_for_wins_over_a_forwarded_the_client_sent() {
         let trusted = nets(&["10.0.0.0/8"]);
+        // nginx appended the real client; the `Forwarded` came from the client itself.
         let both = headers(&[
-            ("forwarded", "for=192.0.2.60;proto=http, for=10.1.1.1"),
+            ("forwarded", "for=192.168.1.5"),
             ("x-forwarded-for", "198.51.100.99"),
         ]);
         assert_eq!(
             client_ip(&trusted, &both, peer("10.0.0.2:80")),
+            ip("198.51.100.99")
+        );
+        let only = headers(&[("forwarded", "for=192.0.2.60;proto=http, for=10.1.1.1")]);
+        assert_eq!(
+            client_ip(&trusted, &only, peer("10.0.0.2:80")),
             ip("192.0.2.60")
         );
+    }
+
+    #[test]
+    fn a_forwarded_proto_beside_x_forwarded_for_is_not_believed() {
+        let spoofed = headers(&[
+            ("forwarded", "for=192.168.1.5;proto=https"),
+            ("x-forwarded-for", "198.51.100.99"),
+        ]);
+        assert!(!forwarded_https(&spoofed));
+        assert!(forwarded_https(&headers(&[(
+            "forwarded",
+            "for=192.0.2.1;proto=https"
+        )])));
+        assert!(forwarded_https(&headers(&[
+            ("x-forwarded-proto", "https"),
+            ("x-forwarded-for", "198.51.100.99"),
+        ])));
     }
 
     #[test]

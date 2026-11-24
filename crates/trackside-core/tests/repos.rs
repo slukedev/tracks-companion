@@ -65,7 +65,7 @@ fn resubmitted_batch_is_all_duplicates() -> TestResult {
 #[test]
 fn future_listen_is_rejected() -> TestResult {
     let (test, user, song, _dir) = seeded()?;
-    let far = TEST_START.saturating_add(Duration::from_secs(25 * 3600));
+    let far = TEST_START.saturating_add(Duration::from_hours(25));
     let near = TEST_START.saturating_add(Duration::from_secs(3600));
     let items = vec![
         listen("far", Some(&song), far),
@@ -458,14 +458,11 @@ fn abandoned_uploads_are_pruned_with_their_staging_files() -> TestResult {
             imports::finish(tx, &row.id, ImportState::Imported, None, None)
         }
     })?;
-    test.clock.advance(Duration::from_secs(48 * 3600));
+    test.clock.advance(Duration::from_hours(2 * 24));
     let fresh = test
         .db
         .write_blocking(move |tx| imports::create(tx, &new("fresh")))?;
-    let cutoff = test
-        .clock
-        .now()
-        .saturating_sub(Duration::from_secs(24 * 3600));
+    let cutoff = test.clock.now().saturating_sub(Duration::from_hours(24));
     let pruned = test
         .db
         .write_blocking(move |tx| imports::prune_abandoned(tx, cutoff))?;
@@ -474,5 +471,46 @@ fn abandoned_uploads_are_pruned_with_their_staging_files() -> TestResult {
     assert!(left(old.id)?.is_none());
     assert!(left(done.id)?.is_some());
     assert!(left(fresh.id)?.is_some());
+    Ok(())
+}
+
+#[test]
+fn finished_scan_runs_are_kept_to_a_bounded_history() -> TestResult {
+    use trackside_core::control::ScanTrigger;
+    use trackside_core::records::{ScanCounts, ScanRunKind, ScanState};
+    use trackside_core::repo::scan_runs::{self, KEEP_RUNS, ScanErrorRow};
+
+    let test = TestDb::new()?;
+    let dir = tempfile::tempdir()?;
+    let lib = test.add_library("Music", dir.path())?.key;
+    let running = test.write_blocking(move |tx| {
+        scan_runs::start(tx, lib, ScanRunKind::Full, ScanTrigger::Admin)
+    })?;
+    for i in 0..KEEP_RUNS + 20 {
+        test.write_blocking(move |tx| {
+            let run = scan_runs::start(tx, lib, ScanRunKind::Quick, ScanTrigger::Schedule)?;
+            scan_runs::add_error(
+                tx,
+                &run.id,
+                &ScanErrorRow {
+                    rel_path: format!("e{i}").into_bytes(),
+                    path_display: format!("e{i}"),
+                    error: String::from("unreadable"),
+                },
+            )?;
+            scan_runs::finish(tx, &run.id, ScanState::Done, &ScanCounts::default(), None)
+        })?;
+    }
+    let (runs, errors, still_running) = test.read_blocking(move |c| {
+        let count = |sql: &str| c.query_row(sql, [], |row| row.get::<_, i64>(0));
+        Ok((
+            count("SELECT count(*) FROM scan_runs")?,
+            count("SELECT count(*) FROM scan_errors")?,
+            scan_runs::get(c, &running.id)?.map(|r| r.state),
+        ))
+    })?;
+    assert_eq!(runs, i64::from(KEEP_RUNS) + 1);
+    assert_eq!(errors, i64::from(KEEP_RUNS));
+    assert_eq!(still_running, Some(ScanState::Running));
     Ok(())
 }

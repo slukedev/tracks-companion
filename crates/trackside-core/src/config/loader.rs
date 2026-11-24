@@ -81,6 +81,16 @@ pub const KEYS: &[KeyInfo] = &[
         List,
     ),
     key(
+        "server.local_networks",
+        "TRACKSIDE_SERVER__LOCAL_NETWORKS",
+        List,
+    ),
+    key(
+        "server.tailscale_is_local",
+        "TRACKSIDE_SERVER__TAILSCALE_IS_LOCAL",
+        Bool,
+    ),
+    key(
         "server.max_connections",
         "TRACKSIDE_SERVER__MAX_CONNECTIONS",
         Integer,
@@ -274,6 +284,16 @@ pub const KEYS: &[KeyInfo] = &[
         "acquire.instant_play",
         "TRACKSIDE_ACQUIRE__INSTANT_PLAY",
         Bool,
+    ),
+    dash(
+        "acquire.fetched_keep",
+        "TRACKSIDE_ACQUIRE__FETCHED_KEEP",
+        Integer,
+    ),
+    dash(
+        "acquire.fetched_max_bytes",
+        "TRACKSIDE_ACQUIRE__FETCHED_MAX_BYTES",
+        Text,
     ),
     key(
         "acquire.reject_words",

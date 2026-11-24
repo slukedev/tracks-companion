@@ -32,6 +32,7 @@ Contents:
 16. Admin endpoints (dashboard)
 17. Subsonic and OpenSubsonic coverage
 18. Versioning and deprecation
+19. Trackside Cloud
 
 ---
 
@@ -44,12 +45,15 @@ Contents:
   `stream`) are absolute paths that start with `server.base_path` and `/api/v1`. Resolve them
   against the origin (scheme, host and port) of the candidate URL in use.
 - **Content.** Requests and responses are `application/json; charset=utf-8` unless stated.
-  Request bodies are limited to 1 MiB except uploads. Responses are compressed with `br` or
+  Request bodies are limited to 1 MiB except uploads and Trackside Cloud batches (8 MiB,
+  section 19). Responses are compressed with `br` or
   `gzip` when the client accepts it; media is never compressed.
 - **Field names** are `snake_case`. Clients must ignore unknown fields and unknown enum values.
-  Absent optional fields mean "unknown" or "none"; `null` is not sent, with two exceptions:
-  the chart series of `/admin/stats/*`, where `null` marks a bucket with nothing recorded, and
-  `PATCH` bodies, where `null` clears a value (`max_bitrate_kbps`, `quick_scan_interval_s`).
+  Absent optional fields mean "unknown" or "none"; `null` is not sent, with three exceptions:
+  the chart series of `/admin/stats/*`, where `null` marks a bucket with nothing recorded,
+  `PATCH` bodies, where `null` clears a value (`max_bitrate_kbps`, `quick_scan_interval_s`), and
+  a cleared Trackside Cloud setting (section 19). The apps' own `fields` in section 19 keep
+  their own names.
 - **Ids** are strings (architecture section 6), case-insensitive on input.
 - **Times** are RFC 3339 UTC with milliseconds: `"2026-11-14T09:30:00.000Z"`. Durations and
   positions are integer milliseconds in fields ending `_ms`.
@@ -58,7 +62,7 @@ Contents:
   | Header or parameter | Accepted on | Notes |
   |---|---|---|
   | `Authorization: Bearer tsk_...` | every authenticated route | device keys and API keys |
-  | `__Host-trackside_session` cookie | every authenticated route; required for `/admin/*` | requests that change state also need `X-Trackside-CSRF: 1` and a matching `Origin`. Over plain HTTP from a private or loopback address the cookie is `trackside_session`, without `Secure` |
+  | `__Host-trackside_session` cookie | every authenticated route; required for `/admin/*` | requests that change state also need `X-Trackside-CSRF: 1` and a matching `Origin`. Over plain HTTP from a private or loopback address the cookie is `trackside_session`, without `Secure`; it is accepted only where a password would be (Plain HTTP, below) |
   | `?mt=<media token>` | media routes only (section 11, 15.6) | for AVPlayer, which cannot send headers reliably |
 
   Keys never travel in query strings on non-media routes; a key in a query string is rejected
@@ -68,9 +72,36 @@ Contents:
 - **Request ids.** Every response has `X-Request-Id`; error bodies repeat it.
 - **Rate limit headers.** `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` on
   limited routes, and `Retry-After` on `429`.
+- **Plain HTTP.** A password, an API key or device key (`Authorization: Bearer`), or a setup,
+  invite, reset or pairing secret is accepted only over HTTPS (directly, or through a proxy in
+  `server.trusted_proxies` whose `X-Forwarded-Proto` says `https`, or whose `Forwarded` says
+  `proto=https` when it sends no `X-Forwarded-For`), or over plain HTTP from a nearby client:
+  loopback, RFC 1918, link-local, `fc00::/7`, Tailscale's `100.64.0.0/10` (unless
+  `server.tailscale_is_local` is off), or a network listed in `server.local_networks`. Otherwise
+  the request is refused with `403 https_required` before the credential is looked at. This covers
+  `POST /setup`, `/auth/session`, `/auth/login`, `/auth/reauth`, `/me/password`,
+  `/me/api-keys`, `/invites/{token}/accept`, `/password-resets/{token}`, `/pair/claim`,
+  `/pair/requests` and `GET /pair/requests/{id}`, every route reached with a bearer key, and
+  Subsonic `apiKey`, `u`+`p` and `u`+`t`+`s` (error 50, HTTP `403` on media endpoints). The
+  plain `trackside_session` cookie follows the same rule: from a client that isn't nearby it is
+  refused with `https_required`, and that response clears it (`Set-Cookie` with `Max-Age=0`).
+  The `__Host-` cookie needs HTTPS anyway, and media tokens expire.
+  - Forwarding headers (`X-Forwarded-For`, `X-Forwarded-Proto`, `Forwarded`, `X-Real-IP`) from a
+    peer that isn't in `server.trusted_proxies` are never believed: the peer is judged by its own
+    address, and a nearby peer that sends any of them is refused, since it may be forwarding
+    clients from the internet. Add such a proxy to `server.trusted_proxies`.
+  - From a trusted proxy, the client is the rightmost `X-Forwarded-For` hop that isn't itself a
+    trusted proxy. `Forwarded` is read only when there is no `X-Forwarded-For`, because common
+    proxies append to `X-Forwarded-For` and pass a client's own `Forwarded` through.
+  - `https_required` carries `details.https_urls` when the server knows any HTTPS address: the
+    `tls: true` entries of `GET /server/urls` (`url`, `kind`, `tls`, `fingerprint`?), so a
+    refused client can switch without signing in first. They come from the server's own list,
+    never from the request.
 - **Concurrency per user.** At most 8 streams and downloads at once (including instant play
   and Subsonic `stream`, `download` and `hls`) and 3 transcodes at once (HLS jobs, transcoded
-  downloads, Subsonic conversions) per user. Over that, `429 rate_limited` with
+  downloads, Subsonic conversions) per user. Only a request that starts an encoder takes a
+  transcode slot: waiting for a transcode that is cached or already being made takes none, and
+  a transcoded download takes its stream slot once the file is ready to send. Over that, `429 rate_limited` with
   `Retry-After: 1`; the Subsonic media endpoints answer HTTP `429` with an error envelope.
 - **Server time.** Every response has a `Date` header; clients use it to compute `client_time`
   skew if they want to.
@@ -117,6 +148,8 @@ display in Tracks. `details` is optional and code-specific.
 | 403 | `forbidden` | authenticated but not allowed (role, scope, library) |
 | 403 | `csrf` | session request without the CSRF header or with a foreign `Origin` |
 | 403 | `setup_required` | an endpoint used before the first admin exists |
+| 403 | `https_required` | a password, key, plain session cookie, or setup, invite, reset or pairing secret sent over plain HTTP from an address that isn't nearby (section 1, Plain HTTP); `details.https_urls` when the server has HTTPS addresses |
+| 403 | `device_mismatch` | a Trackside Cloud route named a device id other than the one bound to the calling device key (section 19) |
 | 403 | `reauth_required` | a sensitive change from a session whose last password check is over 10 minutes old; `POST /auth/reauth` and retry (section 6) |
 | 404 | `not_found` | unknown id, or an id the caller cannot see (never `403`, to avoid leaking existence) |
 | 405 | `method_not_allowed` | |
@@ -365,10 +398,18 @@ No auth. Lets a client tell Trackside from other servers and decide what to call
     "hls": true,
     "suggested_cellular_profile": "aac-256"
   },
-  "features": {"lyrics": true, "uploads": false, "events": true, "animated_art": false},
-  "subsonic": {"enabled": true, "path": "/rest"}
+  "features": {"lyrics": true, "uploads": false, "events": true, "animated_art": false,
+               "cloud": true},
+  "subsonic": {"enabled": true, "path": "/rest"},
+  "cloud": {"version": 1, "epoch": "3f9a0c1d7e2b4a65", "max_batch": 1000, "max_page": 2000,
+            "entities": ["plays", "sessions", "stations", "forgotten-songs", "blocked-artists",
+                         "excluded-stations", "playlists", "playlist-entries", "likes", "settings"]}
 }
 ```
+
+`features.cloud` and `cloud` say Trackside Cloud is on (section 19); `cloud` is left out when the
+admin turned it off. `cloud.epoch` is the sync epoch: it changes when the server's database is
+restored or replaced, and every cloud cursor from before is then refused.
 
 The unauthenticated document never mentions acquisition. Authenticated feature flags are in
 `GET /api/v1/me` (section 7).
@@ -400,7 +441,7 @@ No auth. Only while `setup_required`. Rate-limited per IP.
 {"setup_token": "7KQ2M9XD...", "username": "luke", "display_name": "Luke", "password": "..."}
 ```
 
-`display_name` is optional and defaults to the username. Passwords are 8 to 1024 bytes. `201`
+`display_name` is optional and defaults to the username. Passwords are 1 to 1024 bytes. `201`
 with the user (section 7 shape) and a session cookie. Errors: `401 unauthenticated` for a wrong
 token, `409 conflict` once an admin exists.
 
@@ -567,8 +608,14 @@ Five wrong codes per session per 10 minutes, then `429`.
   invite, otherwise:
 
   ```json
-  {"valid": true, "role": "member", "expires_at": "2026-11-21T09:30:00.000Z"}
+  {"valid": true, "role": "member", "expires_at": "2026-11-21T09:30:00.000Z",
+   "invited_by": "Luke", "note": "For Mum"}
   ```
+
+  `invited_by` is the display name of the admin who made the invite, left out once their
+  account is gone. `note` is the admin's own note on who the invite is for, left out when they
+  wrote none. Whoever holds the link sees both, so an admin should not put anything in the note
+  they would not tell the invitee.
 
 - `POST /api/v1/invites/{token}/accept` (no auth): `{"username", "display_name"?, "password"}`;
   `201` with the user and a session cookie. The new account gets the invite's role,
@@ -606,6 +653,47 @@ is left out for a session or an API key.
 `PATCH /api/v1/me` (scope: write) `{"display_name"}` returns the user. `POST /api/v1/me/password`
 `{"current_password", "new_password", "sign_out_devices": false}`: `204`; from a session it needs
 a recent password check (section 6).
+
+### `GET /api/v1/server/urls` (scope: library)
+
+The addresses a paired device may use now, so it learns new ones (a public domain or tailnet
+name the owner added, a changed LAN address) without pairing again.
+
+```json
+{
+  "server_id": "5f0c2b9e-8a3d-4c1e-9b7a-2d6e4f8a1c3b",
+  "version": "a746df40293cc8d2b0f1b1ea782c9d87",
+  "urls": [
+    {"url": "http://192.168.1.20:4747", "kind": "lan", "tls": false},
+    {"url": "http://home.local:4747", "kind": "lan", "tls": false},
+    {"url": "https://music.example.com", "kind": "public", "tls": true}
+  ]
+}
+```
+
+- `urls` is the same list, in the same order and shape, as `server.urls` in PairResult and
+  `/me` (section 6): detected LAN addresses, then `server.public_urls` from the configuration or
+  the dashboard. It never comes from the request: no `Host`, `X-Forwarded-Host` or other header
+  adds, removes or changes an address.
+- `version` names the list: the same list always has the same version, across restarts. It is
+  also the strong `ETag`; send `If-None-Match` to get `304` when nothing changed.
+- SSE `server_urls` (section 13) says the list changed, with the new `version`. Clients connect to
+  events only in the foreground, so they also ask with `If-None-Match` when they come to the
+  foreground or reconnect.
+- `401` without a credential. Any device key, session or API key with the `library` scope may
+  read it.
+
+How a client treats the list:
+
+- It replaces the stored candidates with `urls` and races them as before (ADR 0009). An address
+  that is gone from the list is no longer used.
+- The list is only as good as the connection it came over, so a client reads it only from an
+  address that has already proven itself (ADR 0011).
+- Being on the list does not make an address trusted. A new address is used, like any other,
+  only after it gives a matching `/ping` proof for itself; over HTTPS its certificate must pass
+  the system's checks, or match `fingerprint` when one is given, and a certificate that does
+  neither is refused. A plain `http://` address gets a credential only when it is nearby
+  (section 5).
 
 ### Media token
 
@@ -992,10 +1080,13 @@ caller can see, in sync as well.
 | `scan` | `{"library_id", "state", "files_seen", "added", "updated", "missing"}` | admins only, at most once a second |
 | `acquisition` | Acquisition (15.3) | the caller's requests; admins see all |
 | `upload` | `{"id", "state", "song_id"?}` | the caller's uploads |
+| `server_urls` | `{"version"}` | the server's addresses changed; call `GET /server/urls` (section 7) |
 | `session` | `{"reason": "revoked"}` | the credential was revoked; the stream ends |
+| `cloud` | `{"entity": "plays"}` | the caller's Trackside Cloud data for `entity` (or `devices`) changed; pull it (section 19). Never carries the data |
 
 `id` of each event is the seq at the time. Each event type is sent only to callers allowed to see
-it. Clients connect only while in the foreground.
+it. Clients connect only while in the foreground. A user may have 16 streams open at once; a
+17th is `429 rate_limited` with `Retry-After: 5`.
 
 ---
 
@@ -1194,7 +1285,10 @@ stream is played from one that can. `200`:
 
 `stream` works as in section 15.5 (append `mt`; scope: stream). When the caller's library has
 the song after all, the answer has `song_id` and no `stream`; play that song instead. The same
-song asked again within a few hours plays from what the server already fetched.
+song asked again plays from what the server already fetched, while it keeps it: the server keeps
+the most recently played of these songs within limits the admin sets (section 16), so a
+`stream` URL can stop working (`404`) once the song has not been played for a while. Ask again
+with the same body to get it back; it may be fetched again.
 
 - `400 bad_request` without a candidate or title and artist.
 - `404 not_found` when nothing matched.
@@ -1227,14 +1321,17 @@ fixtures in `dashboard/dev/fixtures/` use the same shapes.
                  "song_count": 48211, "scanning": false}],
   "media": {"ffmpeg": {"found": true, "version": "7.1"}, "transcodes": {"running": 1, "queued": 0},
             "transcode_cache_bytes": 2100000000},
-  "acquisition": {"enabled": true, "providers": [], "active": 2, "today": 14},
+  "acquisition": {"enabled": true, "providers": [], "active": 2, "today": 14,
+                  "fetched": {"songs": 212, "bytes": 7400000000, "fetching": 1, "keep": 500,
+                              "max_bytes": 21474836480}},
   "users": {"count": 4, "devices": 7},
   "backups": {"last": {"name": "trackside-20261114T033000Z.db", "at": "2026-11-14T03:30:00.000Z",
                        "bytes": 790000000},
               "next_at": "2026-11-15T03:30:00.000Z"},
   "problems": [{"severity": "warning", "code": "library_unavailable", "title": "Music offline",
                 "message": "Music is unavailable.",
-                "help": "Check that the disk or share is mounted at /music. Its songs stay in the library until it is back."}]
+                "help": "Check that the disk or share is mounted at /music. Its songs stay in the library until it is back.",
+                "target": {"kind": "library", "id": "ldhmwjvv1e9320kfeh1mp"}}]
 }
 ```
 
@@ -1243,10 +1340,19 @@ fixtures in `dashboard/dev/fixtures/` use the same shapes.
 - `acquisition` is left out when the server was built without acquisition, and has
   `"enabled": false` when it can do it but it is switched off. `providers` holds ProviderStatus
   objects (below).
+- `acquisition.fetched` is what songs played without being kept (section 15.6) take now:
+  `songs` and `bytes` that are fetched and kept for replays, `fetching` still coming in, and the
+  limits `keep` and `max_bytes` (the settings `acquire.fetched_keep` and
+  `acquire.fetched_max_bytes`). `songs` and `bytes` can be over the limits for a while: a song
+  being fetched, streamed, transcoded or played in the last 30 minutes is never evicted. Left out
+  when the acquirer cannot tell.
 - `backups.last`, `backups.next_at` and `backups.last_error` are left out when there is none.
 - A problem has `severity` (`info`, `warning` or `error`), a stable `code` (`library_unavailable`,
-  `inotify_limit`), a `title` of six words or fewer
+  `inotify_limit`, `low_disk`, `no_ffmpeg`, `backup_failed`), a `title` of six words or fewer
   for its heading, a `message`, and an optional `help` that says what to do.
+- A problem about one record has `target`, `{"kind", "id"}`, so a client can link to it without
+  matching names: `library_unavailable` and `inotify_limit` name their library with
+  `{"kind": "library", "id": "..."}`. Other kinds may come later; ignore ones you don't know.
 
 ### Users
 
@@ -1254,12 +1360,12 @@ fixtures in `dashboard/dev/fixtures/` use the same shapes.
 |---|---|
 | `GET /admin/users` | `{"users": [AdminUser]}` |
 | `POST /admin/users` | `{"username", "display_name"?, "password", "role"?, "permissions"?, "library_ids"}` → `201` AdminUser. `role` defaults to `member`; `role: admin` needs a recent password |
-| `GET /admin/users/{id}` | AdminUser plus integer `devices`, `api_keys` and `sessions` |
+| `GET /admin/users/{id}` | AdminUser plus integer `devices`, `api_keys` and `sessions`, and `cloud: {"items", "bytes"}` when the user keeps anything in Trackside Cloud (counts only, never the content) |
 | `PATCH /admin/users/{id}` | any of `display_name`, `role`, `permissions` (`can_download`, `can_upload`, `can_request`, `legacy_subsonic`, `max_bitrate_kbps`; `null` removes the limit), `disabled`. Changing `role` or `disabled` needs a recent password |
 | `PUT /admin/users/{id}/libraries` | `{"library_ids": [...]}`; bumps the user's sync epoch |
 | `POST /admin/users/{id}/password-reset` | `201 {"url": "https://.../reset/<token>", "expires_at"}`; recent password |
 | `POST /admin/users/{id}/sign-out` | ends sessions; `{"devices": true}` also revokes device keys |
-| `DELETE /admin/users/{id}` | `204`; deletes their listens, playlists, stars, devices. Refused for the last admin (`409`, `details.reason = "last_admin"`); recent password |
+| `DELETE /admin/users/{id}` | `204`; deletes their listens, playlists, stars, devices and Trackside Cloud data. Refused for the last active admin (`409`, `details.reason = "last_admin"`); recent password. The user is disabled first, in the same transaction as that check, so a demotion racing with the delete is refused instead of leaving no admin |
 
 AdminUser:
 
@@ -1365,6 +1471,13 @@ files were left for later because they were still being written (`scanner.settle
 - `PATCH /admin/settings`: `{"key": value, ...}`; keys set by config are `409` with
   `details.reason = "set_by_config"`. Any `auth.*` key needs a recent password. `null` returns a
   key to its default.
+- `acquire.fetched_keep` (a whole number, default `500`) and `acquire.fetched_max_bytes` (a size,
+  default `"20GiB"`) limit songs played without being kept. Lowering either evicts at once, least
+  recently played first. `0` keeps none beyond those in use.
+- `cloud.enabled` (default `true`), `cloud.quota_items` (a whole number, default `2000000`) and
+  `cloud.quota_bytes` (a size, default `"1GiB"`) control Trackside Cloud (section 19). They are
+  dashboard settings only, not configuration keys. A lower quota refuses new items and keeps
+  what is stored.
 - Secret keys (`enrichment.lastfm_api_key`) are write-only: `PATCH` takes the text, which is
   sealed with the server's secret key before it is stored, and needs a recent password; `GET`
   and every response show only whether one is set, as `"value": true` or `false`.
@@ -1396,7 +1509,8 @@ The Last.fm API key is the setting `enrichment.lastfm_api_key` above, also setta
 ### Backups
 
 - `GET /admin/backups`: `{"backups": [{"name", "kind": "scheduled" | "manual" | "pre_migrate",
-  "at", "bytes", "has_key": true}]}`
+  "at", "bytes", "has_key": true}], "next_at"?}`. `next_at` is when the next scheduled backup
+  runs, the same as the overview's `backups.next_at`; left out while scheduled backups are off.
 - `POST /admin/backups`: `202 {}`, then the new backup appears in the list; `409` with
   `details.reason = "running"` if one is running.
 - `GET /admin/backups/{name}`: downloads the file (`application/vnd.sqlite3`); recent password.
@@ -1549,7 +1663,7 @@ a measured zero. Responses are `Cache-Control: no-store`. Out-of-range parameter
 | `getTopSongs` with `id` | yes | `topSongsByArtistId` extension |
 | `getAlbumList`, `getAlbumList2` | yes | all types: random, newest, highest, frequent, recent, alphabeticalByName, alphabeticalByArtist, starred, byYear, byGenre |
 | `getRandomSongs`, `getSongsByGenre` | yes | |
-| `getNowPlaying` | yes | from now-playing and `reportPlayback` |
+| `getNowPlaying` | yes | from now-playing and `reportPlayback`; admins see everyone's, members only their own |
 | `getStarred`, `getStarred2` | yes | |
 | `search`, `search2`, `search3` | yes | library only; all three offset and count pairs honoured; empty `query` returns everything in stable internal-id order (older Tracks builds page all songs this way) |
 | `getPlaylists`, `getPlaylist`, `createPlaylist`, `updatePlaylist`, `deletePlaylist` | yes | |
@@ -1629,3 +1743,262 @@ The previous Subsonic proxy Tracks used fetched songs on demand from services el
 - Wire fixtures for every response shape live in `crates/trackside-api/tests/fixtures/`.
   The server's tests serialise the real types and compare against them; Tracks' tests decode the
   same files. A fixture change is an API change and is reviewed as one.
+
+---
+
+## 19. Trackside Cloud
+
+Per-user sync of the Tracks apps' own data (history, sessions, stations, settings, lists,
+playlists, likes), for people who choose their Trackside server over iCloud. ADR 0012 has the
+design. Fixtures: `crates/trackside-api/tests/fixtures/cloud-*.json`.
+
+- **Only your own data.** Every route works on the caller's records and nobody else's, admins
+  included. There is no admin route to anyone's records, and the dashboard never shows them;
+  admins see item and byte counts on the user page (section 16).
+- **Device keys only**, scope `library` to read and `write` to change. A session or an API key is
+  `403 forbidden`. With `cloud.enabled` off (section 16, Server settings) every route is `404`.
+- **One device id per key.** A device key speaks for one app device id: the one it registered
+  with `PUT /cloud/devices/{device_id}` (Devices below), or, until it registers one, the
+  `client_device_id` it signed in or paired with (section 6). Every pushed item's and setting's
+  `device_id` must be that id, or it is `rejected` with `device_mismatch`.
+- **Shapes.** The envelope follows section 1 (`snake_case`, RFC 3339 times). `fields` is the
+  app's own object under the app's own names; the server keeps it as sent apart from the rules
+  below, so unknown fields and enum values round-trip. The times inside `fields` that the server
+  reads (`playedAtMs`, `firstSeenMs`, `lastSeenMs`, `forgottenAtMs`) are integer milliseconds.
+  `null` inside `fields` is dropped on a new record, clears a field on a newest-wins field, and
+  is ignored elsewhere.
+- **Versions.** Each user has their own change seq. Every write takes the next value, which
+  becomes the record's `version`. Cursors are opaque strings that carry that seq and the
+  server's sync epoch; they never depend on client time. Send a cursor back exactly as it came.
+
+### Entities
+
+| Path segment | `id` | Rule |
+|---|---|---|
+| `plays` | the client's playID UUID, a UUIDv5 for Apple backfill, or `lastfm:<played_at_s>:<hash>` | `title`, `artistName` and `playedAtMs` are required. Core fields (`title`, `artistName`, `albumTitle`, `playedAtMs`, `kind`, `source`, `recordedByDeviceID`, `platform`) never change: a different value is `conflict`. `artworkURL` is newest-wins. Every other field (`songKey`, `catalogID`, `serverSongID`, `spotifyID`, `stationID`, `sessionID`, `playedMs`, `durationMs`, `scrobbledAt`, `addedToPlaylistAt`, and fields the server does not know) is first non-null wins. `songKey` is filled with `tracks_model::song_key(title, artistName)` when absent. Tombstones are kept forever. |
+| `sessions` | UUID | Written only by its owner (its `recordedByDeviceID` field, else the device that first pushed it) or a device restored from the owner (Devices below); anyone else is `rejected` `not_owner`. Otherwise the last write wins, field by field. |
+| `stations` | `stationKey(name)`, which the server derives when `id` is empty | `name` is required. `firstSeenMs` takes the minimum, `lastSeenMs` the maximum, every other field the first non-null. |
+| `forgotten-songs` | `songIdentity` (`title` 0x1F `artistName`, folded) | Grows only: `forgottenAtMs` takes the maximum; a delete is `rejected` `grow_only`. |
+| `blocked-artists`, `excluded-stations` | the folded `name`, derived when `id` is empty | One value per item, newest `client_modified_at` wins, deletes included: an add newer than the delete brings the item back, an older one is `conflict`. |
+| `likes` | `songIdentity`, derived when `fields` has `title` and `artistName` | `{"loved", "rating"?}`, newest `client_modified_at` wins as above. |
+| `playlists` | UUID | Newest `client_modified_at` wins per field. Deleting a playlist deletes its entries. |
+| `playlist-entries` | UUID (the entry) | `playlistID` and `order` (a fractional order key, compared as text by the client) are required; `track` is `{"title", "artist", "album"?, "ids": {"<source>": "<id>"}}`. Newest wins per field; `playlistID` never changes. |
+
+A keyed `id` that does not match its fields (a station whose `id` is not `stationKey(name)`) is
+`rejected` `identity_mismatch`. Ids and device ids are up to 256 and 128 bytes of text.
+
+### `GET /api/v1/cloud/{entity}?cursor=&limit=` (scope: library)
+
+`limit` defaults to 500, at most 2000. No `cursor` (or an empty one) pages a full snapshot from
+the start; tombstones are included, so a snapshot can also be applied as a delta.
+
+```json
+{
+  "upserts": [{"id": "6A8C0E2F-4B6D-4F8A-9C1E-3B5D7F9A1C3E", "version": 917,
+               "fields": {"title": "Halo", "artistName": "Beyoncé", "playedAtMs": 1794645000000,
+                          "kind": "onDemand", "songKey": "halo\u001fbeyonce"},
+               "device_id": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C",
+               "client_modified_at": "2026-11-14T09:25:00.000Z"}],
+  "deletes": [{"id": "1F3B5D7F-9A1C-4E3B-8D5F-7A9C1E3B5D7F", "version": 918,
+               "device_id": "0C7B5E3A-9D1F-4E2B-8A6C-5F4E3D2C1B0A",
+               "client_modified_at": "2026-11-14T09:29:30.000Z",
+               "deleted_at": "2026-11-14T09:29:30.000Z",
+               "merged_into": "6A8C0E2F-4B6D-4F8A-9C1E-3B5D7F9A1C3E"}],
+  "cursor": "3f9a0c1d7e2b4a65.918",
+  "has_more": false
+}
+```
+
+- Records come in `version` order and each appears at most once per page. A record that changes
+  after it was paged comes again later at its new version; nothing committed before a page is
+  skipped by it.
+- Commit `cursor` only after applying the page, and keep pulling while `has_more`.
+- `410 sync_reset`: the cursor is from another sync epoch (the server's database was restored
+  from a backup or replaced), older than tombstones the server pruned, or newer than anything it
+  has. Pull again without a cursor, keeping local data until done, then push what the server
+  lacks.
+- `400 bad_request` (`details.field = "cursor"`) for a cursor the server did not make; `404` for
+  an unknown entity.
+
+### `POST /api/v1/cloud/{entity}:batch` (scope: write)
+
+The `:batch` suffix is part of the last path segment (`/cloud/plays:batch`); a percent-encoded
+colon (`/cloud/plays%3Abatch`) is the same route. Up to 1000 items and
+an 8 MiB body; more is `413 too_large`. Each item is idempotent by `id`.
+
+```json
+{"items": [
+  {"id": "6A8C0E2F-4B6D-4F8A-9C1E-3B5D7F9A1C3E",
+   "fields": {"title": "Halo", "artistName": "Beyoncé", "playedAtMs": 1794645000000,
+              "kind": "onDemand", "source": "appleMusic",
+              "recordedByDeviceID": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C"},
+   "client_modified_at": "2026-11-14T09:25:00.000Z",
+   "device_id": "6F1D9C2A-3B4E-4F5A-8B7C-1D2E3F4A5B6C"},
+  {"id": "1F3B5D7F-9A1C-4E3B-8D5F-7A9C1E3B5D7F", "base_version": 902,
+   "client_modified_at": "2026-11-14T09:29:30.000Z", "device_id": "0C7B5E3A-...",
+   "deleted_at": "2026-11-14T09:29:30.000Z",
+   "merged_into": "6A8C0E2F-4B6D-4F8A-9C1E-3B5D7F9A1C3E"}
+]}
+```
+
+- An upsert carries `fields`; a delete carries `deleted_at` (and `merged_into` for a play the
+  client merged into another) and no `fields`.
+- `base_version` is compare-and-set: the `version` the client last saw, or `0` for "must not
+  exist yet". A mismatch is `conflict`, except that an item that changes nothing is always
+  `duplicate`, so replaying a batch is safe.
+- An upsert of a tombstoned id is `rejected` `deleted` unless it carries `"undelete": true`
+  (the newest-wins lists decide by time instead).
+- `client_modified_at` and `deleted_at` more than a day ahead of the server's clock, and a play
+  whose `playedAtMs` is, are `rejected` `future`.
+
+`200`, one result per item in order:
+
+```json
+{"results": [
+  {"id": "6A8C0E2F-...", "status": "accepted", "version": 918},
+  {"id": "lastfm:1700000000:5f2b9c1d", "status": "duplicate", "version": 640},
+  {"id": "1F3B5D7F-...", "status": "conflict", "current": {"id": "1F3B5D7F-...", "version": 911,
+   "fields": {"title": "Halo"}, "device_id": "...", "client_modified_at": "..."}},
+  {"id": "8E0A2C4E-...", "status": "rejected", "reason": "deleted"}
+]}
+```
+
+- `accepted`: stored at `version`. `duplicate`: already stored, nothing changed; success.
+- `conflict`: the stored copy stands; `current` is it (a record as in a pull, or a delete), absent
+  when nothing is stored. Apply `current`, or rebase and push again with its `version`.
+- `rejected` with `reason`: `invalid`, `too_large`, `deleted`, `not_owner`, `grow_only`,
+  `future`, `identity_mismatch`, `encryption_required`, `device_mismatch` or `quota_exceeded`. Drop the item, except
+  for `quota_exceeded`, which clears when space is freed or the admin raises the quota. Reasons
+  are an open set.
+- For a keyed entity pushed with an empty `id`, `id` in the result is the key the server derived.
+- The whole batch fails only for auth, size, malformed JSON or `429 rate_limited`.
+
+Writes are applied in short transactions of at most 250 items, so other users' requests run
+between them during a large import.
+
+### Settings
+
+`GET /api/v1/cloud/settings?cursor=` (scope: library): every setting, or those changed after
+`cursor`.
+
+```json
+{
+  "settings": {
+    "playlistName": {"value": "Heard on the radio", "modified_at": "2026-11-13T09:30:00.000Z",
+                     "device_id": "0C7B5E3A-...", "version": 12},
+    "playlistID": {"value": null, "modified_at": "2026-11-14T08:30:00.000Z",
+                   "device_id": "6F1D9C2A-...", "version": 310},
+    "nearbyKey": {"value": {"$encrypted": {"v": 1, "alg": "chachapoly", "kid": "icloud-keychain-1",
+                                           "nonce": "3q2+7wABAgMEBQYH", "ct": "kJ4w0bQ2..."}},
+                  "modified_at": "2026-11-14T09:20:00.000Z", "device_id": "6F1D9C2A-...",
+                  "version": 412}
+  },
+  "cursor": "3f9a0c1d7e2b4a65.918"
+}
+```
+
+`PATCH /api/v1/cloud/settings` (scope: write), up to 1000 keys:
+
+```json
+{"settings": {
+  "playlistName": {"value": "Tracks", "modified_at": "2026-11-14T09:29:50.000Z", "device_id": "6F1D9C2A-..."},
+  "playlistID": {"value": null, "modified_at": "2026-11-14T09:29:50.000Z", "device_id": "6F1D9C2A-..."}
+}}
+```
+
+`value` must be present; `null` clears. `200 {"results": [{"key", "status", "reason"?,
+"current"?}]}`, where `current` is the value that stands after the decision. The server decides,
+the way Tracks' `SyncedSetting.decide` does, and is authoritative:
+
+- The newest `modified_at` wins per key; a tie keeps the stored value (`conflict`).
+- `forgottenSongs` and `forgottenSongDates` are lists of text that merge by union (sorted) and
+  keep the later time; `null` adds nothing.
+- A cleared value is an explicit `null` with its time and wins like any value.
+- A seed (`modified_at` `1970-01-01T00:00:00.000Z`) never replaces a stored value, real or seed.
+- Keys the server does not know, such as platform-only settings, round-trip with newest-wins.
+- Keys are up to 128 bytes, values up to 256 KiB of JSON, at most 1000 keys per user.
+
+### Encrypted values
+
+A setting may hold a value the client encrypted, which the server stores and returns untouched
+and cannot read:
+
+```json
+{"$encrypted": {"v": 1, "alg": "chachapoly", "kid": "icloud-keychain-1",
+                "nonce": "<base64>", "ct": "<base64>"}}
+```
+
+The object has the single key `$encrypted`. `alg` (required) and `kid` are the client's own
+labels; `ct` (required) and `nonce` are base64, standard or URL-safe, padded or not; other members
+must be text or numbers. `ct` is 17 bytes to 16 KiB decoded and not exactly 32 bytes, since an
+AEAD adds a tag and a 32-byte `ct` would be a raw key.
+
+`nearbyKey`, the 32-byte TLS secret a user's nearby devices share, must be such an envelope or
+`null`: anything else is `rejected` `encryption_required`. The key that encrypts it never reaches
+the server (the apps keep it in iCloud Keychain or the platform's own key store), so the server,
+its backups and its admin can never read the nearby secret.
+
+### Devices
+
+The app's own device ids and which devices each was restored from, so a restored device
+inherits what its predecessors owned (sessions here; the right to scrobble a play, which the
+clients decide: the server only stores `scrobbledAt` and `recordedByDeviceID` and never
+scrobbles).
+
+- `GET /api/v1/cloud/devices` (scope: library): `{"devices": [{"device_id", "predecessors",
+  "name"?, "platform"?, "server_device_id"?, "current", "registered_at", "updated_at"}]}`.
+  `server_device_id` is the signed-in install (section 7, Devices) that registered it, and
+  `current` marks the caller's own.
+- `PUT /api/v1/cloud/devices/{device_id}` (scope: write) `{"predecessors": [...], "name"?,
+  "platform"?}`: registers the device or adds predecessors (they only grow, at most 32; a
+  device cannot be its own). `200` with the device. At most 200 devices per user.
+  - It binds the calling device key to `device_id`. A key already bound to another id, or a
+    `device_id` bound to another live (not revoked) key, is `403 device_mismatch`; a re-signed-in
+    install keeps its key's device and so its binding.
+  - Each predecessor must be one of the caller's own devices: registered here, the
+    `client_device_id` of one of their signed-in installs (revoked ones included), or the
+    `recordedByDeviceID` of one of their own plays. An id found only in plays is refused when it
+    is another user's device or is bound to a live key other than the caller's. Anything else
+    is `400 bad_request` with `details.field = "predecessors"`. A device restored from a backup
+    therefore registers its new id with the old one as predecessor, even when the old one never
+    registered.
+
+Device `A` succeeds device `B` when `A` is `B` or `B` is among `A`'s predecessors, directly or
+through others.
+
+### Usage
+
+`GET /api/v1/cloud/usage` (scope: library):
+
+```json
+{"items": 152340, "bytes": 98312448, "quota": {"items": 2000000, "bytes": 1073741824},
+ "entities": {"plays": {"items": 151900, "bytes": 97800000}}}
+```
+
+### Limits
+
+- Fields of one item: 16 KiB of JSON, 100 keys, field names of 64 bytes, strings of 4 KiB,
+  arrays of 1000, nesting 4 deep; over is `rejected` `too_large`.
+- Per user: `cloud.quota_items` items and `cloud.quota_bytes` bytes (section 16), tombstones
+  included. Deletes are always allowed.
+- Pushes (batches and settings patches) per user: 20 a second with bursts of 40, and 10 000
+  items a second with bursts of 50 000, on top of the per-key request limit. Over that,
+  `429 rate_limited` with `Retry-After`.
+- Tombstones are pruned 90 days after they were written, except plays', which are kept forever.
+
+### Change signal
+
+After a write, the owner's event streams (section 13) get `cloud` with `{"entity": "<path
+segment>"}`, or `"devices"` for the registry: pull that entity. The event never carries data and
+goes to nobody else. After reconnecting, pull every entity: the stream does not replay `cloud`
+events.
+
+### Backups, restores and deletion
+
+Cloud data lives in the same database, so every backup holds it (section 16, Backups), as
+readable as the rest of the database apart from encrypted values. When the server starts on a
+restored backup, or on a database file put in place by hand, it takes a new sync epoch
+(`capabilities.cloud.epoch`), so every cursor from before is `410 sync_reset` instead of silently
+missing what the restore lost; the clients pull again and push what the server no longer has.
+Deleting a user deletes their cloud data with them, in short transactions before the account
+itself.

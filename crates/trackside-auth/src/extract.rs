@@ -27,6 +27,11 @@ pub struct AdminSession(pub Principal);
 #[derive(Clone, Debug)]
 pub struct SessionUser(pub Principal);
 
+/// A request on which a password or key may be sent: over HTTPS, or from a nearby client
+/// (see [`Auth::secrets_allowed`]). Otherwise `403 https_required`, before anything is checked.
+#[derive(Clone, Copy, Debug)]
+pub struct SecureTransport;
+
 /// The client's address after trusted-proxy handling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClientIp(pub IpAddr);
@@ -42,6 +47,7 @@ impl AuthError {
             }
             Self::Csrf => (StatusCode::FORBIDDEN, "csrf"),
             Self::SetupRequired => (StatusCode::FORBIDDEN, "setup_required"),
+            Self::HttpsRequired => (StatusCode::FORBIDDEN, "https_required"),
             Self::CredentialInQuery | Self::Invalid(_) => {
                 (StatusCode::BAD_REQUEST, self.bad_request_code())
             }
@@ -84,6 +90,9 @@ impl IntoResponse for AuthError {
         };
         let body = serde_json::json!({"error": {"code": code, "message": message}});
         let mut response = (status, axum::Json(body)).into_response();
+        if matches!(self, Self::HttpsRequired) {
+            clear_plain_cookie(&mut response);
+        }
         if let Self::RateLimited { retry_after } = self
             && let Ok(value) =
                 http::HeaderValue::from_str(&retry_after.as_secs().max(1).to_string())
@@ -93,6 +102,16 @@ impl IntoResponse for AuthError {
                 .insert(http::header::RETRY_AFTER, value);
         }
         response
+    }
+}
+
+/// Clears the plain session cookie, which `https_required` refuses: the browser stops sending
+/// a session over plain HTTP that the server will not accept there.
+pub fn clear_plain_cookie(response: &mut Response) {
+    if let Ok(value) = http::HeaderValue::from_str(&crate::SessionCookie::clear_cookie(false)) {
+        response
+            .headers_mut()
+            .append(http::header::SET_COOKIE, value);
     }
 }
 
@@ -194,5 +213,21 @@ where
     ) -> impl Future<Output = Result<Self, AuthError>> + Send {
         let auth = Arc::<Auth>::from_ref(state);
         std::future::ready(Ok(Self(peer_ip(&auth, parts))))
+    }
+}
+
+impl<S> FromRequestParts<S> for SecureTransport
+where
+    S: Send + Sync,
+    Arc<Auth>: FromRef<S>,
+{
+    type Rejection = AuthError;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> impl Future<Output = Result<Self, AuthError>> + Send {
+        let auth = Arc::<Auth>::from_ref(state);
+        std::future::ready(auth.require_secure_transport(parts).map(|()| Self))
     }
 }

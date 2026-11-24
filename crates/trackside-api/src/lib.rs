@@ -32,14 +32,19 @@ pub mod build {
         listen_line, me_body, pair_result_body, qr_link, spaced_code,
     };
     pub use crate::routes::acquisition::{external_play_body, search_body};
+    pub use crate::routes::addresses::urls_version;
     pub use crate::routes::admin::{
         admin_library, admin_user, audit_summary, invite_state, library_problems_for,
         overview_library, scan_detail_body,
     };
+    pub use crate::routes::cloud::{
+        cloud_info, device_body, devices_body, page_body as cloud_page_body, push_body,
+        record_body, setting_results_body, settings_body, usage_body,
+    };
     pub use crate::routes::enrichment::status_body as enrichment_status_body;
     pub use crate::routes::media::{decision_body, download_name, reason_text};
     pub use crate::routes::public::capabilities_body;
-    pub use crate::routes::settings::{LASTFM_API_KEY, stored_secret};
+    pub use crate::routes::settings::{LASTFM_API_KEY, apply_stored_auth, stored_secret};
     pub use crate::routes::social::{check_listen, listen_result};
     pub use crate::routes::stats::{
         DayBuckets, day_buckets, listening_body, requests_body, storage_body, streams_body,
@@ -144,6 +149,8 @@ impl std::error::Error for OpsError {}
 pub trait ServerOps: Send + Sync + 'static {
     /// Every backup, newest first.
     fn backups(&self) -> BoxFuture<'_, Result<Vec<wire::admin::Backup>, OpsError>>;
+    /// When the next scheduled backup runs, if one is scheduled.
+    fn next_backup(&self) -> Option<Millis>;
     /// Starts a manual backup in the background. `Busy` while one runs.
     fn start_backup(&self) -> BoxFuture<'_, Result<(), OpsError>>;
     /// The file of a backup by name, when it exists. Names never contain a separator.
@@ -160,6 +167,10 @@ pub struct NoOps;
 impl ServerOps for NoOps {
     fn backups(&self) -> BoxFuture<'_, Result<Vec<wire::admin::Backup>, OpsError>> {
         Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn next_backup(&self) -> Option<Millis> {
+        None
     }
 
     fn start_backup(&self) -> BoxFuture<'_, Result<(), OpsError>> {
@@ -259,8 +270,12 @@ pub struct LocalState {
         HashMap<(UserKey, trackside_core::CandidateToken), trackside_core::control::HlsJobId>,
     >,
     latest_seq: AtomicI64,
+    /// The version of the address list last announced over events.
+    urls_version: Mutex<Option<String>>,
     now_playing: NowPlayingRegistry,
     playback: Arc<PlaybackLoad>,
+    /// Trackside Cloud pushes per user.
+    cloud_limiter: trackside_cloud::PushLimiter,
     shutdown: CancellationToken,
 }
 
@@ -286,6 +301,11 @@ impl LocalState {
     /// Live media responses and failures, sampled into the hourly stats.
     pub fn playback(&self) -> &Arc<PlaybackLoad> {
         &self.playback
+    }
+
+    /// The per-user budget of Trackside Cloud pushes.
+    pub fn cloud_limiter(&self) -> &trackside_cloud::PushLimiter {
+        &self.cloud_limiter
     }
 
     /// The registry `POST /now-playing` reports to.
@@ -320,6 +340,10 @@ impl LocalState {
 
     pub fn shutdown(&self) -> &CancellationToken {
         &self.shutdown
+    }
+
+    pub(crate) fn urls_version(&self) -> &Mutex<Option<String>> {
+        &self.urls_version
     }
 
     /// Everyone's current now-playing report that has not expired at `now`, the most recent
@@ -377,7 +401,7 @@ impl LocalState {
 }
 
 /// Expired QR images are dropped once they are this old.
-const QR_KEEP: std::time::Duration = std::time::Duration::from_secs(8 * 86_400);
+const QR_KEEP: std::time::Duration = std::time::Duration::from_hours(8 * 24);
 
 /// What the `/api/v1` handlers need.
 #[derive(Clone)]
@@ -417,6 +441,7 @@ impl FromRef<ApiState> for Arc<Auth> {
 pub fn router(state: ApiState) -> Router {
     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
         runtime.spawn(follow_seq(state.events.clone(), Arc::clone(&state.local)));
+        runtime.spawn(routes::addresses::watch(state.clone()));
     }
     routes::router(state)
 }

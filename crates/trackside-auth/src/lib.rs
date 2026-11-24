@@ -52,11 +52,14 @@ pub use trackside_core::repo::users::UserPatch;
 
 /// How far the server clock may step back without a fresh media token being refused as
 /// minted in the future. Clients' clocks are never consulted.
-pub const CLOCK_SKEW: Duration = Duration::from_secs(5 * 60);
+pub const CLOCK_SKEW: Duration = Duration::from_mins(5);
 /// Concurrent streams per user.
 pub const STREAMS_PER_USER: usize = 8;
 /// Concurrent transcodes per user.
 pub const TRANSCODES_PER_USER: usize = 3;
+/// Concurrent event streams per user: each holds a connection and a broadcast receiver for as
+/// long as it is open, so one account cannot open them without end.
+pub const EVENT_STREAMS_PER_USER: usize = 16;
 
 /// Why authentication or an auth operation failed.
 #[derive(Debug, thiserror::Error)]
@@ -77,6 +80,11 @@ pub enum AuthError {
     MediaTokenExpired,
     #[error("setup required")]
     SetupRequired,
+    /// A password or key sent over plain HTTP from an address that is not nearby.
+    #[error(
+        "Use the server's https address. Passwords and keys aren't accepted over plain HTTP from outside your network."
+    )]
+    HttpsRequired,
     #[error("not found")]
     NotFound,
     #[error("conflict: {0}")]
@@ -227,7 +235,7 @@ pub struct SessionInfo {
 }
 
 /// How long a password check counts as recent for sensitive actions.
-pub const RECENT_AUTH: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+pub const RECENT_AUTH: std::time::Duration = std::time::Duration::from_mins(10);
 
 impl Principal {
     /// Whether a sensitive action may go ahead without a fresh password check: always for
@@ -566,6 +574,11 @@ pub struct Auth {
     secret: Arc<SecretKey>,
     media_key: Zeroizing<[u8; 32]>,
     trusted_proxies: Vec<ipnet::IpNet>,
+    /// `server.local_networks`: more networks that count as nearby, beside the private,
+    /// loopback, link-local and Tailscale ranges.
+    local_networks: Vec<ipnet::IpNet>,
+    /// `server.tailscale_is_local`: whether 100.64.0.0/10 counts as nearby.
+    tailscale_is_local: bool,
     clock: Arc<dyn Clock>,
     hasher: password::Hasher,
     ip_failures: limit::FailureLimiter<limit::IpKey>,
@@ -579,8 +592,12 @@ pub struct Auth {
     touched: Mutex<HashMap<KeyId, Millis>>,
     setup_done: AtomicBool,
     untrusted_proxy: AtomicBool,
+    /// `auth.legacy_subsonic`: starts from the configuration, and the dashboard's setting
+    /// changes it while the server runs.
+    legacy_subsonic: AtomicBool,
     setup_token_file: Mutex<Option<PathBuf>>,
     streams: limit::Slots,
+    event_streams: limit::Slots,
     transcodes: limit::Slots,
 }
 
@@ -633,13 +650,76 @@ impl Auth {
             touched: Mutex::new(HashMap::new()),
             setup_done: AtomicBool::new(false),
             untrusted_proxy: AtomicBool::new(false),
+            legacy_subsonic: AtomicBool::new(config.legacy_subsonic),
             setup_token_file: Mutex::new(None),
             streams: limit::Slots::new(STREAMS_PER_USER),
+            event_streams: limit::Slots::new(EVENT_STREAMS_PER_USER),
             transcodes: limit::Slots::new(TRANSCODES_PER_USER),
             db,
             config: config.clone(),
             trusted_proxies,
+            local_networks: Vec::new(),
+            tailscale_is_local: true,
             clock,
+        }
+    }
+
+    /// Adds `server.local_networks`: networks whose clients may send passwords and keys over
+    /// plain HTTP and get a plain session cookie, like private addresses.
+    #[must_use]
+    pub fn with_local_networks(mut self, networks: Vec<ipnet::IpNet>) -> Self {
+        self.local_networks = networks;
+        self
+    }
+
+    /// Sets `server.tailscale_is_local`. Off, Tailscale's 100.64.0.0/10 counts as the
+    /// internet, as it is where an ISP uses it for carrier-grade NAT.
+    #[must_use]
+    pub fn with_tailscale_is_local(mut self, on: bool) -> Self {
+        self.tailscale_is_local = on;
+        self
+    }
+
+    /// Private, loopback, link-local, unique-local, Tailscale (unless turned off), or in
+    /// `server.local_networks`.
+    pub(crate) fn is_nearby(&self, ip: IpAddr) -> bool {
+        is_local_address(ip)
+            || (self.tailscale_is_local && proof::is_tailscale_address(ip))
+            || proxy::is_trusted(&self.local_networks, ip)
+    }
+
+    /// Whether a password or key may be accepted on this request: over HTTPS (directly, or
+    /// through a trusted proxy that says so), or over plain HTTP from a nearby client. A
+    /// request without a peer address (a router driven in-process) counts as nearby.
+    pub fn secrets_allowed(&self, parts: &Parts) -> bool {
+        if parts.extensions.get::<Https>().is_some() {
+            return true;
+        }
+        let Some(peer) = parts
+            .extensions
+            .get::<axum::extract::ConnectInfo<SocketAddr>>()
+            .map(|info| info.0)
+        else {
+            return true;
+        };
+        let headers = &parts.headers;
+        if proxy::is_trusted(&self.trusted_proxies, peer.ip()) {
+            return proxy::forwarded_https(headers)
+                || self.is_nearby(proxy::client_ip(&self.trusted_proxies, headers, peer));
+        }
+        // A peer that is not in `server.trusted_proxies` is judged by its own address only:
+        // its forwarding headers could name anyone. A nearby proxy that forwards (and so may
+        // forward clients from the internet over plain HTTP) is refused until the admin adds
+        // it to `server.trusted_proxies`; the warning in [`Auth::client_ip`] says so.
+        self.is_nearby(peer.ip()) && !proxy::has_forwarding(headers)
+    }
+
+    /// [`Auth::secrets_allowed`] as an error: [`AuthError::HttpsRequired`].
+    pub fn require_secure_transport(&self, parts: &Parts) -> Result<(), AuthError> {
+        if self.secrets_allowed(parts) {
+            Ok(())
+        } else {
+            Err(AuthError::HttpsRequired)
         }
     }
 
@@ -655,10 +735,23 @@ impl Auth {
         {
             tracing::warn!(
                 peer = %peer.ip(),
-                "requests arrive through a proxy that is not in server.trusted_proxies: every client shares its address for rate limits, and none counts as local"
+                "requests arrive through a proxy that is not in server.trusted_proxies: every client shares its address for rate limits, none counts as local, and passwords and keys over plain HTTP through it are refused (https_required); add the proxy to server.trusted_proxies"
             );
         }
         proxy::client_ip(&self.trusted_proxies, &parts.headers, peer)
+    }
+
+    /// Whether `u`+`t`+`s` and `u`+`p` are accepted at all, and app passwords can be made.
+    pub fn legacy_subsonic(&self) -> bool {
+        self.legacy_subsonic
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Turns legacy Subsonic auth on or off server-wide. It applies to the next request, so
+    /// turning it off stops every app password at once.
+    pub fn set_legacy_subsonic(&self, on: bool) {
+        self.legacy_subsonic
+            .store(on, std::sync::atomic::Ordering::Release);
     }
 
     /// Whether requests have come through a proxy that is not trusted, for the dashboard.
@@ -669,11 +762,17 @@ impl Auth {
 
     /// Whether a client may get the plain HTTP session cookie: a private or loopback address
     /// that reached the server directly, or through a trusted proxy that named it. A request
-    /// forwarded by a proxy that is not trusted never counts, since every client behind it
-    /// would.
-    pub fn is_local_client(&self, headers: &http::HeaderMap, client: IpAddr) -> bool {
-        is_local_address(client)
-            && (!proxy::has_forwarding(headers) || !self.trusted_proxies.is_empty())
+    /// forwarded by a peer that is not trusted never counts, since every client behind it
+    /// (a tunnel on the same host, say) would, even when other proxies are trusted.
+    pub fn is_local_client(
+        &self,
+        headers: &http::HeaderMap,
+        peer: Option<IpAddr>,
+        client: IpAddr,
+    ) -> bool {
+        (is_local_address(client) || proxy::is_trusted(&self.local_networks, client))
+            && (!proxy::has_forwarding(headers)
+                || peer.is_some_and(|p| proxy::is_trusted(&self.trusted_proxies, p)))
     }
 
     /// A forwarding header such as `X-Forwarded-Proto` or `X-Forwarded-Host`, only when the
@@ -745,6 +844,16 @@ impl Auth {
         self.streams
             .try_take(principal.access.user)
             .ok_or(AuthError::rate_limited(Duration::from_secs(1)))
+    }
+
+    /// Takes one of the user's 16 event-stream slots; the slot frees when the stream ends.
+    pub fn event_stream_slot(
+        &self,
+        principal: &Principal,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit, AuthError> {
+        self.event_streams
+            .try_take(principal.access.user)
+            .ok_or(AuthError::rate_limited(Duration::from_secs(5)))
     }
 
     /// Takes one of the user's 3 transcode slots.

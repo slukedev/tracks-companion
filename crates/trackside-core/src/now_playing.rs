@@ -10,7 +10,7 @@ use crate::ids::{DeviceKey, SongId, UserKey};
 use crate::time::Millis;
 
 /// How long an entry outlives the song's expected end.
-pub const GRACE: Duration = Duration::from_secs(30 * 60);
+pub const GRACE: Duration = Duration::from_mins(30);
 
 /// Whether the player is going.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

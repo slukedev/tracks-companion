@@ -2,7 +2,7 @@
 // endpoint (older versions answer 404) or nothing to show, so pages simply leave them out.
 
 import { call } from '../api.js';
-import { h, bytes } from '../ui.js';
+import { h, bytes, nextId, segmented } from '../ui.js';
 import { chart, fmt } from '../charts.js';
 
 const SLOTS = ['--series-1', '--series-2', '--series-3', '--series-4'];
@@ -31,9 +31,38 @@ const gapText = (labels, series, long) => {
   return `. No data for ${gaps.slice(0, 3).map(long).join(', ')}${gaps.length > 3 ? ` and ${gaps.length - 3} more` : ''}`;
 };
 
-/** Plays per day for the last 30 days, stacked by person; four people at most, the rest as Other. */
-export async function listeningChart() {
-  const data = await fetchStats('GET /admin/stats/listening', { days: 30 });
+/**
+ * Wraps a chart builder with a range control in the chart's head. Changing the range fetches
+ * and swaps the chart in place; a range with nothing to show keeps the current one.
+ */
+async function ranged(build, options, initial, label) {
+  const name = nextId('range');
+  let holder = null;
+  const controls = (value) => {
+    const seg = segmented(name, options.map(([v, text]) => [String(v), text]), String(value), async (v) => {
+      holder.classList.add('refreshing');
+      const next = await build(Number(v), controls(Number(v))).catch(() => null);
+      if (!next || !holder.isConnected) { holder.classList.remove('refreshing'); return; }
+      holder.replaceWith(next);
+      holder = next;
+      next.querySelector('.chart-range input:checked')?.focus({ preventScroll: true });
+    }, label);
+    seg.classList.add('compact', 'chart-range');
+    return seg;
+  };
+  holder = await build(initial, controls(initial));
+  return holder;
+}
+
+const DAYS = [[7, '7 days'], [30, '30 days'], [90, '90 days']];
+
+/** Plays per day, stacked by person; four people at most, the rest as Other. */
+export function listeningChart() {
+  return ranged(listening, DAYS, 30, 'Listening range');
+}
+
+async function listening(days, controls) {
+  const data = await fetchStats('GET /admin/stats/listening', { days });
   if (!data?.days?.length) return null;
   const ranked = [...data.users].map((u) => ({ ...u, total: u.plays.reduce((a, v) => a + (v ?? 0), 0) }))
     .filter((u) => u.total > 0).sort((a, b) => b.total - a.total);
@@ -42,7 +71,7 @@ export async function listeningChart() {
   const rest = ranked.slice(top.length);
   const series = top.map((u, i) => ({ key: u.id, name: u.display_name || u.username, color: SLOTS[i], values: u.plays }));
   if (rest.length) {
-    series.push({ key: 'other', name: `${rest.length} others`, color: '--series-other', values: data.days.map((_, i) => {
+    series.push({ key: 'other', name: rest.length === 1 ? (rest[0].display_name || rest[0].username) : `${rest.length} others`, color: '--series-other', values: data.days.map((_, i) => {
       const vals = rest.map((u) => u.plays[i]);
       return vals.every((v) => v === null) ? null : vals.reduce((a, v) => a + (v ?? 0), 0);
     }) });
@@ -50,82 +79,103 @@ export async function listeningChart() {
   const total = ranked.reduce((a, u) => a + u.total, 0);
   const long = (d) => dayLong.format(asDay(d));
   return chart({
-    kind: 'bars', labels: data.days, series, toggle: series.length > 1,
+    kind: 'bars', labels: data.days, series, toggle: series.length > 1, controls, name: 'plays per day',
     tick: dayTick, long, format: fmt.count, columnLabel: 'Day',
-    ariaLabel: `Plays per day for the last 30 days, ${fmt.count(total)} in total${gapText(data.days, series, long)}`,
-    figure: h('div.chart-figure', fmt.count(total), h('small', 'plays')),
+    ariaLabel: `Plays per day for the last ${days} days, ${fmt.count(total)} in total${gapText(data.days, series, long)}`,
+    figure: h('div.chart-figure', fmt.count(total), h('small', `plays in ${days} days`)),
   });
 }
 
-/** Streams and conversions per hour for the last 24 hours, with the conversion limit, and failures. */
-export async function streamsChart() {
-  const data = await fetchStats('GET /admin/stats/streams', { hours: 24 });
+/** Streams and conversions per hour, with the conversion limit, and failures. */
+export function streamsChart() {
+  return ranged(streams, [[6, '6 h'], [24, '24 h'], [48, '48 h']], 24, 'Playback range');
+}
+
+async function streams(hours, controls) {
+  const data = await fetchStats('GET /admin/stats/streams', { hours });
   if (!data?.hours?.length) return null;
   const series = [
     { key: 'streams', name: 'Playing', color: '--series-1', values: data.streams },
-    { key: 'transcodes', name: 'Converting', color: '--series-2', values: data.transcodes },
+    { key: 'transcodes', name: 'Converting', color: '--series-4', values: data.transcodes },
   ];
   const failedTotal = (data.failed || []).reduce((a, v) => a + (v ?? 0), 0);
-  if (failedTotal) series.push({ key: 'failed', name: 'Failed', color: '--status-bad', values: data.failed });
+  if (failedTotal) series.push({ key: 'failed', name: 'Failed to start', color: '--status-bad', values: data.failed });
   const peak = Math.max(0, ...data.streams.map((v) => v ?? 0));
   const long = (iso) => hourLong.format(new Date(iso));
   const worst = failedTotal ? data.hours[data.failed.indexOf(Math.max(...data.failed.map((v) => v ?? 0)))] : null;
+  const every = hours <= 6 ? 1 : hours <= 24 ? 6 : 12;
   return chart({
-    kind: 'lines', labels: data.hours, series,
-    tick: (label, i, n, narrow) => (i % (narrow ? 8 : 6) === 0 || i === n - 1 ? hourFmt.format(new Date(label)) : ''),
+    kind: 'lines', labels: data.hours, series, controls, name: 'playback',
+    tick: (label, i, n, narrow) => (i % (narrow ? every * 2 : every) === 0 || i === n - 1 ? hourFmt.format(new Date(label)) : ''),
     long, format: fmt.count, columnLabel: 'Hour',
-    limit: data.transcode_limit ? { value: data.transcode_limit, label: 'Limit' } : null,
+    limit: data.transcode_limit ? { value: data.transcode_limit, label: 'Conversion limit' } : null,
     axisFormat: (t) => (Number.isInteger(t) ? String(t) : ''), minMax: 4,
-    ariaLabel: `Playback over the last 24 hours, at most ${peak} at once${failedTotal ? `, ${failedTotal} failed to start, most around ${hourFmt.format(new Date(worst))}` : ''}${gapText(data.hours, series, long)}`,
-    figure: h('div.chart-figure', String(peak), h('small', 'peak')),
+    ariaLabel: `Playback over the last ${hours} hours, at most ${peak} at once${failedTotal ? `, ${failedTotal} failed to start, most around ${hourFmt.format(new Date(worst))}` : ''}${gapText(data.hours, series, long)}`,
+    figure: h('div.chart-figure', String(peak), h('small', failedTotal ? `at once at most, ${fmt.count(failedTotal)} failed` : 'at once at most')),
   });
 }
 
 /**
- * Free space on the data volume over 90 days. A projection is drawn only when the last 30 days
- * fall in a steady straight line (r² ≥ 0.8) and would reach zero within three years.
+ * Free space on the data volume. A projection is drawn only when the last 30 days fall in a
+ * steady straight line (r² ≥ 0.8) and would reach zero within three years. The headline figure
+ * is the overview's own free space, so the page shows one number for it.
  */
-export async function storageChart() {
-  const data = await fetchStats('GET /admin/stats/storage', { days: 90 });
+export function storageChart({ free, volume } = {}) {
+  return ranged((days, controls) => storage(days, controls, free, volume), [[30, '30 days'], [90, '90 days'], [365, '1 year']], 90, 'Storage range');
+}
+
+async function storage(days, controls, freeNow, volumeNow) {
+  const data = await fetchStats('GET /admin/stats/storage', { days });
   if (!data?.days?.length) return null;
   const free = data.data_free_bytes;
   const series = [{ key: 'free', name: 'Free space', color: '--series-1', values: free }];
   const fit = trend(free.slice(-30));
   let project = null;
-  let projection = '';
-  const last = free[free.length - 1];
+  let note = '';
+  const last = freeNow ?? free[free.length - 1];
+  const volume = volumeNow ?? data.volume_bytes;
   if (fit && fit.slope < 0 && fit.r2 >= 0.8 && last !== null) {
     const daysLeft = last / -fit.slope;
     if (daysLeft < 365 * 3) {
-      project = { values: Array.from({ length: 30 }, (_, j) => last + fit.slope * (j + 1)) };
+      project = { values: Array.from({ length: Math.min(30, Math.round(days / 3)) }, (_, j) => last + fit.slope * (j + 1)) };
       const when = new Date(asDay(data.days[data.days.length - 1]).getTime() + daysLeft * 86400000);
-      projection = `. Shrinking by about ${bytes(-fit.slope * 30)} a month; at this rate full around ${new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(when)}. The dashed line is the projection`;
+      const months = Math.round(daysLeft / 30.4);
+      note = `Shrinking by about ${bytes(-fit.slope * 30)} a month. At this rate it fills up around ${new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(when)}, about ${months} ${months === 1 ? 'month' : 'months'} from now.`;
     }
   }
   const long = (d) => dayLong.format(asDay(d));
-  return chart({
-    kind: 'lines', labels: data.days, series, project,
+  const node = chart({
+    kind: 'lines', labels: data.days, series, project, controls, name: 'free space',
     tick: dayTick, long, format: bytes, axisFormat: (t) => (t === 0 ? '0' : bytes(t)), columnLabel: 'Day',
-    ariaLabel: `Free space over 90 days, ${bytes(last)} now${projection}${gapText(data.days, series, long)}`,
-    figure: h('div.chart-figure', bytes(last), h('small', 'free')), height: 120,
+    ariaLabel: `Free space over ${days} days, ${bytes(last)} now${note ? `. ${note} The dashed line is the projection` : ''}${gapText(data.days, series, long)}`,
+    figure: h('div.chart-figure', bytes(last), h('small', volume ? `free of ${bytes(volume)}` : 'free')), height: 120,
   });
+  if (note) node.insertBefore(h('p.chart-note', note), node.querySelector('details'));
+  return node;
 }
 
 /** Requests per day by outcome, for the Requests page. */
-export async function requestsChart() {
-  const data = await fetchStats('GET /admin/stats/requests', { days: 30 });
+export function requestsChart() {
+  return ranged(requests, DAYS, 30, 'Requests range');
+}
+
+async function requests(days, controls) {
+  const data = await fetchStats('GET /admin/stats/requests', { days });
   if (!data?.days?.length) return null;
-  const added = data.added.reduce((a, v) => a + (v ?? 0), 0);
-  const failed = data.failed.reduce((a, v) => a + (v ?? 0), 0);
-  if (!added && !failed) return null;
+  const sum = (vals) => (vals || []).reduce((a, v) => a + (v ?? 0), 0);
+  const added = sum(data.added);
+  const failed = sum(data.failed);
+  const cancelled = sum(data.cancelled);
+  if (!added && !failed && !cancelled) return null;
   const series = [
-    { key: 'added', name: 'Added', color: '--status-good', values: data.added },
+    { key: 'added', name: 'Added', color: '--series-1', values: data.added },
+    { key: 'cancelled', name: 'Cancelled', color: '--series-4', values: data.cancelled || data.days.map(() => 0) },
     { key: 'failed', name: 'Failed', color: '--status-bad', values: data.failed },
   ];
   const long = (d) => dayLong.format(asDay(d));
   return chart({
-    kind: 'bars', labels: data.days, series, tick: dayTick, long, format: fmt.count, columnLabel: 'Day',
-    ariaLabel: `Requests over 30 days: ${added} added, ${failed} failed${gapText(data.days, series, long)}`,
+    kind: 'bars', labels: data.days, series, tick: dayTick, long, format: fmt.count, columnLabel: 'Day', controls, name: 'requests per day',
+    ariaLabel: `Requests over ${days} days: ${added} added, ${failed} failed, ${cancelled} cancelled${gapText(data.days, series, long)}`,
     figure: h('div.chart-figure', fmt.count(added), h('small', `added, ${fmt.count(failed)} failed`)),
   });
 }

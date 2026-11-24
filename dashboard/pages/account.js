@@ -1,7 +1,7 @@
 import { call, describe, href, serverUrl, now } from '../api.js';
 import {
-  h, pageHead, section, list, row, badge, button, busy, field, input, checkbox, empty, ago, agoInline, nextId,
-  confirm, toast, failed, secret, formError, setFieldError, platformName, segmented,
+  h, pageHead, section, list, row, badge, button, busy, field, input, checkbox, empty, agoInline, nextId,
+  confirm, toast, failed, secret, formError, setFieldError, platformName, platformIcon, segmented, openDialog, meter,
 } from '../ui.js';
 
 const SCOPES = [
@@ -13,8 +13,9 @@ const SCOPES = [
 
 export async function render(ctx) {
   const [{ devices }, { keys }] = await Promise.all([call('GET /me/devices'), call('GET /me/api-keys')]);
+  const name = ctx.user.display_name || ctx.user.username;
   const page = h('div.page.narrow',
-    pageHead('My Account'),
+    pageHead('My account', { lede: `Signed in as ${ctx.user.username}${name !== ctx.user.username ? ` (${name})` : ''}` }),
     pairSection(ctx, devices),
     devicesSection(ctx, devices),
     keysSection(ctx, keys),
@@ -30,8 +31,9 @@ function pairSection(ctx, devices) {
   const body = h('div.panel');
   const known = new Set(devices.map((d) => d.id));
   let timer = 0;
+  let poll = 0;
   let offer = null;
-  const stop = () => { clearInterval(timer); timer = 0; };
+  const stop = () => { clearTimeout(timer); clearInterval(poll); timer = 0; poll = 0; };
   ctx.onLeave(() => {
     stop();
     if (offer) call('DELETE /me/pairing-codes/{id}', { values: { id: offer.id } }).catch(() => {});
@@ -40,7 +42,7 @@ function pairSection(ctx, devices) {
   const idle = () => {
     stop();
     offer = null;
-    const start = button('Show Code', { kind: 'primary', iconName: 'qr' });
+    const start = button('Show pairing code', { kind: 'primary', iconName: 'qr' });
     start.id = 'pair-start';
     start.addEventListener('click', () => busy(start, async () => {
       try {
@@ -49,8 +51,9 @@ function pairSection(ctx, devices) {
       } catch (err) { failed(err); }
     }));
     body.replaceChildren(
-      h('div.btn-row', start),
-      approveForm('POST /pair/requests/approve'));
+      h('div.form.tight', h('p', 'Show a code here, then scan it or type it in Tracks on the device you want to add.'), h('div.btn-row', start)),
+      h('hr.rule'),
+      approveForm('POST /pair/requests/approve', 'Or type the 6-digit code Tracks shows'));
   };
 
   const showOffer = () => {
@@ -62,52 +65,60 @@ function pairSection(ctx, devices) {
       idle();
       if (id) call('DELETE /me/pairing-codes/{id}', { values: { id } }).catch(() => {});
     });
+    const total = Math.max(1, Date.parse(offer.expires_at) - now());
+    const started = performance.now();
+    const left = () => Math.max(0, total - (performance.now() - started));
+    const bar = meter(1, 1, 'Time left on this code');
+    // The bar drains on the compositor at the display's own rate; the text only changes once a second.
+    bar.firstChild.animate([{ transform: `scaleX(${left() / total})` }, { transform: 'scaleX(0)' }], { duration: left(), easing: 'linear', fill: 'forwards' });
+    // On the device that is being added, the QR is no use: the link opens Tracks directly.
+    const openHere = window.matchMedia('(pointer: coarse)').matches && offer.qr_payload
+      ? h('a.btn.primary', { href: offer.qr_payload }, 'Open in Tracks on this device') : null;
     body.replaceChildren(h('div.pairing.reveal',
       h('div.qr', h('img', { src: serverUrl(offer.qr_svg_url), alt: `Pairing QR code. The typed code is ${offer.code}.`, width: '176', height: '176' })),
       h('div.form',
-        h('p', 'Scan in Tracks, or type the code.'),
+        h('p', 'Scan this with the camera in Tracks, or type the code.'),
         h('div', h('div.code-big', { 'aria-label': `Code ${offer.code.split('').join(' ')}` }, offer.code)),
-        h('p.small.muted', 'Expires in ', countdown),
+        h('div.countdown', h('p.small.muted', 'Works for another ', countdown), bar),
         status,
-        h('div.btn-row', cancel))));
-    let ticks = 0;
-    const started = performance.now();
-    const base = now();
+        h('div.btn-row', openHere, cancel))));
     const tick = async () => {
       if (!offer) return;
-      const left = Math.max(0, Math.round((Date.parse(offer.expires_at) - base - (performance.now() - started)) / 1000));
-      countdown.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
-      if (left === 0) {
+      const ms = left();
+      const secs = Math.ceil(ms / 1000);
+      countdown.textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+      if (ms <= 0) {
         stop();
-        status.textContent = 'Expired.';
-        cancel.lastChild.textContent = 'Start Again';
+        status.textContent = 'This code has expired.';
+        countdown.parentElement.hidden = true;
+        cancel.replaceChildren('Show a new code');
         return;
       }
-      ticks += 1;
-      if (ticks % 3 === 0) {
-        const { devices: latest } = await call('GET /me/devices').catch(() => ({ devices: [] }));
-        const added = latest.find((d) => !known.has(d.id));
-        if (added) {
-          stop();
-          offer = null;
-          toast(`${added.name} added`);
-          ctx.rerender();
-        }
-      }
+      timer = setTimeout(tick, (ms % 1000) || 1000);
     };
     tick();
-    timer = setInterval(tick, 1000);
+    poll = setInterval(async () => {
+      if (!offer) return;
+      const { devices: latest } = await call('GET /me/devices').catch(() => ({ devices: [] }));
+      const added = latest.find((d) => !known.has(d.id));
+      if (added && offer) {
+        stop();
+        offer = null;
+        toast(`${added.name} is connected`);
+        ctx.rerender();
+      }
+    }, 3000);
   };
 
   idle();
-  return section('Pair a Device', body, { id: 'pair' });
+  return section('Connect a device', body, { id: 'pair' });
 }
 
 /** The other direction: the app shows a 6-digit code and someone signed in approves it. */
-export function approveForm(route, labelText = 'Code from the app') {
+export function approveForm(route, labelText = 'Code from the app', hint) {
   const code = input({ id: nextId('code'), inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '7', placeholder: '000 000', mono: true });
   code.classList.add('short');
-  const submit = button('Approve', { type: 'submit' });
+  const submit = button('Connect', { type: 'submit' });
   const error = formError();
   return h('form.form', {
     on: {
@@ -116,14 +127,14 @@ export function approveForm(route, labelText = 'Code from the app') {
         error.hide();
         setFieldError(code, '');
         const digits = code.value.replace(/\D/g, '');
-        if (digits.length !== 6) { setFieldError(code, 'Enter 6 digits.'); code.focus(); return; }
+        if (digits.length !== 6) { setFieldError(code, 'The code has 6 digits.'); code.focus(); return; }
         await busy(submit, async () => {
           try {
             const res = await call(route, { body: { code: digits } });
             code.value = '';
-            toast(`${res?.device?.name || 'The device'} added`);
+            toast(`${res?.device?.name || 'The device'} is connected`);
           } catch (err) {
-            if (err.code === 'not_found' || err.code === 'unauthenticated') setFieldError(code, 'Wrong or expired code.');
+            if (err.code === 'not_found' || err.code === 'unauthenticated') setFieldError(code, 'That code is wrong or has expired. Check Tracks for the current one.');
             else error.show(describe(err));
           }
         });
@@ -133,6 +144,7 @@ export function approveForm(route, labelText = 'Code from the app') {
   h('div.field',
     h('label', { for: code.id }, labelText),
     h('div.btn-row', code, submit),
+    hint ? h('p.hint', hint) : null,
     h('p.error', { id: `${code.id}-error`, hidden: true })),
   error.el);
 }
@@ -140,13 +152,13 @@ export function approveForm(route, labelText = 'Code from the app') {
 /* ---------- Devices ---------- */
 
 function devicesSection(ctx, devices) {
-  if (!devices.length) return section('Devices', list(empty('No devices')));
+  if (!devices.length) return section('Your devices', list(empty('No devices yet', 'Connect one above.')));
   const sorted = [...devices].sort((a, b) => Date.parse(b.last_seen_at || 0) - Date.parse(a.last_seen_at || 0));
-  return section('Devices', list(sorted.map((d) => {
+  return section('Your devices', list(sorted.map((d) => {
     const remove = button('Remove', { kind: 'danger' });
     remove.setAttribute('aria-label', `Remove ${d.name}`);
     remove.addEventListener('click', async () => {
-      if (!await confirm({ title: `Remove ${d.name}?`, text: 'It is signed out now.', action: 'Remove' })) return;
+      if (!await confirm({ title: `Remove ${d.name}?`, text: 'It is signed out straight away. You can connect it again later.', action: 'Remove' })) return;
       await busy(remove, async () => {
         try {
           await call('DELETE /me/devices/{id}', { values: { id: d.id } });
@@ -155,13 +167,13 @@ function devicesSection(ctx, devices) {
         } catch (err) { failed(err); }
       });
     });
-    const rename = button('Rename', {});
+    const rename = button('Rename', { kind: 'quiet' });
     rename.setAttribute('aria-label', `Rename ${d.name}`);
     rename.addEventListener('click', () => renameDevice(ctx, d));
     return row({
-      icon: 'devices', tint: 'indigo',
+      icon: platformIcon(d.platform), tint: 'muted',
       title: [d.name, d.current ? badge('This device') : null],
-      sub: `${platformName(d.platform)}, ${agoInline(d.last_seen_at)}`,
+      sub: `${platformName(d.platform)}, used ${agoInline(d.last_seen_at)}`,
       trail: [rename, remove],
       wrapTrail: true,
     });
@@ -169,23 +181,21 @@ function devicesSection(ctx, devices) {
 }
 
 function renameDevice(ctx, device) {
-  const name = input({ value: device.name, maxlength: '64', 'aria-label': 'Device name' });
-  const dialog = h('dialog', { 'aria-label': 'Rename device' },
+  const name = input({ value: device.name, maxlength: '64' });
+  const titleId = nextId('d');
+  const dialog = h('dialog', { 'aria-labelledby': titleId },
     h('form', { method: 'dialog' },
-      h('div.dialog-body', h('h2', 'Rename device'), field('Name', name)),
+      h('div.dialog-body', h('h2', { id: titleId }, `Rename ${device.name}`), field('Name', name)),
       h('div.dialog-actions', h('button.btn', { value: 'cancel', formnovalidate: true }, 'Cancel'), h('button.btn.primary', { value: 'ok' }, 'Save'))));
-  document.body.append(dialog);
-  dialog.addEventListener('close', async () => {
+  openDialog(dialog, async (result) => {
     const value = name.value.trim();
-    dialog.remove();
-    if (dialog.returnValue !== 'ok' || !value || value === device.name) return;
+    if (result !== 'ok' || !value || value === device.name) return;
     try {
       await call('PATCH /me/devices/{id}', { values: { id: device.id }, body: { name: value } });
       toast('Renamed');
       ctx.rerender();
     } catch (err) { failed(err); }
   });
-  dialog.showModal();
   name.select();
 }
 
@@ -194,7 +204,7 @@ function renameDevice(ctx, device) {
 function keysSection(ctx, keys) {
   const canAppPassword = Boolean(ctx.user.permissions?.legacy_subsonic);
   const slot = h('div');
-  const add = button('New Key', { iconName: 'plus' });
+  const add = button('New key', { iconName: 'plus' });
   add.addEventListener('click', () => {
     add.hidden = true;
     slot.replaceChildren(newKeyForm(ctx, canAppPassword, () => { add.hidden = false; slot.replaceChildren(); add.focus(); }));
@@ -205,41 +215,40 @@ function keysSection(ctx, keys) {
     const revoke = button('Revoke', { kind: 'danger' });
     revoke.setAttribute('aria-label', `Revoke ${k.name}`);
     revoke.addEventListener('click', async () => {
-      if (!await confirm({ title: `Revoke ${k.name}?`, text: 'Apps using it are signed out now.', action: 'Revoke' })) return;
+      if (!await confirm({ title: `Revoke ${k.name}?`, text: 'Any app using it is signed out straight away.', action: 'Revoke' })) return;
       await busy(revoke, async () => {
         try {
           await call('DELETE /me/api-keys/{id}', { values: { id: k.id } });
-          toast('Revoked');
+          toast(`${k.name} revoked`);
           ctx.rerender();
         } catch (err) { failed(err); }
       });
     });
     return row({
-      icon: 'key', tint: 'indigo',
-      title: [k.name, badge(k.kind === 'app_password' ? 'App password' : 'Key')],
+      icon: 'key', tint: 'muted',
+      title: [k.name, badge(k.kind === 'app_password' ? 'App password' : 'API key')],
       sub: k.last_used_at ? `Used ${agoInline(k.last_used_at)}` : 'Never used',
       trail: revoke,
     });
   });
 
-  return section('App Keys', h('div.form',
-    list(rows.length ? rows : [empty('No keys')], { iconInset: true }),
-    slot,
-    h('div.btn-row', add)));
+  return section('App keys', h('div.form',
+    list(rows.length ? rows : [empty('No app keys', canAppPassword ? 'For other music apps and scripts. Tracks does not need one.' : 'For scripts and other tools. Tracks does not need one.')], { iconInset: true }),
+    slot), { aside: add });
 }
 
 function newKeyForm(ctx, canAppPassword, close) {
   let kind = 'api_key';
-  const name = input({ maxlength: '64', placeholder: 'Symfonium…', required: true });
+  const name = input({ maxlength: '64', placeholder: 'For example, Symfonium', required: true });
   const boxes = SCOPES.map(([value, label]) => checkbox(label, value !== 'download', { value }));
   const error = formError();
-  const submit = button('Create', { kind: 'primary', type: 'submit' });
+  const submit = button('Create key', { kind: 'primary', type: 'submit' });
   const kindHint = h('p.hint', { hidden: true });
   const syncHint = () => {
     kindHint.hidden = kind !== 'app_password';
     kindHint.textContent = kind === 'app_password'
       ? 'For apps that ask for a password.'
-      : '';
+      : 'For scripts and apps that take an API key.';
   };
   syncHint();
   const form = h('form.panel.form.reveal', {
@@ -248,9 +257,9 @@ function newKeyForm(ctx, canAppPassword, close) {
         event.preventDefault();
         error.hide();
         setFieldError(name, '');
-        if (!name.value.trim()) { setFieldError(name, 'Add a name.'); name.focus(); return; }
+        if (!name.value.trim()) { setFieldError(name, 'Name it after the app that will use it.'); name.focus(); return; }
         const scopes = boxes.map((b) => b.querySelector('input')).filter((i) => i.checked).map((i) => i.value);
-        if (!scopes.length) { error.show('Choose at least one.'); return; }
+        if (!scopes.length) { error.show('Choose at least one thing the key can do.'); return; }
         await busy(submit, async () => {
           try {
             const created = await call('POST /me/api-keys', { body: { kind, name: name.value.trim(), scopes } });
@@ -258,19 +267,19 @@ function newKeyForm(ctx, canAppPassword, close) {
               h('h2', `${created.name} is ready`),
               created.kind === 'app_password'
                 ? h('div.form', field('Username', h('input.input', { readonly: true, value: created.username || ctx.user.username })), secret(created.secret, 'App password'))
-                : h('div.form', secret(created.secret, 'Key')),
-              h('p.secret-note', 'Shown once.'),
+                : h('div.form', secret(created.secret, 'API key')),
+              h('p.secret-note', 'Copy it now. It is not shown again.'),
               h('div.btn-row.end', button('Done', { kind: 'primary', onClick: () => ctx.rerender() }))));
           } catch (err) { error.show(describe(err)); }
         });
       },
     },
   },
-  canAppPassword ? h('div.field', h('span.label', 'Kind'),
-    segmented('key-kind', [['api_key', 'Key'], ['app_password', 'App password']], kind, (v) => { kind = v; syncHint(); }, 'Kind'),
+  canAppPassword ? h('div.field', h('span.label', 'Type'),
+    segmented('key-kind', [['api_key', 'API key'], ['app_password', 'App password']], kind, (v) => { kind = v; syncHint(); }, 'Type'),
     kindHint) : null,
   field('Name', name),
-  h('fieldset.field.plain-fieldset', h('legend.label', 'Allow'), h('div.list.check-list', boxes)),
+  h('fieldset.field.plain-fieldset', h('legend.label', 'It can'), h('div.list.check-list', boxes)),
   error.el,
   h('div.btn-row.end', button('Cancel', { onClick: close }), submit));
   return form;
@@ -298,9 +307,9 @@ function profileSection(ctx) {
 
   const current = input({ type: 'password', autocomplete: 'current-password' });
   const next = input({ type: 'password', autocomplete: 'new-password' });
-  const signOut = checkbox('Sign out my devices', false);
+  const signOut = checkbox('Also sign out my devices', false);
   const error = formError();
-  const savePw = button('Change Password', { type: 'submit' });
+  const savePw = button('Change password', { type: 'submit' });
   const pwForm = h('form.form', {
     novalidate: true,
     on: {
@@ -315,7 +324,7 @@ function profileSection(ctx) {
             next.value = '';
             toast('Password changed');
           } catch (err) {
-            error.show(err.code === 'unauthenticated' || err.code === 'forbidden' ? 'Wrong current password.' : describe(err));
+            error.show(err.code === 'unauthenticated' || err.code === 'forbidden' ? 'Your current password is wrong.' : describe(err));
           }
         });
       },
@@ -328,10 +337,11 @@ function profileSection(ctx) {
 }
 
 function dataSection() {
-  return section('Your Data', h('div.list',
+  return section('Your data', h('div.list',
     row({
-      icon: 'download', tint: 'accent',
+      icon: 'download', tint: 'muted',
       title: 'Listening history',
+      sub: 'Every play, in a format ListenBrainz can import',
       trail: h('a.btn', { href: href('GET /me/listens/export'), download: 'listens.jsonl' }, 'Download'),
     })), {});
 }

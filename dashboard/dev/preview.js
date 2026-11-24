@@ -1,5 +1,5 @@
 // Answers api.js calls from dev/fixtures when the page is opened with ?preview.
-// Variants: ?preview=member, noacq, nostats, fresh, setup, signedout, slow, error, reauth.
+// Variants: ?preview=member, noacq, nostats, fresh, setup, signedout, ratelimit, slow, error, reauth.
 
 import { ApiError } from '../api.js';
 
@@ -50,8 +50,8 @@ const reads = {
   'GET /admin/stats/streams': () => 'admin-stats-streams',
   'GET /admin/stats/storage': () => 'admin-stats-storage',
   'GET /admin/stats/requests': () => 'admin-stats-requests',
-  'GET /me/devices': () => 'me-devices',
-  'GET /me/api-keys': () => 'me-api-keys',
+  'GET /me/devices': (v) => (v === 'member' ? 'me-devices-member' : 'me-devices'),
+  'GET /me/api-keys': (v) => (v === 'member' ? 'me-api-keys-member' : 'me-api-keys'),
   'GET /invites/{token}': () => 'invite-info',
   'GET /password-resets/{token}': () => null,
 };
@@ -74,6 +74,11 @@ const writes = {
   'POST /admin/acquire/providers/{name}/test': () => 'admin-provider-test',
   'POST /admin/enrichment/test': () => 'admin-enrichment-test',
   'POST /me/pairing-codes': () => 'me-pairing-code',
+  'PATCH /admin/settings': (_, __, body) => {
+    if (body?.['acquire.fetched_keep'] < 0) fail(400, 'bad_request', 'Use 0 or more.', { field: 'acquire.fetched_keep' });
+    if (typeof body?.['acquire.fetched_max_bytes'] === 'string' && !/^\d+(\.\d+)?\s*[KMGT]i?B$/i.test(body['acquire.fetched_max_bytes'])) fail(400, 'bad_request', 'Write a size like 20GiB.', { field: 'acquire.fetched_max_bytes' });
+    return null;
+  },
   'POST /me/api-keys': (_, __, body) => (body?.kind === 'app_password' ? 'me-app-password-created' : 'me-api-key-created'),
 };
 
@@ -106,6 +111,19 @@ export async function answer(route, { values = {}, body, query = {}, variant }) 
     }[route];
     if (empty) return empty();
   }
+  if (route === 'GET /admin/users/{id}' && values.id) {
+    const { users } = await fixture('admin-users');
+    const base = await fixture('admin-user');
+    const user = users.find((u) => u.id === values.id);
+    if (!user) fail(404, 'not_found', '');
+    return user.id === base.id ? base : { ...user, devices: 0, api_keys: 0, sessions: 0 };
+  }
+  if (route === 'GET /admin/imports') {
+    if (query.cursor) return { imports: [] };
+    const page = await fixture('admin-imports');
+    if (query.state) { page.imports = page.imports.filter((i) => i.state === query.state); delete page.next_cursor; }
+    return page;
+  }
   if (route === 'GET /admin/audit') {
     if (query.cursor) return { entries: [] };
     const page = await fixture('admin-audit');
@@ -114,6 +132,7 @@ export async function answer(route, { values = {}, body, query = {}, variant }) 
     if (query.action || query.actor) delete page.next_cursor;
     return page;
   }
+  if (route.startsWith('GET /admin/stats/') && !(variant === 'nostats' || variant === 'fresh')) return sliceStats(await fixture(reads[route]()), query);
   const table = method === 'GET' ? reads : writes;
   const pick = table[route];
   if (!pick) {
@@ -122,4 +141,17 @@ export async function answer(route, { values = {}, body, query = {}, variant }) 
   }
   const name = pick(variant, values, body);
   return name ? fixture(name) : null;
+}
+
+/** The fixtures hold the longest range; a shorter one is the tail. A longer one repeats nothing. */
+function sliceStats(data, query) {
+  const n = Number(query.days || query.hours);
+  const key = data.days ? 'days' : 'hours';
+  if (!n || n >= data[key].length) return data;
+  const from = data[key].length - n;
+  for (const [k, v] of Object.entries(data)) {
+    if (Array.isArray(v) && v.length === data[key].length) data[k] = v.slice(from);
+  }
+  for (const u of data.users || []) u.plays = u.plays.slice(from);
+  return data;
 }

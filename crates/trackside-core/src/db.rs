@@ -7,6 +7,7 @@
 //! [`ServerEvent::Changed`] only after the commit succeeds.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{
@@ -20,17 +21,19 @@ use crate::ids::{LibraryKey, Seq, UserKey};
 use crate::time::{Clock, Millis};
 
 /// The schema version this build creates and understands (`PRAGMA user_version`).
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 const MIGRATION_1: &str = include_str!("../migrations/0001_initial.sql");
 const MIGRATION_2: &str = include_str!("../migrations/0002_stats_and_reauth.sql");
 const MIGRATION_3: &str = include_str!("../migrations/0003_enrichment.sql");
+const MIGRATION_4: &str = include_str!("../migrations/0004_cloud.sql");
 
 fn migrations() -> Migrations<'static> {
     Migrations::new(vec![
         M::up(MIGRATION_1),
         M::up(MIGRATION_2),
         M::up(MIGRATION_3),
+        M::up(MIGRATION_4),
     ])
 }
 
@@ -341,6 +344,12 @@ struct Inner {
     pragmas: Pragmas,
     max_idle_readers: usize,
     read_slots: Arc<Semaphore>,
+    /// One async write at a time takes a blocking thread; the rest wait here without one, so
+    /// a long write (or a slow disk) cannot fill the blocking pool with queued writers.
+    write_slot: Arc<Semaphore>,
+    /// The seq of the last committed change, copied from the writer after each commit so
+    /// [`Db::current_seq`] never waits on the writer's lock (which a long write holds).
+    committed_seq: AtomicI64,
     events: EventBus,
     clock: Arc<dyn Clock>,
 }
@@ -455,22 +464,24 @@ impl Db {
         let readers = readers.max(1);
         Ok(Self {
             inner: Arc::new(Inner {
+                committed_seq: AtomicI64::new(next_seq - 1),
                 writer: Mutex::new(Writer { conn, next_seq }),
                 idle_readers: Mutex::new(Vec::new()),
                 path,
                 pragmas,
                 max_idle_readers: readers,
                 read_slots: Arc::new(Semaphore::new(readers)),
+                write_slot: Arc::new(Semaphore::new(1)),
                 events,
                 clock,
             }),
         })
     }
 
-    /// The seq of the last committed change (0 before any), for `ETag`s and the overview. Read
-    /// from the writer's counter, so it costs no query.
+    /// The seq of the last committed change (0 before any), for `ETag`s and the overview. A
+    /// copy of the writer's counter, so it costs no query and never blocks on a running write.
     pub fn current_seq(&self) -> Seq {
-        Seq(lock(&self.inner.writer).next_seq - 1)
+        Seq(self.inner.committed_seq.load(Ordering::Acquire))
     }
 
     /// Runs SQLite's `quick_check` (or the slower, thorough `integrity_check` with `full`) on
@@ -548,8 +559,18 @@ impl Db {
         T: Send + 'static,
         F: FnOnce(&mut WriteTx<'_>) -> Result<T, DbError> + Send + 'static,
     {
+        let permit = Arc::clone(&self.inner.write_slot)
+            .acquire_owned()
+            .await
+            .map_err(|_| DbError::Closed)?;
         let db = self.clone();
-        join(tokio::task::spawn_blocking(move || db.write_blocking(f)).await)
+        let result = tokio::task::spawn_blocking(move || {
+            let result = db.write_blocking(f);
+            drop(permit);
+            result
+        })
+        .await;
+        join(result)
     }
 
     /// Runs a read on the calling thread, in one snapshot. Only for threads that may block.
@@ -617,6 +638,7 @@ impl Db {
             } = write;
             tx.commit().map_err(|e| DbError::from(e).classify())?;
             *next_seq = after;
+            self.inner.committed_seq.store(after - 1, Ordering::Release);
             (value, changes, Seq(after - 1))
         };
         if !changes.is_empty() {
@@ -656,7 +678,11 @@ impl Db {
             conn.execute("VACUUM INTO ?1", [partial_text])?;
             Ok(())
         })?;
+        // VACUUM INTO does not sync; without this a power cut after the rename can leave a
+        // file under the final name whose pages never reached the disk.
+        std::fs::File::open(&partial)?.sync_all()?;
         std::fs::rename(&partial, target)?;
+        sync_parent(target)?;
         Ok(())
     }
 
@@ -665,12 +691,41 @@ impl Db {
     pub fn checkpoint_and_optimize(&self) -> Result<(), DbError> {
         let writer = lock(&self.inner.writer);
         writer.conn.execute_batch("PRAGMA optimize;")?;
-        writer
-            .conn
-            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
-            .optional()?;
+        // A reader in the middle of a snapshot makes the checkpoint report busy and leave the
+        // WAL as it is; such reads are short, so try again for a moment.
+        for _ in 0..50 {
+            let busy = writer
+                .conn
+                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .optional()?
+                .unwrap_or(0);
+            if busy == 0 || self.inner.path.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
         Ok(())
     }
+
+    /// Refuses further [`Db::write`] calls with [`DbError::Closed`], for shutdown: a
+    /// background task that wakes after the final checkpoint must not grow the WAL again.
+    /// Writes already waiting are refused too; one already running finishes.
+    pub fn close_writes(&self) {
+        self.inner.write_slot.close();
+    }
+}
+
+/// Makes a rename in `path`'s folder durable. Only Unix can open a folder to sync it.
+fn sync_parent(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::File::open(dir)?.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
 }
 
 fn join<T>(result: Result<Result<T, DbError>, tokio::task::JoinError>) -> Result<T, DbError> {

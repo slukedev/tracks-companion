@@ -7,7 +7,7 @@
 ## Build and Test
 
 - `cargo build`, `cargo test --workspace --locked`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo fmt --all --check`, `cargo deny check`.
-- ffmpeg tests: `TRACKSIDE_TEST_FFMPEG=1 cargo test -p trackside-media -p trackside-acquire -- --ignored`.
+- ffmpeg tests: `TRACKSIDE_TEST_FFMPEG=1 cargo test -p trackside-media -p trackside-acquire` (they skip without ffmpeg unless that variable is set).
 - End-to-end suite in `tests-e2e/`: `cargo test -p trackside-e2e` (skips without ffmpeg on `PATH`); the 50k-song perf run is `cargo run --release -p trackside-e2e -- --songs 50000 --baseline tests-e2e/baseline-50k.json --report target/e2e-50k.json`.
 - Dashboard (`dashboard/`, no build step): `node dashboard/dev/check-coverage.mjs` after any change there or to api.md section 16.
 - Packaging: `python3 packaging/scripts/check-packaging.py --allow-missing-metadata`.

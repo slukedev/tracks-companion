@@ -96,14 +96,22 @@
       "code": "library_unavailable",
       "title": "NAS Archive offline",
       "message": "NAS Archive has been unavailable since 08:00.",
-      "help": "Check that the NAS is on and its share is mounted at /mnt/nas/music. Its songs stay in the library until it is back."
+      "help": "Check that the NAS is on and its share is mounted at /mnt/nas/music. Its songs stay in the library until it is back.",
+      "target": {
+        "kind": "library",
+        "id": "l7c2d9f4a1e8b6m3n5k0"
+      }
     },
     {
       "severity": "warning",
       "code": "inotify_limit",
       "title": "Music not watched live",
       "message": "Watching Music for changes fell back to polling.",
-      "help": "Raise fs.inotify.max_user_watches to 524288 on the host so new files appear within seconds."
+      "help": "Raise fs.inotify.max_user_watches to 524288 on the host so new files appear within seconds.",
+      "target": {
+        "kind": "library",
+        "id": "l0a8f2c9e7d1b3k5m6n4"
+      }
     }
   ]
 }

@@ -12,7 +12,9 @@ use axum::body::Body;
 use axum::extract::{ConnectInfo, Request, State};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use axum_server::accept::{Accept, TcpConfigAcceptor, TcpKeepaliveConfig, TcpSocketConfig};
 use http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tower_http::compression::predicate::Predicate;
 use trackside_api::{Https, RequestId, X_REQUEST_ID};
 use trackside_auth::Auth;
@@ -108,6 +110,11 @@ pub struct WebState {
     pub metrics: Option<Arc<Metrics>>,
     pub request_timeout: Duration,
     pub playback: Arc<trackside_api::PlaybackLoad>,
+    /// Whether responses on TLS listeners carry `Strict-Transport-Security`: with a
+    /// certificate browsers trust (`acme` or `files`), never a self-signed one.
+    pub hsts: bool,
+    /// `server.base_path`, normalised (`""` or `"/music"`), stripped before routes are matched.
+    pub base_path: String,
 }
 
 impl std::fmt::Debug for WebState {
@@ -116,20 +123,33 @@ impl std::fmt::Debug for WebState {
     }
 }
 
-/// Paths whose handlers may legitimately take longer than the request timeout before the
-/// first byte: downloads that wait for a transcode, uploads, backups.
-fn exempt_from_timeout(path: &str) -> bool {
-    [
-        "/download",
-        "/uploads",
-        "/backups/",
-        "/rest/download",
-        "/rest/stream",
-        "/events",
-        "/listens/export",
-    ]
-    .iter()
-    .any(|p| path.contains(p))
+/// Routes whose handlers may legitimately take longer than the request timeout before the
+/// first byte: downloads that wait for a transcode, uploads, backups, the event stream. Matched
+/// exactly, segment by segment after the base path, so no other route opts out by having one
+/// of these words somewhere in its path.
+fn exempt_from_timeout(base_path: &str, path: &str) -> bool {
+    let Some(rest) = path.strip_prefix(base_path) else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix('/') else {
+        return false;
+    };
+    let segments: Vec<&str> = rest.split('/').collect();
+    match segments.as_slice() {
+        ["api", "v1", api @ ..] => match api {
+            ["uploads" | "events"] | ["me", "listens", "export"] => true,
+            ["songs", id, "download"]
+            | ["uploads", id]
+            | ["uploads", id, "complete"]
+            | ["admin", "backups", id] => !id.is_empty(),
+            _ => false,
+        },
+        ["rest", endpoint] => {
+            let name = endpoint.strip_suffix(".view").unwrap_or(endpoint);
+            name.eq_ignore_ascii_case("download") || name.eq_ignore_ascii_case("stream")
+        }
+        _ => false,
+    }
 }
 
 /// Request id, HTTPS marker, timeout, log line and metrics for every request.
@@ -160,7 +180,7 @@ pub async fn context(State(web): State<WebState>, mut request: Request, next: Ne
     request = Request::from_parts(parts, body);
     let media = is_media_path(&path);
     let guard = media.then(|| web.playback.start());
-    let mut response = if exempt_from_timeout(&path) {
+    let mut response = if exempt_from_timeout(&web.base_path, &path) {
         next.run(request).await
     } else {
         match tokio::time::timeout(web.request_timeout, next.run(request)).await {
@@ -172,6 +192,12 @@ pub async fn context(State(web): State<WebState>, mut request: Request, next: Ne
         response.headers_mut().insert(X_REQUEST_ID, value);
     }
     security_headers(response.headers_mut());
+    if listener_tls && web.hsts {
+        response
+            .headers_mut()
+            .entry(header::STRICT_TRANSPORT_SECURITY)
+            .or_insert(HeaderValue::from_static(HSTS));
+    }
     if is_api_path(&path) {
         api_headers(response.headers_mut());
     }
@@ -263,6 +289,8 @@ pub const DASHBOARD_CSP: &str = "default-src 'self'; script-src 'self'; style-sr
 /// API responses are data, never documents.
 pub const API_CSP: &str = "default-src 'none'; frame-ancestors 'none'";
 pub const PERMISSIONS_POLICY: &str = "camera=(), microphone=(), geolocation=(), interest-cohort=()";
+/// A year, for this host only: other names under the same domain may still be plain HTTP.
+pub const HSTS: &str = "max-age=31536000";
 
 /// Paths that send audio: streams, downloads, HLS, instant play, and Subsonic's media.
 fn is_media_path(path: &str) -> bool {
@@ -371,6 +399,126 @@ impl Predicate for JsonOnly {
     }
 }
 
+/// Caps open connections across every listener at `server.max_connections`. A connection
+/// over the cap is closed at once rather than queued, so a flood of idle sockets cannot use
+/// up the process's file descriptors; the slot frees when the connection closes. Accepted
+/// sockets get `TCP_NODELAY` and keepalive probes, which find phones that dropped off the
+/// network in the middle of a request.
+#[derive(Clone, Debug)]
+pub struct ConnectionLimit {
+    slots: Arc<tokio::sync::Semaphore>,
+    tcp: TcpConfigAcceptor,
+    last_warning: Arc<Mutex<Option<Instant>>>,
+}
+
+/// How often a full connection table is logged.
+const FULL_WARNING_EVERY: Duration = Duration::from_secs(60);
+
+impl ConnectionLimit {
+    pub fn new(max: u32) -> Self {
+        let keepalive = TcpKeepaliveConfig::new()
+            .time(Duration::from_secs(60))
+            .interval(Duration::from_secs(15))
+            .retries(4);
+        Self {
+            slots: Arc::new(tokio::sync::Semaphore::new(
+                usize::try_from(max.max(1)).unwrap_or(usize::MAX),
+            )),
+            tcp: TcpConfigAcceptor::new(TcpSocketConfig::new().nodelay(true).keepalive(keepalive)),
+            last_warning: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn warn_full(&self) {
+        let mut last = self
+            .last_warning
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if last.is_none_or(|at| at.elapsed() >= FULL_WARNING_EVERY) {
+            *last = Some(Instant::now());
+            tracing::warn!(
+                "connection limit reached; new connections are closed until some finish (server.max_connections)"
+            );
+        }
+    }
+}
+
+impl<S> Accept<tokio::net::TcpStream, S> for ConnectionLimit {
+    type Stream = Limited<tokio::net::TcpStream>;
+    type Service = S;
+    type Future = std::future::Ready<std::io::Result<(Self::Stream, S)>>;
+
+    fn accept(&self, stream: tokio::net::TcpStream, service: S) -> Self::Future {
+        let Ok(slot) = Arc::clone(&self.slots).try_acquire_owned() else {
+            self.warn_full();
+            return std::future::ready(Err(std::io::Error::other("connection limit reached")));
+        };
+        let accepted = self.tcp.accept(stream, service).into_inner();
+        std::future::ready(accepted.map(|(stream, service)| {
+            (
+                Limited {
+                    inner: stream,
+                    _slot: slot,
+                },
+                service,
+            )
+        }))
+    }
+}
+
+/// A connection holding one of the [`ConnectionLimit`] slots until it is dropped.
+#[derive(Debug)]
+pub struct Limited<T> {
+    inner: T,
+    _slot: tokio::sync::OwnedSemaphorePermit,
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for Limited<T> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for Limited<T> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_write_vectored(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
 #[derive(rust_embed::Embed)]
 #[folder = "../../dashboard/"]
 #[exclude = "dev/*"]
@@ -473,6 +621,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_the_listed_routes_skip_the_request_timeout() {
+        for path in [
+            "/api/v1/songs/s1/download",
+            "/api/v1/uploads",
+            "/api/v1/uploads/u1",
+            "/api/v1/uploads/u1/complete",
+            "/api/v1/admin/backups/trackside-1.db",
+            "/api/v1/events",
+            "/api/v1/me/listens/export",
+            "/rest/stream",
+            "/rest/download.view",
+            "/rest/Stream.view",
+        ] {
+            assert!(exempt_from_timeout("", path), "{path}");
+            assert!(
+                exempt_from_timeout("/music", &format!("/music{path}")),
+                "{path}"
+            );
+        }
+        for path in [
+            "/api/v1/search/download",
+            "/api/v1/songs/s1/download/extra",
+            "/api/v1/playlists/events",
+            "/api/v1/admin/backups",
+            "/api/v1/admin/events",
+            "/rest/getSong.view",
+            "/rest/stream/extra",
+            "/dashboard/download",
+            "/x/api/v1/events",
+        ] {
+            assert!(!exempt_from_timeout("", path), "{path}");
+        }
+        assert!(!exempt_from_timeout("/music", "/api/v1/events"));
+        assert!(!exempt_from_timeout("/music", "/musicapi/v1/events"));
+    }
+
+    #[test]
     fn dashboard_paths_map_to_their_pages() {
         assert_eq!(dashboard_file("/").as_deref(), Some("index.html"));
         assert_eq!(dashboard_file("/setup").as_deref(), Some("setup.html"));
@@ -567,6 +752,24 @@ mod tests {
             assert!(!compressible(kind), "{kind}");
         }
         assert!(compressible("text/css; charset=utf-8"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn connections_over_the_limit_are_closed_until_one_finishes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let limit = ConnectionLimit::new(1);
+        let mut clients = Vec::new();
+        let mut next = async || -> std::io::Result<tokio::net::TcpStream> {
+            clients.push(tokio::net::TcpStream::connect(address).await?);
+            Ok(listener.accept().await?.0)
+        };
+        let first = limit.accept(next().await?, ()).await?;
+        assert!(limit.accept(next().await?, ()).await.is_err());
+        drop(first);
+        assert!(limit.accept(next().await?, ()).await.is_ok());
         Ok(())
     }
 

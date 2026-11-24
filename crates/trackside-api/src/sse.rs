@@ -9,7 +9,9 @@ use futures_util::Stream;
 use tokio::sync::broadcast::error::RecvError;
 use trackside_core::{Access, Audience, DeviceKey, LibraryKey, ServerEvent};
 
-use crate::wire::events::{Changed, Hello, LibraryEvent, ScanEvent, SessionEvent, UploadEvent};
+use crate::wire::events::{
+    Changed, Hello, LibraryEvent, ScanEvent, ServerUrlsEvent, SessionEvent, UploadEvent,
+};
 
 /// Who is listening, and what they may hear.
 #[derive(Clone, Debug)]
@@ -112,6 +114,18 @@ pub fn visible_event(event: &ServerEvent, filter: &EventFilter) -> Outgoing {
             Outgoing::Revoked
         }
         ServerEvent::AccessChanged { user } if *user == access.user => Outgoing::AccessChanged,
+        ServerEvent::CloudChanged { user, entity } if *user == access.user => Outgoing::Send {
+            event: "cloud",
+            data: data(&crate::wire::cloud::CloudEvent {
+                entity: (*entity).to_owned(),
+            }),
+        },
+        ServerEvent::ServerUrls { version } => Outgoing::Send {
+            event: "server_urls",
+            data: data(&ServerUrlsEvent {
+                version: version.clone(),
+            }),
+        },
         _ => Outgoing::Skip,
     }
 }
@@ -433,6 +447,20 @@ mod tests {
         ));
         let other = member(2, &[]);
         assert_eq!(visible_event(&event, &other), Outgoing::Skip);
+    }
+
+    #[test]
+    fn address_changes_reach_every_listener() {
+        let event = ServerEvent::ServerUrls {
+            version: String::from("a746df40"),
+        };
+        assert_eq!(
+            visible_event(&event, &member(1, &[])),
+            Outgoing::Send {
+                event: "server_urls",
+                data: String::from("{\"version\":\"a746df40\"}"),
+            }
+        );
     }
 
     #[test]

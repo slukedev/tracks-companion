@@ -99,6 +99,28 @@ fn decode_chunked(mut body: &[u8]) -> Vec<u8> {
     }
 }
 
+/// Lets a test pose as another client: `x-test-peer` replaces the peer address, and
+/// `x-test-https` marks the request as arrived over HTTPS, as the server's middleware would.
+async fn test_peer(
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if let Some(peer) = request
+        .headers()
+        .get("x-test-peer")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<SocketAddr>().ok())
+    {
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(peer));
+    }
+    if request.headers().contains_key("x-test-https") {
+        request.extensions_mut().insert(trackside_auth::Https);
+    }
+    next.run(request).await
+}
+
 /// Sends one request on a new connection and reads the whole response.
 pub async fn send(
     addr: SocketAddr,
@@ -200,7 +222,9 @@ impl Server {
         };
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
-        let app = router(state).into_make_service_with_connect_info::<SocketAddr>();
+        let app = router(state)
+            .layer(axum::middleware::from_fn(test_peer))
+            .into_make_service_with_connect_info::<SocketAddr>();
         tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });

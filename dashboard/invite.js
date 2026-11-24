@@ -1,5 +1,5 @@
 import { call, describe } from './api.js';
-import { field, input, setFieldError } from './ui.js';
+import { field, input, setFieldError, date } from './ui.js';
 import { frame, passwordFields, submitForm, usernameInput, checkUsername, tokenFromPath, dashboardUrl, serverName } from './solo.js';
 
 async function main() {
@@ -11,14 +11,14 @@ async function main() {
     invite = token ? await call('GET /invites/{token}', { values: { token }, quietAuth: true }) : null;
   } catch (err) {
     if (err.code !== 'not_found') {
-      frame({ title: `Join ${name}`, text: describe(err) });
+      frame({ title: `Join ${name}`, text: `${describe(err)} Try the link again in a moment.` });
       return;
     }
   }
   if (!invite?.valid) {
     frame({
       title: 'This invite has ended',
-      text: 'Ask for a new link.',
+      text: 'It was used, cancelled or ran out. Ask the person who sent it for a new link.',
     });
     return;
   }
@@ -27,10 +27,10 @@ async function main() {
   const username = usernameInput();
   const passwords = passwordFields();
   const form = submitForm([
-    field('Your Name', display),
-    field('Username', username),
+    field('Your name', display),
+    field('Username', username, { hint: 'What you type to sign in' }),
     ...passwords.fields,
-  ], 'Join', async (error) => {
+  ], 'Create account', async (error) => {
     const user = checkUsername(username);
     if (!user || !passwords.validate()) return;
     try {
@@ -41,15 +41,22 @@ async function main() {
       }, quietAuth: true });
       location.replace(dashboardUrl('#/account/pair'));
     } catch (err) {
-      if (err.code === 'conflict') { setFieldError(username, 'Taken.'); username.focus(); return; }
-      if (err.code === 'not_found') { error.show('This invite has ended.'); return; }
+      if (err.code === 'conflict') { setFieldError(username, 'Someone already has that username. Try another.'); username.focus(); return; }
+      if (err.code === 'not_found') { error.show('This invite has ended. Ask for a new link.'); return; }
       error.show(describe(err));
     }
   });
 
+  // The note is the inviter's own line on who the invite is for, shown as they wrote it.
+  const who = invite.invited_by ? `${invite.invited_by} invited you` : 'You are invited';
   frame({
     title: `Join ${name}`,
+    text: `${who} to listen to the music on ${name}. Make an account here, then connect the Tracks app on your phone.`,
     body: form,
+    foot: [
+      invite.note ? `Invite note: \u201c${invite.note}\u201d.` : null,
+      invite.expires_at ? `This invite works until ${date(invite.expires_at)}.` : null,
+    ].filter(Boolean).join(' ') || null,
   });
   display.focus();
 }

@@ -1,0 +1,21 @@
+{
+  "error": {
+    "code": "https_required",
+    "details": {
+      "https_urls": [
+        {
+          "kind": "public",
+          "tls": true,
+          "url": "https://music.example.com"
+        },
+        {
+          "kind": "tailnet",
+          "tls": true,
+          "url": "https://home.tail4a2c.ts.net"
+        }
+      ]
+    },
+    "message": "Use the server's https address. Passwords and keys aren't accepted over plain HTTP from outside your network.",
+    "request_id": "7a1e4c9b2d8f4a6c9e3b5d7f1a2c4e6b"
+  }
+}

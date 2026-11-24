@@ -56,7 +56,7 @@ impl Auth {
             _ => return Err(SubsonicAuthError::Missing),
         };
         self.check_ip(ip).map_err(subsonic_error)?;
-        if !self.config.legacy_subsonic {
+        if !self.legacy_subsonic() {
             return Err(SubsonicAuthError::TokenNotSupported);
         }
         self.subsonic_legacy(username, &legacy, ip).await
@@ -100,7 +100,7 @@ impl Auth {
             })
             .await
             .map_err(subsonic_error)?;
-        let account = Account::new(found.as_ref().map(|(u, _)| u.key), username);
+        let account = Account::new(found.as_ref().map(|(u, _)| u.key), username).app_passwords();
         self.backoff
             .check(&account, ip)
             .map_err(|wait| SubsonicAuthError::RateLimited { retry_after: wait })?;

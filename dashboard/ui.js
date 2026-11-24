@@ -64,7 +64,7 @@ export function bytes(n) {
   let i = 0;
   let v = n;
   while (v >= 1000 && i < units.length - 1) { v /= 1000; i++; }
-  const digits = i === 0 ? 0 : v < 10 ? 1 : 0;
+  const digits = i === 0 ? 0 : v < 100 ? 1 : 0;
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: digits }).format(v)} ${units[i]}`;
 }
 
@@ -138,9 +138,12 @@ export const plural = (n, one, many = `${one}s`) => `${num(n)} ${n === 1 ? one :
 
 /* ---------- Page scaffolding ---------- */
 
-export function pageHead(title, { lede, actions } = {}) {
+export function pageHead(title, { lede, actions, crumb } = {}) {
   return h('header.page-head',
-    h('div', h('h1', { tabindex: '-1', 'data-page-title': '' }, title), lede ? h('p.lede', lede) : null),
+    h('div',
+      crumb ? h('p.crumb', h('a', { href: crumb[1] }, crumb[0])) : null,
+      h('h1', { tabindex: '-1', 'data-page-title': '' }, title),
+      lede ? h('p.lede', lede) : null),
     actions ? h('div.actions', actions) : null);
 }
 
@@ -167,8 +170,8 @@ export function row({ icon: iconName, tint, title, sub, trail, href: link, onCli
   return h('div.row', body);
 }
 
-export function kv(key, value) {
-  return h('div.kv', h('dt', key), h('dd', value));
+export function kv(key, value, sub) {
+  return h('div.kv', h('dt', key), h('dd', value, sub ? h('span.sub', sub) : null));
 }
 
 export function empty(title, text, action) {
@@ -179,21 +182,41 @@ export function badge(text, kind = '', iconName) {
   return h(`span.badge${kind ? '.' + kind : ''}`, iconName ? icon(iconName) : null, text);
 }
 
-export function skeleton(rows = 3) {
-  const lines = [];
-  for (let i = 0; i < rows; i++) {
-    lines.push(h('div.skeleton-row', h('span.skeleton.w60'), h('span.skeleton.w40')));
+const skelRows = (n, widths = ['w60', 'w40']) => Array.from({ length: n }, () => h('div.skeleton-row', widths.map((w) => h(`span.skeleton.${w}`))));
+
+/**
+ * A placeholder shaped like the page that is loading, so nothing jumps when it arrives.
+ * `kind` is 'overview', 'detail' (a narrow page of sections) or 'list'.
+ */
+export function skeleton(kind = 'list') {
+  const head = h('div.skeleton-head', h('span.skeleton.title'), h('span.skeleton.line'));
+  let body;
+  if (kind === 'overview') {
+    body = [
+      h('div.list', skelRows(2, ['w40', 'w60'])),
+      h('div.overview-grid',
+        h('div.col', h('div.list', h('div.skeleton-row', h('span.skeleton.w25'), h('span.skeleton.block'))), h('div.list', skelRows(4, ['w60']))),
+        h('div.facts', h('div.list', skelRows(3, ['w40'])), h('div.list', skelRows(4, ['w60'])))),
+    ];
+  } else if (kind === 'detail') {
+    body = [h('div.list', skelRows(3)), h('div.list', skelRows(2))];
+  } else {
+    body = [h('div.list', skelRows(5))];
   }
-  return h('div.page', { 'aria-busy': 'true', 'aria-label': 'Loading…' },
-    h('span.skeleton.title'),
-    h('div.list', lines));
+  return h(`div.page${kind === 'detail' ? '.narrow' : ''}`, { 'aria-busy': 'true', 'aria-label': 'Loading' }, head, body);
 }
 
-export function errorState(error, retry) {
+const RECOVERY = {
+  network: 'Check that Trackside is running and this device is on the same network, then try again.',
+  internal: 'Trying again often works. If it keeps happening, the server log says why.',
+  unavailable: 'The server is busy. Try again in a moment.',
+};
+
+export function errorState(error, retry, title = 'This page did not load') {
   return h('div.error-state', { role: 'alert' },
-    h('h2', 'Did not load'),
-    h('p', describe(error)),
-    retry ? button('Try Again', { onClick: retry }) : null);
+    h('h2', title),
+    h('p', describe(error), RECOVERY[error?.code] ? ` ${RECOVERY[error.code]}` : ''),
+    retry ? button('Try again', { onClick: retry }) : null);
 }
 
 /* ---------- Controls ---------- */
@@ -278,30 +301,81 @@ export function formError() {
 
 /** A read-only value with a Copy button that briefly says Copied. */
 export function secret(value, label) {
-  const field = h('input.input', { readonly: true, value, 'aria-label': label, on: { focus: (e) => e.target.select() } });
-  return h('div.secret', field, copyButton(value));
+  const box = h('input.input', { readonly: true, value, 'aria-label': label, on: { focus: (e) => e.target.select() } });
+  return h('div.secret', box, h('div.btn-row', copyButton(value)));
+}
+
+/**
+ * A link meant for someone else (an invite, a password reset): shown whole, with Share where the
+ * device has a share sheet and Copy everywhere.
+ */
+export function shareLink(url, { label, title, text } = {}) {
+  const box = h('code.link-box', { 'aria-label': label, translate: 'no' }, url);
+  const actions = h('div.btn-row');
+  if (typeof navigator.share === 'function') {
+    const share = button('Share', { kind: 'primary', iconName: 'share' });
+    share.addEventListener('click', async () => {
+      try {
+        await navigator.share({ title, text, url });
+      } catch (err) {
+        if (err?.name !== 'AbortError') toast('Could not open the share sheet. Copy the link instead.', 'bad');
+      }
+    });
+    actions.append(share);
+  }
+  actions.append(copyButton(url, 'Copy link'));
+  return h('div.form.tight', box, actions);
+}
+
+async function writeClipboard(value) {
+  try {
+    await navigator.clipboard.writeText(value);
+  } catch {
+    const tmp = h('textarea.visually-hidden', { readonly: true }, value);
+    document.body.append(tmp);
+    tmp.select();
+    document.execCommand('copy');
+    tmp.remove();
+  }
+}
+
+/** Swaps a button's label for a moment ("Copied"), then puts it back. */
+function flashLabel(btn, text, original) {
+  const label = btn.lastChild;
+  label.replaceWith(h('span.swap', text));
+  clearTimeout(btn.flashTimer);
+  btn.flashTimer = setTimeout(() => { btn.lastChild.replaceWith(h('span.swap', original)); }, 1800);
 }
 
 export function copyButton(value, text = 'Copy') {
   const btn = button(text, { iconName: 'copy' });
   btn.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(value);
-    } catch {
-      const tmp = h('textarea.visually-hidden', { readonly: true }, value);
-      document.body.append(tmp);
-      tmp.select();
-      document.execCommand('copy');
-      tmp.remove();
-    }
-    const label = btn.lastChild;
-    label.textContent = 'Copied';
-    setTimeout(() => { label.textContent = text; }, 1600);
+    await writeClipboard(value);
+    flashLabel(btn, 'Copied', text);
   });
   return btn;
 }
 
+/** A command or config line with a Copy button: the thing to type, not instructions. */
+export function codeLine(value, label = 'Copy') {
+  return h('div.code-line', h('code', { translate: 'no' }, value), copyButton(value, label));
+}
+
 /* ---------- Dialog and toast ---------- */
+
+/**
+ * Shows a modal dialog and removes it once its exit transition has played.
+ * `onClose(returnValue)` runs as it starts closing.
+ */
+export function openDialog(dialog, onClose) {
+  document.body.append(dialog);
+  dialog.addEventListener('close', () => {
+    onClose?.(dialog.returnValue);
+    setTimeout(() => dialog.remove(), 220);
+  }, { once: true });
+  dialog.showModal();
+  return dialog;
+}
 
 /** Asks once before something destructive. Resolves true when confirmed. */
 export function confirm({ title, text, action = 'Delete', danger = true, extra }) {
@@ -313,12 +387,7 @@ export function confirm({ title, text, action = 'Delete', danger = true, extra }
         h('div.dialog-actions',
           h('button.btn', { value: 'cancel', type: 'submit' }, 'Cancel'),
           h(`button.btn.${danger ? 'danger-fill' : 'primary'}`, { value: 'ok', type: 'submit' }, action))));
-    document.body.append(dialog);
-    dialog.addEventListener('close', () => {
-      resolve(dialog.returnValue === 'ok');
-      dialog.remove();
-    });
-    dialog.showModal();
+    openDialog(dialog, (value) => resolve(value === 'ok'));
     dialog.querySelector('button[value="cancel"]').focus();
   });
 }
@@ -342,10 +411,10 @@ export function failed(error) {
 }
 
 /** A meter for one ratio against a limit. */
-export function meter(value, total, label) {
+export function meter(value, total, label, kind = '') {
   if (!(total > 0)) return null;
   const pct = Math.min(100, Math.max(0, (value / total) * 100));
-  const bar = h('div.meter', {
+  const bar = h(`div.meter${kind ? '.' + kind : ''}`, {
     role: 'progressbar', 'aria-label': label,
     'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(Math.round(pct)),
   }, h('span'));
@@ -354,3 +423,7 @@ export function meter(value, total, label) {
 }
 
 export const platformName = (p) => ({ ios: 'iPhone', ipados: 'iPad', macos: 'Mac', android: 'Android', web: 'Browser' }[p] || p || 'Device');
+export const platformIcon = (p) => ({ ios: 'phone', android: 'phone', ipados: 'tablet', macos: 'laptop', windows: 'laptop', linux: 'laptop' }[p] || 'devices');
+
+/** Initial-cap a phrase that came from data ("daily 03:30" to "Daily 03:30"). */
+export const capital = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);

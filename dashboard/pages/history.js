@@ -6,7 +6,7 @@ const SENTENCES = {
   'device.revoke': ['devices', 'indigo', (a, e) => `${a} removed ${e.target}`],
   'key.create': ['key', 'indigo', (a, e) => `${a} created the key ${e.target}`],
   'key.revoke': ['key', 'indigo', (a, e) => `${a} revoked the key ${e.target}`],
-  'invite.create': ['invite', 'pink', (a, e) => `${a} created an invite${e.detail ? `: ${e.detail}` : ''}`],
+  'invite.create': ['invite', 'pink', (a, e) => `${a} created an invite${e.detail ? ` (${e.detail})` : ''}`],
   'invite.revoke': ['invite', 'pink', (a) => `${a} revoked an invite`],
   'invite.accept': ['person-plus', 'pink', (a, e) => `${e.target} joined`],
   'user.create': ['person-plus', 'pink', (a, e) => `${a} added ${e.target}`],
@@ -37,6 +37,7 @@ export function sentence(entry, names) {
   const known = SENTENCES[entry.action];
   if (known) return { icon: known[0], tint: known[1], text: known[2](actor, entry) };
   if (/^acqui/.test(entry.action)) return { icon: 'requests', tint: 'accent', text: `${actor} changed how requests work` };
+  if (entry.summary) return { icon: 'activity', tint: 'muted', text: `${actor}: ${entry.summary.charAt(0).toLowerCase()}${entry.summary.slice(1)}` };
   const verb = entry.action.split('.').reverse().join(' ').replace(/_/g, ' ');
   return { icon: 'activity', tint: 'muted', text: `${actor}: ${verb}${entry.target ? ` ${entry.target}` : ''}` };
 }

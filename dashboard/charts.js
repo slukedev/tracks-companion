@@ -38,7 +38,9 @@ function niceMax(max) {
  */
 export function chart(opts) {
   const root = h('div.chart', { role: 'figure', 'aria-label': opts.ariaLabel });
-  const head = opts.figure || opts.title ? h('div.chart-head', opts.title ? h('h3.small', opts.title) : null, opts.figure || null) : null;
+  const head = opts.figure || opts.title || opts.controls
+    ? h('div.chart-head', opts.title ? h('h3.small', opts.title) : null, opts.figure || null, opts.controls || null)
+    : null;
   const plot = h('div.plot');
   const tip = h('div.chart-tip', { 'aria-hidden': 'true' });
   const live = h('p.visually-hidden', { 'aria-live': 'polite' });
@@ -89,8 +91,8 @@ function render(opts, width, hidden, tip, live, root) {
     : Math.max(0, ...shown.map((sr) => sr.values[i] ?? 0))));
   const extra = opts.project ? opts.project.values.filter((v) => v !== null) : [];
   const max = niceMax(Math.max(...totals, opts.limit?.value ?? 0, ...extra, opts.minMax ?? 0));
-  // The left gutter fits the widest axis label (10px monospace is about 6.2px a character).
-  const labelWidth = Math.max(...[0, max / 2, max].map((t) => axisText(t).length)) * 6.2;
+  // The left gutter fits the widest axis label (11px tabular figures are about 6.4px a character).
+  const labelWidth = Math.max(...[0, max / 2, max].map((t) => axisText(t).length)) * 6.4;
   const pad = { l: Math.max(28, Math.ceil(labelWidth) + 10), r: opts.limit ? (narrow ? 8 : 10) : 8, t: 8, b: 20 };
   const iw = width - pad.l - pad.r;
   const ih = height - pad.t - pad.b;
@@ -127,8 +129,8 @@ function render(opts, width, hidden, tip, live, root) {
         svg.append(p);
         base += v;
       });
-      if (opts.labels.length && opts.series.every((sr) => sr.values[i] === null)) {
-        svg.append(s('text', { x: x(i), y: y(0) - 3, 'text-anchor': 'middle' }, '·'));
+      if (opts.labels.length && opts.series.every((sr) => sr.values[i] === null || sr.values[i] === undefined)) {
+        svg.append(s('circle', { class: 'gap-mark', cx: x(i), cy: y(0) - 4, r: 1.5 }));
       }
     });
   } else {
@@ -167,15 +169,20 @@ function render(opts, width, hidden, tip, live, root) {
   const show = (i, fromKeyboard) => {
     const label = opts.long(opts.labels[i]);
     const rows = shown.map((sr) => [sr, sr.values[i]]);
-    tip.replaceChildren(h('div.t', label), ...rows.map(([sr, v]) => {
+    const lines = rows.map(([sr, v]) => {
       const key = h('i');
       key.style.setProperty('background', `var(${sr.color})`);
       return h('div.r', key, h('b', v === null || v === undefined ? 'no data' : opts.format(v)), h('span', sr.name));
-    }), opts.limit ? h('div.r.muted', h('span', `${opts.limit.label}: ${opts.format(opts.limit.value)}`)) : null);
+    });
+    if (opts.limit) lines.push(h('div.r.muted', h('span', `${opts.limit.label}: ${opts.format(opts.limit.value)}`)));
+    tip.replaceChildren(h('div.t', label), ...lines);
     const px = x(i);
-    const left = Math.min(Math.max(0, px + 12), width - 170);
-    tip.style.setProperty('left', `${px > width * 0.6 ? Math.max(0, px - 182) : left}px`);
-    tip.style.setProperty('top', `${pad.t + (root.querySelector('.chart-head')?.offsetHeight || 0) + 4}px`);
+    const plotLeft = root.querySelector('.plot')?.offsetLeft || 0;
+    const tipWidth = tip.offsetWidth || 170;
+    const leftSide = px > width * 0.55;
+    const at = leftSide ? px - tipWidth - 12 : px + 12;
+    tip.style.setProperty('left', `${plotLeft + Math.min(Math.max(0, at), Math.max(0, width - tipWidth))}px`);
+    tip.style.setProperty('top', `${(root.querySelector('.plot')?.offsetTop || 0) + pad.t}px`);
     tip.classList.toggle('instant', tipShown);
     tip.classList.add('on');
     tipShown = true;
@@ -227,7 +234,7 @@ function tableView(opts) {
     h('th', { scope: 'row' }, opts.long(label)),
     opts.series.map((sr) => h('td', sr.values[i] === null || sr.values[i] === undefined ? '' : opts.format(sr.values[i])))));
   return h('details',
-    h('summary', { title: 'Show as table' }, icon('table'), h('span.visually-hidden', `Show ${opts.ariaLabel} as a table`)),
+    h('summary', { title: 'Show as a table' }, icon('table'), h('span.visually-hidden', `Show ${opts.name || 'the chart'} as a table`)),
     h('div.table-scroll', { tabindex: '0', role: 'region', 'aria-label': `${opts.ariaLabel}, table` },
       h('table',
         h('thead', h('tr', h('th', { scope: 'col' }, opts.columnLabel || 'When'), cols.map((c) => h('th', { scope: 'col' }, c)))),

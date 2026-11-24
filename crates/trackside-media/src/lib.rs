@@ -7,6 +7,7 @@ mod artwork;
 mod cache;
 mod decide;
 mod ffmpeg;
+mod gate;
 mod hls;
 mod jobs;
 mod probe;
@@ -39,6 +40,7 @@ pub use ffmpeg::{FfmpegTranscoder, ffmpeg_args};
 pub use range::{RangeOutcome, evaluate};
 
 use crate::cache::{CacheKey, TranscodeCache};
+use crate::gate::LibraryGate;
 use crate::serve::{Entity, respond_file, system_time_from_ns};
 use crate::slots::Slots;
 
@@ -73,6 +75,11 @@ pub enum MediaError {
     /// The cache volume is too full to write a transcode (`507 insufficient_storage`).
     #[error("not enough free space for the transcode cache")]
     InsufficientStorage,
+    /// The library's filesystem is not answering: every permit for blocking calls on its
+    /// paths is held by a call that has not returned, as on a hung NFS mount
+    /// (`503 library_unavailable` with `Retry-After`).
+    #[error("library unavailable")]
+    LibraryUnavailable,
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -455,6 +462,7 @@ pub struct Media {
     shared: Arc<Shared>,
     db: Db,
     artwork: ArtworkStore,
+    libraries: LibraryGate,
 }
 
 impl std::fmt::Debug for Media {
@@ -546,6 +554,7 @@ impl Media {
             shared,
             db,
             artwork: ArtworkStore::new(cache_dir.join("art"), config.art_cache_max),
+            libraries: LibraryGate::new(gate::LIBRARY_PERMITS, gate::LIBRARY_WAIT),
         })
     }
 
@@ -581,14 +590,25 @@ impl Media {
         request: &Parts,
         disposition: Disposition,
     ) -> Result<Response<Body>, MediaError> {
-        let handle = match tokio::fs::File::open(&file.path).await {
-            Ok(handle) => handle,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+        // Open and stat behind the library's semaphore, so a hung mount cannot take the
+        // blocking pool; the reads that follow are bounded by the stream limits.
+        let path = file.path.clone();
+        let opened = self
+            .libraries
+            .run(file.library, move || {
+                let handle = std::fs::File::open(&path)?;
+                let meta = handle.metadata()?;
+                Ok((handle, meta))
+            })
+            .await;
+        let (handle, meta) = match opened {
+            Ok(opened) => opened,
+            Err(MediaError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Err(MediaError::ContentChanged);
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e),
         };
-        let meta = handle.metadata().await?;
+        let handle = tokio::fs::File::from_std(handle);
         if file_changed(&meta, file) {
             return Err(MediaError::ContentChanged);
         }
@@ -687,6 +707,20 @@ impl Media {
         priority: Priority,
     ) -> Result<CachedTranscode, MediaError> {
         jobs::ensure_cached(&self.shared, file, profile, priority).await
+    }
+
+    /// [`Self::ensure_cached`], calling `admit` (to take the caller's transcode slot, say)
+    /// only when this request starts the encoder, and holding what it returns until the
+    /// transcode is done. Callers who join a cached or running transcode need no slot, and of
+    /// several asking at once exactly one is admitted.
+    pub async fn ensure_cached_admitting<G: Default, E: From<MediaError>>(
+        &self,
+        file: &SongFile,
+        profile: Profile,
+        priority: Priority,
+        admit: impl FnOnce() -> Result<G, E>,
+    ) -> Result<CachedTranscode, E> {
+        jobs::ensure_cached_admitting(&self.shared, file, profile, priority, admit).await
     }
 
     /// Starts prefetch-priority transcodes for at most 5 songs. Songs that cannot be
@@ -811,7 +845,8 @@ impl Media {
         };
         let store = self.artwork.clone();
         let wanted = id.clone();
-        let restored = tokio::task::spawn_blocking(move || {
+        let library = self.library_of(&source).await;
+        let restore = move || {
             let embedded = kind == ArtworkSourceKind::Embedded;
             let Some(bytes) = artwork::reextract_blocking(&wanted, embedded, &source)? else {
                 return Ok(false);
@@ -824,24 +859,42 @@ impl Media {
                 },
             )?;
             Ok::<_, MediaError>(true)
-        })
-        .await;
+        };
+        // A source inside a library is read behind that library's semaphore, like a stream.
+        let restored = match library {
+            Some(library) => self.libraries.run_media(library, restore).await,
+            None => tokio::task::spawn_blocking(restore)
+                .await
+                .unwrap_or_else(|e| Err(MediaError::Process(format!("restore task: {e}")))),
+        };
         match restored {
-            Ok(Ok(done)) => {
+            Ok(done) => {
                 if done {
                     tracing::info!(%id, "artwork restored from its source file");
                 }
                 done
             }
-            Ok(Err(e)) => {
+            Err(e) => {
                 tracing::debug!(%id, error = %e, "artwork not restored");
                 false
             }
-            Err(e) => {
-                tracing::debug!(%id, error = %e, "artwork restore task failed");
-                false
-            }
         }
+    }
+
+    /// The library whose root holds `path` (the deepest, if roots nest), for its semaphore.
+    async fn library_of(&self, path: &Path) -> Option<trackside_core::LibraryKey> {
+        let path = path.to_path_buf();
+        self.db
+            .read(move |c| {
+                Ok(trackside_core::repo::libraries::all(c)?
+                    .into_iter()
+                    .filter(|l| path.starts_with(&l.root))
+                    .max_by_key(|l| l.root.components().count())
+                    .map(|l| l.key))
+            })
+            .await
+            .ok()
+            .flatten()
     }
 
     /// Audio properties read with lofty.

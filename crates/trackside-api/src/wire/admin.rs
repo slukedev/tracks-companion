@@ -84,6 +84,18 @@ pub struct OverviewAcquisition {
     pub providers: Vec<ProviderStatus>,
     pub active: u32,
     pub today: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fetched: Option<FetchedUsage>,
+}
+
+/// Songs played without being kept: what they take and the limits (api.md section 16).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FetchedUsage {
+    pub songs: u64,
+    pub bytes: u64,
+    pub fetching: u64,
+    pub keep: u32,
+    pub max_bytes: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +132,17 @@ pub struct Problem {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub help: Option<String>,
+    /// What the problem is about, when it is one thing the dashboard can link to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<ProblemTarget>,
+}
+
+/// The record a problem is about: `{"kind": "library", "id": "..."}`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProblemTarget {
+    /// `library` for now; clients ignore kinds they do not know.
+    pub kind: String,
+    pub id: String,
 }
 
 /// A user as other records name them.
@@ -136,6 +159,9 @@ pub struct UserCounts {
     pub devices: u64,
     pub api_keys: u64,
     pub sessions: u64,
+    /// How much the user keeps in Trackside Cloud: counts only, never the content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud: Option<super::cloud::Amount>,
 }
 
 /// `AdminUser`. `GET /admin/users/{id}` adds the counts.
@@ -570,6 +596,9 @@ pub struct Backup {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Backups {
     pub backups: Vec<Backup>,
+    /// When the next scheduled backup runs; absent while scheduled backups are off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_at: Option<Time>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -78,6 +78,20 @@ pub(crate) fn start_job(
     profile: Profile,
     priority: Priority,
 ) -> Result<Arc<FileJob>, MediaError> {
+    start_job_admitting(shared, file, profile, priority, || Ok::<_, MediaError>(()))
+        .map(|(job, ())| job)
+}
+
+/// [`start_job`], calling `admit` only when no job for this transcode is running, under the
+/// same lock that registers the new one: so of many callers asking at once, exactly one is
+/// admitted (and holds what `admit` returns) and the rest join its job.
+pub(crate) fn start_job_admitting<G: Default, E: From<MediaError>>(
+    shared: &Arc<Shared>,
+    file: &SongFile,
+    profile: Profile,
+    priority: Priority,
+    admit: impl FnOnce() -> Result<G, E>,
+) -> Result<(Arc<FileJob>, G), E> {
     let cache = shared.cache.as_ref().ok_or(MediaError::NoTranscoder)?;
     let key = CacheKey::of(file, profile);
     let mut jobs = shared.jobs.lock().unwrap_or_else(PoisonError::into_inner);
@@ -89,8 +103,9 @@ pub(crate) fn start_job(
             }
             raise
         });
-        return Ok(job.clone());
+        return Ok((job.clone(), G::default()));
     }
+    let admitted = admit()?;
     let (priority_tx, priority_rx) = watch::channel(priority);
     let job = Arc::new(FileJob {
         part: cache.part_path(&key, Route::Direct),
@@ -107,7 +122,7 @@ pub(crate) fn start_job(
         file.clone(),
         priority_rx,
     ));
-    Ok(job)
+    Ok((job, admitted))
 }
 
 async fn run_job(
@@ -117,6 +132,11 @@ async fn run_job(
     file: SongFile,
     priority: watch::Receiver<Priority>,
 ) {
+    let _settle = Settle {
+        shared: shared.clone(),
+        job: job.clone(),
+        key: key.clone(),
+    };
     let result = transcode_to_cache(&shared, &job, &key, &file, priority).await;
     if let Err(JobError::Failed(message)) = &result {
         tracing::warn!(song = %file.song, profile = key.profile.as_str(), %message, "transcode failed");
@@ -129,6 +149,39 @@ async fn run_job(
         }
     }
     job.state.send_replace(JobState::Done(result));
+}
+
+/// Takes a job out of the single-flight map and fails its waiters if the task ends without
+/// finishing it (a panic), so later requests start a fresh job instead of joining a dead one.
+struct Settle {
+    shared: Arc<Shared>,
+    job: Arc<FileJob>,
+    key: CacheKey,
+}
+
+impl Drop for Settle {
+    fn drop(&mut self) {
+        let settled = self.job.state.send_if_modified(|state| {
+            if matches!(state, JobState::Done(_)) {
+                return false;
+            }
+            *state = JobState::Done(Err(JobError::Failed("the transcode job stopped".into())));
+            true
+        });
+        if settled {
+            let mut jobs = self
+                .shared
+                .jobs
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if jobs
+                .get(&self.key)
+                .is_some_and(|j| Arc::ptr_eq(j, &self.job))
+            {
+                jobs.remove(&self.key);
+            }
+        }
+    }
 }
 
 async fn acquire_by_priority(
@@ -283,6 +336,32 @@ pub(crate) async fn ensure_cached(
     }
     let job = start_job(shared, file, profile, priority)?;
     wait_job(&job, priority).await
+}
+
+/// [`ensure_cached`], where starting a new encoder needs `admit` (the caller's transcode
+/// slot, say), held until the transcode is done. Waiting for a cached or running transcode
+/// needs nothing.
+pub(crate) async fn ensure_cached_admitting<G: Default, E: From<MediaError>>(
+    shared: &Arc<Shared>,
+    file: &SongFile,
+    profile: Profile,
+    priority: Priority,
+    admit: impl FnOnce() -> Result<G, E>,
+) -> Result<CachedTranscode, E> {
+    let cache = shared.cache.as_ref().ok_or(MediaError::NoTranscoder)?;
+    if !shared.profiles.contains(&profile) {
+        return Err(MediaError::Unsupported(format!("profile {}", profile.as_str())).into());
+    }
+    if let Some(done) = cache.get(file, profile) {
+        return Ok(done);
+    }
+    if shared.is_failing(file) {
+        return Err(MediaError::Process("this song failed to transcode recently".into()).into());
+    }
+    let (job, held) = start_job_admitting(shared, file, profile, priority, admit)?;
+    let done = wait_job(&job, priority).await;
+    drop(held);
+    Ok(done?)
 }
 
 pub(crate) fn prepare(
@@ -463,8 +542,12 @@ async fn stream_stdout(
     tokio::spawn(async move {
         let _permit = permit;
         let wait = process.wait();
+        // pump_reader only sees a departed client on its next send, which never comes while
+        // ffmpeg is stuck on its input, so watch the receiver directly.
+        let gone = tx.clone();
         tokio::select! {
             () = shutdown.cancelled() => {}
+            () = gone.closed() => {}
             completed = pump_reader(stdout, estimate, tx) => {
                 if completed {
                     let _ = tokio::time::timeout(Duration::from_secs(10), wait).await;

@@ -37,14 +37,14 @@ const ROLE = { admin: 'Admin', member: 'Member' };
 export const roleName = (r) => ROLE[r] || r;
 
 export const PERMISSIONS = [
-  ['can_download', 'Download', 'Save songs for offline listening'],
-  ['can_upload', 'Upload', 'Add files to the uploads library'],
-  ['can_request', 'Request songs', 'Ask the server to find songs it does not have'],
-  ['legacy_subsonic', 'Legacy apps', 'App passwords for older Subsonic apps'],
+  ['can_download', 'Download songs', 'Keep songs on their phone to play offline'],
+  ['can_upload', 'Upload songs', 'Add their own files to the uploads library'],
+  ['can_request', 'Request songs', 'Ask Trackside to find songs the library does not have'],
+  ['legacy_subsonic', 'Use older Subsonic apps', 'Make app passwords for apps like Symfonium or Feishin'],
 ];
 
 export function warnIcon(severity) {
-  if (severity === 'critical') return icon('critical', 'tint-bad');
+  if (severity === 'critical' || severity === 'error') return icon('critical', 'tint-bad');
   if (severity === 'info') return icon('info', 'tint-muted');
   return icon('warning', 'tint-warn');
 }
