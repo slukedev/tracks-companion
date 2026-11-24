@@ -334,14 +334,16 @@ pub async fn run_with(
         .await
         .context("cannot read the server id")?;
 
-    let auth = Arc::new(Auth::new(
-        db.clone(),
-        &config.auth,
-        secret,
-        config.server.trusted_proxies.clone(),
-        Arc::clone(&clock),
-    )
-    .with_local_networks(config.server.local_networks.clone()));
+    let auth = Arc::new(
+        Auth::new(
+            db.clone(),
+            &config.auth,
+            secret,
+            config.server.trusted_proxies.clone(),
+            Arc::clone(&clock),
+        )
+        .with_local_networks(config.server.local_networks.clone()),
+    );
     trackside_api::build::apply_stored_auth(&db, &auth, &report).await;
     let transcoder: Arc<dyn Transcoder> =
         match trackside_media::FfmpegTranscoder::detect(config.media.ffmpeg_path.as_deref()) {

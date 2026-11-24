@@ -18,7 +18,7 @@ pub const MAX_STRING_BYTES: usize = 4096;
 /// Keys in one object, elements in one array, and how deep they nest.
 pub const MAX_KEYS: usize = 100;
 pub const MAX_ARRAY: usize = 1000;
-pub const MAX_DEPTH: usize = 5;
+pub const MAX_DEPTH: usize = 4;
 /// Ids, device ids and field names.
 pub const MAX_ID_BYTES: usize = 256;
 pub const MAX_DEVICE_ID_BYTES: usize = 128;
@@ -30,7 +30,7 @@ pub const MAX_SETTINGS: u64 = 1000;
 pub const MAX_DEVICES: usize = 200;
 pub const MAX_PREDECESSORS: usize = 32;
 /// How far ahead of the server's clock a client time may be.
-pub const MAX_CLOCK_AHEAD: Duration = Duration::from_secs(86_400);
+pub const MAX_CLOCK_AHEAD: Duration = Duration::from_hours(24);
 /// How long tombstones are kept, except plays', which are kept forever.
 pub const TOMBSTONE_DAYS: u64 = 90;
 /// One write transaction applies at most this many items, or works this long, before it

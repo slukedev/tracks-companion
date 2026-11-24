@@ -323,7 +323,12 @@ async fn secrets_need_https_unless_the_client_is_nearby() -> TestResult {
     ] {
         assert!(allowed(&arrived(peer, &[], false)?), "{peer}");
     }
-    for peer in ["203.0.113.7:1", "[2001:db8::5]:1", "100.128.0.1:1", "[::ffff:8.8.8.8]:1"] {
+    for peer in [
+        "203.0.113.7:1",
+        "[2001:db8::5]:1",
+        "100.128.0.1:1",
+        "[::ffff:8.8.8.8]:1",
+    ] {
         assert!(!allowed(&arrived(peer, &[], false)?), "{peer}");
         assert!(allowed(&arrived(peer, &[], true)?), "{peer} over https");
     }
@@ -393,8 +398,15 @@ async fn secrets_need_https_unless_the_client_is_nearby() -> TestResult {
     )?;
     let error = h
         .auth
-        .authenticate(&parts, "203.0.113.7".parse()?, trackside_auth::RouteClass::Api)
+        .authenticate(
+            &parts,
+            "203.0.113.7".parse()?,
+            trackside_auth::RouteClass::Api,
+        )
         .await;
-    assert!(matches!(error, Err(trackside_auth::AuthError::HttpsRequired)));
+    assert!(matches!(
+        error,
+        Err(trackside_auth::AuthError::HttpsRequired)
+    ));
     Ok(())
 }

@@ -36,7 +36,7 @@ impl LibraryGate {
         }
     }
 
-    fn semaphore(&self, library: LibraryKey) -> Arc<Semaphore> {
+    pub(crate) fn semaphore(&self, library: LibraryKey) -> Arc<Semaphore> {
         let mut libraries = self
             .libraries
             .lock()
@@ -56,6 +56,20 @@ impl LibraryGate {
         T: Send + 'static,
         F: FnOnce() -> std::io::Result<T> + Send + 'static,
     {
+        self.run_media(library, move || call().map_err(MediaError::from))
+            .await
+    }
+
+    /// As [`LibraryGate::run`], for a call that fails with a [`MediaError`].
+    pub(crate) async fn run_media<T, F>(
+        &self,
+        library: LibraryKey,
+        call: F,
+    ) -> Result<T, MediaError>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T, MediaError> + Send + 'static,
+    {
         let semaphore = self.semaphore(library);
         let Ok(Ok(permit)) = tokio::time::timeout(self.wait, semaphore.acquire_owned()).await
         else {
@@ -69,7 +83,6 @@ impl LibraryGate {
         })
         .await
         .map_err(|e| MediaError::Process(format!("filesystem task: {e}")))?
-        .map_err(MediaError::from)
     }
 }
 

@@ -1131,6 +1131,76 @@ async fn lost_artwork_is_restored_from_its_source_file() -> TestResult {
     Ok(())
 }
 
+/// Reading a lost original back from a library file goes through that library's semaphore, so
+/// a hung share answers "not found" quickly instead of taking another blocking thread.
+#[tokio::test]
+async fn restoring_artwork_waits_its_turn_on_the_library() -> TestResult {
+    use trackside_core::repo::artwork::{
+        self as art_repo, ArtworkSourceKind as RowKind, NewArtwork,
+    };
+    use trackside_core::repo::libraries::{self, NewLibrary};
+    let f = fixture()?;
+    let root = f.dir.path().join("music");
+    let library =
+        f.db.db
+            .write({
+                let root = root.clone();
+                move |tx| {
+                    libraries::create(
+                        tx,
+                        &NewLibrary {
+                            name: String::from("Music"),
+                            root,
+                            writable: false,
+                            watch: false,
+                            grant_all_users: true,
+                            granted_by: None,
+                        },
+                    )
+                }
+            })
+            .await?;
+    let png = tiny_png()?;
+    let cover = root.join("cover.png");
+    std::fs::write(&cover, &png)?;
+    assert_eq!(f.media.library_of(&cover).await, Some(library.key));
+    assert_eq!(f.media.library_of(f.dir.path()).await, None);
+    let meta = f.media.artwork_store().put_original(
+        &png,
+        ArtworkSource {
+            kind: ArtworkSourceKind::Sidecar,
+            path: Some(cover.clone()),
+        },
+    )?;
+    let row = NewArtwork {
+        id: meta.id.clone(),
+        mime: meta.mime.to_owned(),
+        width: meta.width,
+        height: meta.height,
+        bytes: meta.bytes,
+        source: RowKind::Sidecar,
+        source_path: Some(cover.clone()),
+    };
+    f.db.db.write(move |tx| art_repo::put(tx, &row)).await?;
+    std::fs::remove_file(f.media.artwork_store().original_path(&meta.id))?;
+
+    let stuck = f
+        .media
+        .libraries
+        .semaphore(library.key)
+        .acquire_many_owned(u32::try_from(gate::LIBRARY_PERMITS)?)
+        .await?;
+    let started = std::time::Instant::now();
+    let refused = f.media.artwork(&meta.id, None, &get(&[])).await;
+    assert!(matches!(refused, Err(MediaError::NotFound)), "{refused:?}");
+    assert!(started.elapsed() < gate::LIBRARY_WAIT * 3);
+    assert!(!f.media.artwork_store().has(&meta.id));
+    drop(stuck);
+    let response = f.media.artwork(&meta.id, None, &get(&[])).await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    Ok(())
+}
+
 #[tokio::test(start_paused = true)]
 async fn an_hls_job_names_its_owner_and_gives_back_the_hold_when_the_encoder_stops() -> TestResult {
     let f = fixture()?;

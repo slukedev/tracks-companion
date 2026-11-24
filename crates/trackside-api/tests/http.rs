@@ -1206,7 +1206,11 @@ async fn passwords_and_keys_over_plain_http_from_the_internet_are_refused() -> T
             let allowed = call(reqwest::Method::POST, path, peer, https).await?;
             let status = allowed.status();
             let body: Value = allowed.json().await.unwrap_or(Value::Null);
-            assert_ne!(code(body), "https_required", "{path} from {peer}, https {https}");
+            assert_ne!(
+                code(body),
+                "https_required",
+                "{path} from {peer}, https {https}"
+            );
             assert_ne!(status, 500, "{path}");
         }
     }

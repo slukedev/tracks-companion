@@ -126,7 +126,9 @@ pub(crate) fn forwarded_https(headers: &HeaderMap) -> bool {
         .and_then(|element| {
             element.split(';').find_map(|pair| {
                 let (name, value) = pair.split_once('=')?;
-                name.trim().eq_ignore_ascii_case("proto").then(|| https(value))
+                name.trim()
+                    .eq_ignore_ascii_case("proto")
+                    .then(|| https(value))
             })
         })
         .unwrap_or(false)

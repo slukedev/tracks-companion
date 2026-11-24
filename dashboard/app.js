@@ -259,7 +259,7 @@ function renderShell() {
   const closeSheet = button('', { iconName: 'close', ariaLabel: 'Close' });
   const sidebar = h('aside.sidebar', { id: 'sidebar', 'aria-label': 'All sections' },
     brand(),
-    h('div.sheet-head', h('h2.visually-hidden', 'All sections'), h('span'), closeSheet),
+    h('div.sheet-head', brand(), closeSheet),
     nav,
     h('div.nav-foot.nav', accountLink(), signOut));
 

@@ -81,7 +81,9 @@ pub enum AuthError {
     #[error("setup required")]
     SetupRequired,
     /// A password or key sent over plain HTTP from an address that is not nearby.
-    #[error("Use the server's https address. Passwords and keys aren't accepted over plain HTTP from outside your network.")]
+    #[error(
+        "Use the server's https address. Passwords and keys aren't accepted over plain HTTP from outside your network."
+    )]
     HttpsRequired,
     #[error("not found")]
     NotFound,
@@ -701,8 +703,7 @@ impl Auth {
         // could forge its headers, and they may use plain HTTP anyway, so its word is taken
         // for this one question. An internet client it forwards over plain HTTP is refused.
         let hop = [ipnet::IpNet::from(proxy::canonical(peer.ip()))];
-        proxy::forwarded_https(headers)
-            || self.is_nearby(proxy::client_ip(&hop, headers, peer))
+        proxy::forwarded_https(headers) || self.is_nearby(proxy::client_ip(&hop, headers, peer))
     }
 
     /// [`Auth::secrets_allowed`] as an error: [`AuthError::HttpsRequired`].

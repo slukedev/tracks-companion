@@ -10,9 +10,14 @@ use crate::limits::{
 };
 use crate::model::{Fields, PushItem, Reject};
 
-/// Text without control characters, at most `max` bytes, and not empty.
+/// Text without control characters (apart from the separator inside song identities), at
+/// most `max` bytes, and not empty.
 pub fn is_label(text: &str, max: usize) -> bool {
-    !text.is_empty() && text.len() <= max && !text.chars().any(char::is_control)
+    !text.is_empty()
+        && text.len() <= max
+        && !text
+            .chars()
+            .any(|c| c.is_control() && c != tracks_model::KEY_SEPARATOR)
 }
 
 /// Whether a client time is no further ahead of `now` than a day.
@@ -126,7 +131,10 @@ mod tests {
         PushItem {
             id: id.to_owned(),
             base_version: None,
-            fields: fields.as_object().cloned(),
+            fields: match fields {
+                Value::Object(map) => Some(map),
+                _ => None,
+            },
             client_modified_at: Millis(1000),
             device_id: String::from("D1"),
             deleted_at: None,

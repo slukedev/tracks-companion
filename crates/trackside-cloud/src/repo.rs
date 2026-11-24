@@ -9,7 +9,7 @@ use crate::entity::Entity;
 use crate::merge::{Meta, Next, Stored};
 use crate::model::{Fields, Usage, UsageEntry};
 
-fn json_error(e: serde_json::Error) -> DbError {
+fn json_error(e: &serde_json::Error) -> DbError {
     DbError::Invalid(format!("stored cloud JSON: {e}"))
 }
 
@@ -64,11 +64,11 @@ fn finish(raw: (Stored, Option<String>, Option<String>)) -> Result<Stored, DbErr
     stored.fields = fields
         .map(|f| serde_json::from_str::<Fields>(&f))
         .transpose()
-        .map_err(json_error)?;
+        .map_err(|e| json_error(&e))?;
     stored.meta = meta
         .map(|m| serde_json::from_str::<Meta>(&m))
         .transpose()
-        .map_err(json_error)?
+        .map_err(|e| json_error(&e))?
         .unwrap_or_default();
     Ok(stored)
 }
@@ -106,11 +106,11 @@ pub(crate) fn encode(id: &str, next: &Next) -> Result<Encoded, DbError> {
         .as_ref()
         .map(serde_json::to_string)
         .transpose()
-        .map_err(json_error)?;
+        .map_err(|e| json_error(&e))?;
     let meta = (!next.meta.is_empty())
         .then(|| serde_json::to_string(&next.meta))
         .transpose()
-        .map_err(json_error)?;
+        .map_err(|e| json_error(&e))?;
     let bytes = row_bytes(id, fields.as_deref(), meta.as_deref());
     Ok(Encoded {
         fields,
@@ -173,7 +173,7 @@ pub(crate) fn touch(
     let meta = (!meta.is_empty())
         .then(|| serde_json::to_string(meta))
         .transpose()
-        .map_err(json_error)?;
+        .map_err(|e| json_error(&e))?;
     c.prepare_cached(
         "UPDATE cloud_items SET meta = ?4, modified_at = ?5
          WHERE user_id = ?1 AND entity = ?2 AND item_id = ?3",
@@ -368,7 +368,7 @@ pub(crate) fn devices(c: &Connection, user: UserKey) -> Result<Vec<CloudDevice>,
     let rows = statement.query_map([user], device_row)?;
     rows.map(|row| {
         let (mut device, predecessors) = row?;
-        device.predecessors = serde_json::from_str(&predecessors).map_err(json_error)?;
+        device.predecessors = serde_json::from_str(&predecessors).map_err(|e| json_error(&e))?;
         Ok(device)
     })
     .collect()
@@ -393,7 +393,7 @@ pub(crate) fn put_device(
     server_device: Option<DeviceKey>,
     now: Millis,
 ) -> Result<(), DbError> {
-    let predecessors = serde_json::to_string(predecessors).map_err(json_error)?;
+    let predecessors = serde_json::to_string(predecessors).map_err(|e| json_error(&e))?;
     c.prepare_cached(
         "INSERT INTO cloud_devices (user_id, device_id, predecessors, server_device, name,
              platform, registered_at, updated_at)

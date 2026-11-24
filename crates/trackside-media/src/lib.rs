@@ -831,7 +831,8 @@ impl Media {
         };
         let store = self.artwork.clone();
         let wanted = id.clone();
-        let restored = tokio::task::spawn_blocking(move || {
+        let library = self.library_of(&source).await;
+        let restore = move || {
             let embedded = kind == ArtworkSourceKind::Embedded;
             let Some(bytes) = artwork::reextract_blocking(&wanted, embedded, &source)? else {
                 return Ok(false);
@@ -844,24 +845,42 @@ impl Media {
                 },
             )?;
             Ok::<_, MediaError>(true)
-        })
-        .await;
+        };
+        // A source inside a library is read behind that library's semaphore, like a stream.
+        let restored = match library {
+            Some(library) => self.libraries.run_media(library, restore).await,
+            None => tokio::task::spawn_blocking(restore)
+                .await
+                .unwrap_or_else(|e| Err(MediaError::Process(format!("restore task: {e}")))),
+        };
         match restored {
-            Ok(Ok(done)) => {
+            Ok(done) => {
                 if done {
                     tracing::info!(%id, "artwork restored from its source file");
                 }
                 done
             }
-            Ok(Err(e)) => {
+            Err(e) => {
                 tracing::debug!(%id, error = %e, "artwork not restored");
                 false
             }
-            Err(e) => {
-                tracing::debug!(%id, error = %e, "artwork restore task failed");
-                false
-            }
         }
+    }
+
+    /// The library whose root holds `path` (the deepest, if roots nest), for its semaphore.
+    async fn library_of(&self, path: &Path) -> Option<trackside_core::LibraryKey> {
+        let path = path.to_path_buf();
+        self.db
+            .read(move |c| {
+                Ok(trackside_core::repo::libraries::all(c)?
+                    .into_iter()
+                    .filter(|l| path.starts_with(&l.root))
+                    .max_by_key(|l| l.root.components().count())
+                    .map(|l| l.key))
+            })
+            .await
+            .ok()
+            .flatten()
     }
 
     /// Audio properties read with lofty.

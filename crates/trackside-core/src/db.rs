@@ -7,6 +7,7 @@
 //! [`ServerEvent::Changed`] only after the commit succeeds.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{
@@ -346,6 +347,9 @@ struct Inner {
     /// One async write at a time takes a blocking thread; the rest wait here without one, so
     /// a long write (or a slow disk) cannot fill the blocking pool with queued writers.
     write_slot: Arc<Semaphore>,
+    /// The seq of the last committed change, copied from the writer after each commit so
+    /// [`Db::current_seq`] never waits on the writer's lock (which a long write holds).
+    committed_seq: AtomicI64,
     events: EventBus,
     clock: Arc<dyn Clock>,
 }
@@ -460,6 +464,7 @@ impl Db {
         let readers = readers.max(1);
         Ok(Self {
             inner: Arc::new(Inner {
+                committed_seq: AtomicI64::new(next_seq - 1),
                 writer: Mutex::new(Writer { conn, next_seq }),
                 idle_readers: Mutex::new(Vec::new()),
                 path,
@@ -473,10 +478,10 @@ impl Db {
         })
     }
 
-    /// The seq of the last committed change (0 before any), for `ETag`s and the overview. Read
-    /// from the writer's counter, so it costs no query.
+    /// The seq of the last committed change (0 before any), for `ETag`s and the overview. A
+    /// copy of the writer's counter, so it costs no query and never blocks on a running write.
     pub fn current_seq(&self) -> Seq {
-        Seq(lock(&self.inner.writer).next_seq - 1)
+        Seq(self.inner.committed_seq.load(Ordering::Acquire))
     }
 
     /// Runs SQLite's `quick_check` (or the slower, thorough `integrity_check` with `full`) on
@@ -633,6 +638,7 @@ impl Db {
             } = write;
             tx.commit().map_err(|e| DbError::from(e).classify())?;
             *next_seq = after;
+            self.inner.committed_seq.store(after - 1, Ordering::Release);
             (value, changes, Seq(after - 1))
         };
         if !changes.is_empty() {

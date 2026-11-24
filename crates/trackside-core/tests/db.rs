@@ -617,3 +617,32 @@ fn queued_writes_do_not_take_the_blocking_pool() -> TestResult {
     assert!(read.is_ok(), "a read waited behind queued writes");
     Ok(())
 }
+
+/// `current_seq` is read from async code (`ETag`s, event ids), so it must not wait for a write.
+#[test]
+fn current_seq_does_not_wait_for_a_running_write() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let db = open(&options(&dir))?;
+    let before = db.current_seq();
+    let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let long = db.clone();
+    let holder = std::thread::spawn(move || {
+        long.write_blocking(|_| {
+            let _ = started_tx.send(());
+            let _ = release_rx.recv();
+            Ok(())
+        })
+    });
+    started_rx.recv()?;
+    let (seq_tx, seq_rx) = std::sync::mpsc::channel();
+    let reader = db.clone();
+    std::thread::spawn(move || {
+        let _ = seq_tx.send(reader.current_seq());
+    });
+    let seen = seq_rx.recv_timeout(std::time::Duration::from_secs(5));
+    let _ = release_tx.send(());
+    holder.join().map_err(|_| "writer panicked")??;
+    assert_eq!(seen?, before);
+    Ok(())
+}

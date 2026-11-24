@@ -120,7 +120,8 @@ Published ports can also hide who is connecting. Docker Desktop, and Docker's us
 on Linux (used for IPv6 when the container has no IPv6 address, or with `userland-proxy`
 on), hand every connection to Trackside from a private gateway address such as `172.17.0.1`.
 Trackside then sees internet clients as local: they share one address for rate limits, and
-over plain HTTP the dashboard gives them a session cookie that isn't marked secure. If the
+over plain HTTP they may sign in and send keys, which Trackside otherwise refuses from the
+internet, and get a session cookie that isn't marked secure. If the
 server is reachable from the internet, use host networking on Linux, or put a reverse proxy in
 front with HTTPS and list it in `server.trusted_proxies`.
 

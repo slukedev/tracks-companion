@@ -332,7 +332,10 @@ fn newest(
     at: i64,
 ) {
     let current = merged.meta.t.get(name).copied().unwrap_or(i64::MIN);
-    let differs = merged.fields.get(name) != Some(value) && !(value.is_null() && !merged.fields.contains_key(name));
+    let differs = match merged.fields.get(name) {
+        None => !value.is_null(),
+        Some(old) => old != value,
+    };
     if at > current {
         merged.meta.t.insert(name.to_owned(), at);
         merged.touched = true;
@@ -427,8 +430,7 @@ fn live(
         Rule::Setting => return Decision::Reject(Reject::Invalid),
     }
     if merged.fields == current {
-        let touch = (merged.touched && merged.meta != stored.meta
-            || rule == Rule::LastWriter && merged.touched)
+        let touch = (merged.touched && (rule == Rule::LastWriter || merged.meta != stored.meta))
             .then(|| (merged.meta.clone(), item.client_modified_at.max(stored.modified_at)));
         return if merged.lost {
             Decision::Conflict
@@ -461,7 +463,10 @@ mod tests {
         PushItem {
             id: id.to_owned(),
             base_version: None,
-            fields: fields.as_object().cloned(),
+            fields: match fields {
+                Value::Object(map) => Some(map),
+                _ => None,
+            },
             client_modified_at: Millis(at),
             device_id: device.to_owned(),
             deleted_at: None,
@@ -606,18 +611,18 @@ mod tests {
 
     #[test]
     fn stations_merge_by_extremes_and_first_values() {
-        let a = push("radio x", json!({"name": "Radio X", "firstSeenMs": 100, "lastSeenMs": 200}), 1, "D1");
-        let (_, s) = run(Entity::Stations, None, &a);
-        let b = push("radio x", json!({"name": "RADIO X", "firstSeenMs": 50, "lastSeenMs": 150,
+        let first = push("radio x", json!({"name": "Radio X", "firstSeenMs": 100, "lastSeenMs": 200}), 1, "D1");
+        let (_, s) = run(Entity::Stations, None, &first);
+        let second = push("radio x", json!({"name": "RADIO X", "firstSeenMs": 50, "lastSeenMs": 150,
                                        "catalogID": "ra.1"}), 2, "D2");
-        let (d, s) = run(Entity::Stations, s, &b);
+        let (d, s) = run(Entity::Stations, s, &second);
         assert!(matches!(d, Decision::Write(_)));
         assert_eq!(
             fields(s.as_ref()),
             json!({"name": "Radio X", "firstSeenMs": 50, "lastSeenMs": 200, "catalogID": "ra.1"})
         );
-        let c = push("radio x", json!({"lastSeenMs": 300, "catalogID": "ra.2"}), 3, "D3");
-        let (_, s) = run(Entity::Stations, s, &c);
+        let third = push("radio x", json!({"lastSeenMs": 300, "catalogID": "ra.2"}), 3, "D3");
+        let (_, s) = run(Entity::Stations, s, &third);
         assert_eq!(fields(s.as_ref())["lastSeenMs"], 300);
         assert_eq!(fields(s.as_ref())["catalogID"], "ra.1");
     }

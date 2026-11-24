@@ -1276,6 +1276,10 @@ host never makes internet clients look local). State-changing
 requests with a session must carry `X-Trackside-CSRF: 1` and an `Origin` matching the request's
 host; browsers cannot send that header cross-origin without a CORS preflight, which the server
 never grants. Changing a password ends every other session; revoking devices is a separate choice.
+Passwords and keys (login, sessions, re-authentication, password changes, setup, invites,
+resets, pairing, bearer keys and Subsonic credentials) are refused with `403 https_required`
+over plain HTTP from any client that isn't nearby, before they are checked; `server.local_networks`
+adds networks such as a LAN's global IPv6 prefix to the nearby ranges.
 Over plain HTTP the cookie is named `trackside_session`, because browsers refuse the `__Host-`
 prefix without `Secure`. A request over HTTPS ignores a `trackside_session` cookie, so a cookie
 set over plain HTTP (or planted by someone on the network) can't stand in for the secure one.
@@ -1863,6 +1867,7 @@ The server starts with no file at all: data in the platform default directory, l
 | `server.base_path` | `TRACKSIDE_SERVER__BASE_PATH` | `""` | URL prefix behind a proxy |
 | `server.public_urls` **D** | `TRACKSIDE_SERVER__PUBLIC_URLS` | `[]` | extra candidate URLs for pairing |
 | `server.trusted_proxies` | `TRACKSIDE_SERVER__TRUSTED_PROXIES` | `[]` | CIDRs whose forwarding headers are believed |
+| `server.local_networks` | `TRACKSIDE_SERVER__LOCAL_NETWORKS` | `[]` | CIDRs that count as your own network besides the private, link-local and Tailscale ranges, such as your LAN's global IPv6 prefix: passwords and keys are accepted from them over plain HTTP |
 | `server.max_connections` | `TRACKSIDE_SERVER__MAX_CONNECTIONS` | `1024` | open connections at once, across listeners; more are closed at once |
 | `server.header_timeout` | `TRACKSIDE_SERVER__HEADER_TIMEOUT` | `"30s"` | time to receive request headers; also how long an idle HTTP/1 keep-alive connection stays open |
 | `server.request_timeout` | `TRACKSIDE_SERVER__REQUEST_TIMEOUT` | `"60s"` | non-streaming handlers |
@@ -2059,7 +2064,7 @@ host running the server, and the user's network reputation when acquisition is o
 | Internet attacker | every public route | credential stuffing, enumeration, DoS | Argon2id, per-IP and per-account backoff, generic auth errors, constant-time comparisons, connection and request limits, header and body size limits, no user enumeration on login or invites |
 | Member | own data, granted libraries | reading others' data or libraries, admin escalation | every query filtered by `Principal.libraries` and `user_id` in repositories (not in handlers), admin routes require an admin session, tests per endpoint for cross-user access |
 | Stolen device key | that user's library and data | long-lived access | keys listed with last use and IP, one-click revoke, no admin scope, media tokens bound to the device epoch |
-| Network observer on plain HTTP | traffic | credential and token theft | the docs, and Tracks' server form, warn about plain HTTP addresses; keys are sent in headers, media tokens expire; legacy MD5 auth is opt-in |
+| Network observer on plain HTTP | traffic | credential and token theft | passwords, keys and setup, invite, reset and pairing secrets are refused over plain HTTP from addresses that aren't nearby (`403 https_required`, api.md section 2); the docs, and Tracks' server form, warn about plain HTTP addresses; media tokens expire; legacy MD5 auth is opt-in |
 | Malicious file in the library | tag parser, image decoder | parser crash, memory exhaustion, hang | lofty and image are pure Rust; per-file timeout and quarantine; `catch_unwind` around parsing; image dimension cap (12k by 12k) before decode |
 | Malicious peer or video (acquisition) | files in staging | path traversal, non-audio payloads, decoder exploits | canonical path checks, magic-byte allowlist, size limits, full decode in an ffmpeg subprocess, names built from sanitised tags |
 | Compromised yt-dlp release | runs as the server user | code execution | hash-checked updates from the official release, disabled by default, runs with the server's privileges only (non-root, read-only music in the shipped configs), optional `acquire.ytdlp.path` to a sandboxed wrapper |

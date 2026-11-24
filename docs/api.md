@@ -68,6 +68,20 @@ Contents:
 - **Request ids.** Every response has `X-Request-Id`; error bodies repeat it.
 - **Rate limit headers.** `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` on
   limited routes, and `Retry-After` on `429`.
+- **Plain HTTP.** A password, an API key or device key (`Authorization: Bearer`), or a setup,
+  invite, reset or pairing secret is accepted only over HTTPS (directly, or through a proxy in
+  `server.trusted_proxies` whose `X-Forwarded-Proto` or `Forwarded` says `https`), or over plain
+  HTTP from a nearby client: loopback, RFC 1918, link-local, `fc00::/7`, Tailscale's
+  `100.64.0.0/10`, or a network listed in `server.local_networks`. Otherwise the request is
+  refused with `403 https_required` before the credential is looked at. This covers
+  `POST /setup`, `/auth/session`, `/auth/login`, `/auth/reauth`, `/me/password`,
+  `/me/api-keys`, `/invites/{token}/accept`, `/password-resets/{token}`, `/pair/claim`,
+  `/pair/requests` and `GET /pair/requests/{id}`, every route reached with a bearer key, and
+  Subsonic `apiKey`, `u`+`p` and `u`+`t`+`s` (error 50, HTTP `403` on media endpoints). Session
+  cookies and media tokens are not affected: the session cookie is `Secure` off the LAN, and
+  media tokens expire. Forwarding headers from a peer that isn't a trusted proxy are ignored,
+  except that a nearby peer's are believed for this one decision (only someone on the network
+  could forge them).
 - **Concurrency per user.** At most 8 streams and downloads at once (including instant play
   and Subsonic `stream`, `download` and `hls`) and 3 transcodes at once (HLS jobs, transcoded
   downloads, Subsonic conversions) per user. Over that, `429 rate_limited` with
@@ -117,6 +131,7 @@ display in Tracks. `details` is optional and code-specific.
 | 403 | `forbidden` | authenticated but not allowed (role, scope, library) |
 | 403 | `csrf` | session request without the CSRF header or with a foreign `Origin` |
 | 403 | `setup_required` | an endpoint used before the first admin exists |
+| 403 | `https_required` | a password, key, or setup, invite, reset or pairing secret sent over plain HTTP from an address that isn't nearby (section 2, Plain HTTP) |
 | 403 | `reauth_required` | a sensitive change from a session whose last password check is over 10 minutes old; `POST /auth/reauth` and retry (section 6) |
 | 404 | `not_found` | unknown id, or an id the caller cannot see (never `403`, to avoid leaking existence) |
 | 405 | `method_not_allowed` | |

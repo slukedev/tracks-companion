@@ -36,6 +36,9 @@ const TRASH: &str = ".trash";
 /// network share), and nothing is evicted until it is back.
 const MARKER: &str = ".trackside-play-cache";
 
+/// Numbers each fetch.
+static FETCHES: AtomicU64 = AtomicU64::new(1);
+
 /// The limits on finished songs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Limits {
@@ -55,6 +58,8 @@ pub(crate) struct ExternalCache {
 
 #[derive(Debug)]
 struct Entry {
+    /// Which fetch made it, so a fetch that fails late never removes a newer one's entry.
+    fetch: u64,
     dir: PathBuf,
     file: GrowingFile,
     /// For a finished song, the sender every handed-out `file` listens to: more than one
@@ -153,6 +158,7 @@ impl Entry {
             bytes: manifest.bytes,
         });
         Self {
+            fetch: 0,
             dir,
             file: GrowingFile { path, state },
             holder: Some(holder),
@@ -258,11 +264,12 @@ impl ExternalCache {
         Picked { failed, victims }
     }
 
-    /// Takes a song off the index once its folder is gone, or hands it back.
+    /// Takes a song off the index once its folder is gone, or hands it back. Names that
+    /// resolved to it stay: a play of it may be waiting to fetch it again, and the next pick
+    /// drops those that are left over.
     fn evicted(&mut self, token: &CandidateToken, gone: bool) {
         if gone {
             self.entries.remove(token);
-            self.by_key.retain(|_, t| t != token);
         } else if let Some(entry) = self.entries.get_mut(token) {
             entry.evicting = false;
         }
@@ -483,7 +490,9 @@ impl Inner {
                 return Err(self.unavailable());
             }
         };
+        let fetch = FETCHES.fetch_add(1, Ordering::Relaxed);
         let entry = Entry {
+            fetch,
             dir,
             file: streaming.growing,
             holder: None,
@@ -511,17 +520,13 @@ impl Inner {
             match done {
                 Ok(fetched) => {
                     lock(&slot.cooldown).succeed();
-                    inner.external_finished(&token, fetched.bytes).await;
+                    inner.external_finished(&token, fetch, fetched.bytes).await;
                 }
                 Err(e) => {
                     if !cancel.is_cancelled() {
                         inner.external_failed(slot, &e);
                     }
-                    let _starting = inner.external_start.lock().await;
-                    let dir = lock(&inner.external).entries.remove(&token).map(|e| e.dir);
-                    if let Some(dir) = dir {
-                        let _ = inner.within(tokio::fs::remove_dir_all(dir)).await;
-                    }
+                    inner.external_aborted(&token, fetch).await;
                 }
             }
             inner.sweep_external().await;
@@ -529,14 +534,29 @@ impl Inner {
         Ok(play)
     }
 
+    /// Removes a fetch that failed, unless a newer fetch of the song took its place.
+    async fn external_aborted(&self, token: &CandidateToken, fetch: u64) {
+        let _starting = self.external_start.lock().await;
+        let dir = {
+            let mut cache = lock(&self.external);
+            let ours = cache.entries.get(token).is_some_and(|e| e.fetch == fetch);
+            ours.then(|| cache.entries.remove(token))
+                .flatten()
+                .map(|e| e.dir)
+        };
+        if let Some(dir) = dir {
+            let _ = self.within(tokio::fs::remove_dir_all(dir)).await;
+        }
+    }
+
     /// Marks a fetch complete and writes its `entry.json`, so it survives a restart.
-    async fn external_finished(&self, token: &CandidateToken, bytes: u64) {
+    async fn external_finished(&self, token: &CandidateToken, fetch: u64, bytes: u64) {
         let _starting = self.external_start.lock().await;
         let now = self.now();
         let written = {
             let mut cache = lock(&self.external);
             let keys = cache.keys_of(token);
-            let Some(entry) = cache.entries.get_mut(token) else {
+            let Some(entry) = cache.entries.get_mut(token).filter(|e| e.fetch == fetch) else {
                 return;
             };
             let (holder, state) = watch::channel(GrowState::Complete { bytes });
@@ -1012,7 +1032,11 @@ mod tests {
         );
         cache.evicted(&token, true);
         assert!(cache.entries.is_empty());
-        assert!(cache.by_key.is_empty());
+        cache.pick(NOW, limits(0, 0), GRACE);
+        assert!(
+            cache.by_key.is_empty(),
+            "a leftover name goes at the next pick"
+        );
     }
 
     #[test]

@@ -136,7 +136,15 @@ with bridge networking it silently does nothing, and you add the server by addre
 ## Plain HTTP
 
 Plain HTTP is fine on your own network and over Tailscale, which encrypts everything itself.
-Anywhere else, use HTTPS: device keys and media tokens travel with every request. Tracks holds
+Anywhere else, use HTTPS: device keys and media tokens travel with every request. Trackside
+enforces this: over plain HTTP it accepts passwords, app passwords, API keys and device keys
+only from your own network (loopback, private and link-local addresses, `fc00::/7`, and
+Tailscale's `100.64.0.0/10`). From anywhere else, signing in, the dashboard, Subsonic apps
+and the Tracks app get "Use the server's https address" (`403 https_required`) instead. Behind
+a reverse proxy that serves HTTPS, list the proxy in `server.trusted_proxies` so Trackside
+believes its `X-Forwarded-Proto`. If your LAN uses global IPv6 addresses rather than private
+ones, add its prefix to `server.local_networks`, for example
+`TRACKSIDE_SERVER__LOCAL_NETWORKS=2001:db8:1234:5678::/64`. Tracks holds
 to this itself: it sends a key, code or password over plain HTTP only to a nearby address (a
 private or Tailscale IP, or a `.local`, `.lan`, `.internal`, `.home.arpa` or `.ts.net` name), and
 only after that address has proven it is your server. A public `http://` address is never used

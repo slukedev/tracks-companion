@@ -117,6 +117,7 @@ keep = 14
 | `server.base_path` | `TRACKSIDE_SERVER__BASE_PATH` | `""` | URL prefix behind a proxy, such as `/music`; a missing leading `/` is added and a trailing one removed |
 | `server.public_urls` **D** | `TRACKSIDE_SERVER__PUBLIC_URLS` | `[]` | extra candidate URLs for pairing |
 | `server.trusted_proxies` | `TRACKSIDE_SERVER__TRUSTED_PROXIES` | `[]` | CIDRs whose forwarding headers are believed |
+| `server.local_networks` | `TRACKSIDE_SERVER__LOCAL_NETWORKS` | `[]` | CIDRs that count as your own network besides the private, link-local and Tailscale ranges, such as your LAN's global IPv6 prefix: passwords and keys are accepted from them over plain HTTP |
 | `server.max_connections` | `TRACKSIDE_SERVER__MAX_CONNECTIONS` | `1024` | open connections at once, across listeners; more are closed at once |
 | `server.header_timeout` | `TRACKSIDE_SERVER__HEADER_TIMEOUT` | `"30s"` | time to receive request headers; also how long an idle HTTP/1 keep-alive connection stays open |
 | `server.request_timeout` | `TRACKSIDE_SERVER__REQUEST_TIMEOUT` | `"60s"` | non-streaming handlers |

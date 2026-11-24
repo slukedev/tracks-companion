@@ -9,7 +9,7 @@ use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 use base64::Engine;
-use http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+use http::{HeaderMap, HeaderValue, StatusCode, header};
 use sha2::{Digest, Sha256};
 use trackside_auth::extract::{Authed, ClientIp, SecureTransport, SessionUser};
 use trackside_auth::{
@@ -839,11 +839,15 @@ async fn create_key(
     SessionUser(principal): SessionUser,
     State(state): State<ApiState>,
     ClientIp(ip): ClientIp,
-    method: Method,
-    uri: http::Uri,
-    headers: HeaderMap,
+    parts: http::request::Parts,
     body: Bytes,
 ) -> ApiResult<Response> {
+    let http::request::Parts {
+        method,
+        uri,
+        headers,
+        ..
+    } = parts;
     require_recent_auth(&state, &principal)?;
     let request: NewKey = parse_json(&body)?;
     let user = principal.access.user;
