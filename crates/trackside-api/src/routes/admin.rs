@@ -230,6 +230,7 @@ pub fn audit_summary(action: &str, target: Option<&str>) -> Option<String> {
         ("user.libraries", _) => String::from("Changed library access"),
         ("backup.create", _) => String::from("Started a backup"),
         ("backup.delete", Some(t)) => format!("Deleted backup {t}"),
+        ("backup.download", Some(t)) => format!("Downloaded backup {t}"),
         ("library.create", Some(t)) => format!("Added library {t}"),
         ("acquisition.request", Some(t)) => format!("Requested {t}"),
         ("settings.update", _) => String::from("Changed settings"),
@@ -1496,6 +1497,10 @@ async fn patch_settings(
     })
     .await?;
     apply_acquisition_settings(&state, &changes).await;
+    if changes.iter().any(|(n, _)| *n == settings::LEGACY_SUBSONIC) {
+        let on = settings::effective_bool(&state, settings::LEGACY_SUBSONIC).await;
+        state.auth.set_legacy_subsonic(on);
+    }
     if let Some((_, key)) = changes.iter().find(|(n, _)| *n == settings::LASTFM_API_KEY) {
         state.enrich.set_key(key.as_str().map(Secret::new));
     }
@@ -1847,6 +1852,7 @@ async fn create_backup(
 async fn download_backup(
     AdminSession(principal): AdminSession,
     State(state): State<ApiState>,
+    ClientIp(ip): ClientIp,
     Path(name): Path<String>,
 ) -> ApiResult<Response> {
     require_recent_auth(&state, &principal)?;
@@ -1865,6 +1871,15 @@ async fn download_backup(
         .await
         .map_err(|e| ApiError::internal(&e))?
         .len();
+    audit_log(
+        &state,
+        Some(&principal),
+        Some(ip),
+        "backup.download",
+        Some(name.clone()),
+        None,
+    )
+    .await;
     let stream = tokio_util::io::ReaderStream::new(file);
     let mut response = Body::from_stream(stream).into_response();
     let headers = response.headers_mut();

@@ -12,26 +12,27 @@ use serde_json::Value;
 
 use crate::client::Client;
 
-/// Where the `trackside` binary is: `TRACKSIDE_BIN`, else next to the running executable's
-/// target directory (`target/<profile>/trackside`).
+/// Where the `trackside` binary is: `TRACKSIDE_BIN`, else in the profile directory that holds
+/// the running executable (`target/<profile>/trackside`). Test executables sit below it, in
+/// `deps/` or, since Cargo 1.100, in `build/<package>/<hash>/out/`, so look up the ancestors.
 pub fn binary() -> anyhow::Result<PathBuf> {
     if let Some(path) = std::env::var_os("TRACKSIDE_BIN") {
         return Ok(PathBuf::from(path));
     }
     let exe = std::env::current_exe()?;
-    let mut dir = exe.parent().context("the executable has no directory")?;
-    if dir.ends_with("deps") {
-        dir = dir.parent().context("deps has no parent")?;
+    let name = format!("trackside{}", std::env::consts::EXE_SUFFIX);
+    let dir = exe.parent().context("the executable has no directory")?;
+    if let Some(found) = dir
+        .ancestors()
+        .map(|ancestor| ancestor.join(&name))
+        .find(|candidate| candidate.is_file())
+    {
+        return Ok(found);
     }
-    let candidate = dir.join(format!("trackside{}", std::env::consts::EXE_SUFFIX));
-    if candidate.is_file() {
-        Ok(candidate)
-    } else {
-        bail!(
-            "{} is missing; build it with `cargo build -p trackside-server --bin trackside` (add --release for the performance run) or set TRACKSIDE_BIN",
-            candidate.display()
-        )
-    }
+    bail!(
+        "no {name} above {}; build it with `cargo build -p trackside-server --bin trackside` (add --release for the performance run) or set TRACKSIDE_BIN",
+        dir.display()
+    )
 }
 
 /// How to start a server.

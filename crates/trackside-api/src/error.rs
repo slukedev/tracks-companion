@@ -321,6 +321,7 @@ impl From<MediaError> for ApiError {
                 "insufficient_storage",
                 "There is not enough free space for the transcode.",
             ),
+            MediaError::LibraryUnavailable => Self::library_unavailable(),
             MediaError::Db(db) => db.into(),
             other => Self::internal(&other),
         }

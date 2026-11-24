@@ -656,7 +656,11 @@ impl Db {
             conn.execute("VACUUM INTO ?1", [partial_text])?;
             Ok(())
         })?;
+        // VACUUM INTO does not sync; without this a power cut after the rename can leave a
+        // file under the final name whose pages never reached the disk.
+        std::fs::File::open(&partial)?.sync_all()?;
         std::fs::rename(&partial, target)?;
+        sync_parent(target)?;
         Ok(())
     }
 
@@ -671,6 +675,17 @@ impl Db {
             .optional()?;
         Ok(())
     }
+}
+
+/// Makes a rename in `path`'s folder durable. Only Unix can open a folder to sync it.
+fn sync_parent(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::File::open(dir)?.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
 }
 
 fn join<T>(result: Result<Result<T, DbError>, tokio::task::JoinError>) -> Result<T, DbError> {

@@ -85,7 +85,7 @@ pub(crate) const KEYS: &[Key] = &[
         value: |c| json!(c.media.cellular_profile),
     },
     Key {
-        name: "auth.legacy_subsonic",
+        name: LEGACY_SUBSONIC,
         kind: Kind::Bool,
         value: |c| json!(c.auth.legacy_subsonic),
     },
@@ -173,6 +173,24 @@ pub(crate) const KEYS: &[Key] = &[
 
 /// The server-wide Last.fm key for suggestions.
 pub const LASTFM_API_KEY: &str = "enrichment.lastfm_api_key";
+/// Whether legacy Subsonic auth (app passwords) is on server-wide.
+pub(crate) const LEGACY_SUBSONIC: &str = "auth.legacy_subsonic";
+
+/// Hands the `auth.*` settings the dashboard stored to `auth`, unless the configuration sets
+/// them. The server calls it once at start; `PATCH /admin/settings` keeps it current after.
+pub async fn apply_stored_auth(db: &Db, auth: &Auth, report: &trackside_core::ConfigReport) {
+    if report.source(LEGACY_SUBSONIC) != ConfigSource::Default {
+        return;
+    }
+    let stored = db
+        .read(|c| trackside_core::repo::settings::get::<Value>(c, LEGACY_SUBSONIC))
+        .await;
+    match stored {
+        Ok(Some(Value::Bool(on))) => auth.set_legacy_subsonic(on),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "cannot read auth.legacy_subsonic"),
+    }
+}
 
 /// What a secret setting is stored as: `{"sealed": "<base64>"}`.
 pub(crate) fn sealed_value(auth: &Auth, name: &str, plain: &str) -> Result<Value, String> {

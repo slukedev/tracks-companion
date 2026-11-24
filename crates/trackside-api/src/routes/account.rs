@@ -81,6 +81,20 @@ fn is_https(parts_extensions: &http::Extensions) -> bool {
     parts_extensions.get::<Https>().is_some()
 }
 
+/// Whether the session cookie must be `Secure` (and `__Host-`): always, except over plain HTTP
+/// from a local client that reached the server directly or through a trusted proxy.
+fn cookie_secure(
+    state: &ApiState,
+    headers: &HeaderMap,
+    extensions: &http::Extensions,
+    client: IpAddr,
+) -> bool {
+    let peer = extensions
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|info| info.0.ip());
+    is_https(extensions) || !state.auth.is_local_client(headers, peer, client)
+}
+
 fn with_cookie(mut response: Response, cookie: &str) -> Response {
     if let Ok(value) = HeaderValue::from_str(cookie) {
         response.headers_mut().append(header::SET_COOKIE, value);
@@ -154,7 +168,7 @@ async fn signed_in(
     user: UserKey,
     ip: IpAddr,
     headers: &HeaderMap,
-    https: bool,
+    extensions: &http::Extensions,
     status: StatusCode,
 ) -> ApiResult<Response> {
     let agent = headers
@@ -167,7 +181,7 @@ async fn signed_in(
         .await?;
     let record = load_user(state, user).await?;
     let now = state.db.clock().now();
-    let secure = https || !state.auth.is_local_client(headers, ip);
+    let secure = cookie_secure(state, headers, extensions, ip);
     let cookie = session.set_cookie(secure, now);
     Ok(with_cookie(json_with(status, &map::user(&record)), &cookie))
 }
@@ -208,7 +222,7 @@ async fn setup(
         user,
         ip,
         &headers,
-        is_https(&extensions),
+        &extensions,
         StatusCode::CREATED,
     )
     .await
@@ -261,7 +275,7 @@ async fn session_create(
         user,
         ip,
         &headers,
-        is_https(&extensions),
+        &extensions,
         StatusCode::OK,
     )
     .await
@@ -277,7 +291,7 @@ async fn session_end(
     if let Some(value) = cookie_value(&headers) {
         state.auth.end_session(&value).await?;
     }
-    let secure = is_https(&extensions) || !state.auth.is_local_client(&headers, ip);
+    let secure = cookie_secure(&state, &headers, &extensions, ip);
     Ok(with_cookie(
         StatusCode::NO_CONTENT.into_response(),
         &SessionCookie::clear_cookie(secure),
@@ -727,7 +741,7 @@ async fn invite_accept(
         key,
         ip,
         &headers,
-        is_https(&extensions),
+        &extensions,
         StatusCode::CREATED,
     )
     .await

@@ -39,7 +39,7 @@ pub mod build {
     pub use crate::routes::enrichment::status_body as enrichment_status_body;
     pub use crate::routes::media::{decision_body, download_name, reason_text};
     pub use crate::routes::public::capabilities_body;
-    pub use crate::routes::settings::{LASTFM_API_KEY, stored_secret};
+    pub use crate::routes::settings::{LASTFM_API_KEY, apply_stored_auth, stored_secret};
     pub use crate::routes::social::{check_listen, listen_result};
     pub use crate::routes::stats::{
         DayBuckets, day_buckets, listening_body, requests_body, storage_body, streams_body,

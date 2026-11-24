@@ -22,8 +22,12 @@ pub const FREE_FAILURES: u32 = 5;
 pub const FIRST_BACKOFF: Duration = Duration::from_secs(2);
 /// The longest backoff delay.
 pub const MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
-/// Failures for one account from anywhere in an hour before every attempt is refused.
+/// Failures for one account from anywhere in an hour before attempts from addresses it has
+/// not signed in from are refused.
 pub const ACCOUNT_HOURLY_CEILING: usize = 100;
+/// How long a success from an address keeps that address past the hourly ceiling, so guesses
+/// from elsewhere cannot lock the owner out from where they usually sign in.
+pub const KNOWN_ADDRESS_FOR: Duration = Duration::from_secs(30 * 86_400);
 const HOUR: Duration = Duration::from_secs(3600);
 /// Failed attempts an IP may make at once before its rate applies.
 pub(crate) const IP_BURST: u32 = 5;
@@ -187,6 +191,9 @@ impl<K: Hash + Eq + Clone> RequestLimiter<K> {
 pub(crate) enum Account {
     User(UserKey),
     Name(String),
+    /// Subsonic app password checks, counted apart from the login password: app passwords
+    /// are random, and a legacy client retrying with a stale one must not hold up sign-in.
+    AppPasswords(Box<Account>),
 }
 
 impl Account {
@@ -195,6 +202,10 @@ impl Account {
             Some(user) => Self::User(user),
             None => Self::Name(typed.trim().to_lowercase()),
         }
+    }
+
+    pub(crate) fn app_passwords(self) -> Self {
+        Self::AppPasswords(Box::new(self))
     }
 }
 
@@ -209,6 +220,8 @@ struct Streak {
 pub(crate) struct Backoff {
     streaks: Mutex<HashMap<(Account, IpKey), Streak>>,
     hourly: Mutex<HashMap<Account, VecDeque<Millis>>>,
+    /// The last success per account and address, which exempts that pair from the ceiling.
+    known: Mutex<HashMap<(Account, IpKey), Millis>>,
     clock: Arc<dyn Clock>,
 }
 
@@ -217,8 +230,15 @@ impl Backoff {
         Self {
             streaks: Mutex::new(HashMap::new()),
             hourly: Mutex::new(HashMap::new()),
+            known: Mutex::new(HashMap::new()),
             clock,
         }
+    }
+
+    fn known(&self, pair: &(Account, IpKey), now: Millis) -> bool {
+        lock(&self.known)
+            .get(pair)
+            .is_some_and(|at| *at <= now && now.since(*at) < KNOWN_ADDRESS_FOR)
     }
 
     /// The delay owed after `failures` consecutive failures.
@@ -236,13 +256,17 @@ impl Backoff {
     /// its hourly ceiling.
     pub(crate) fn check(&self, account: &Account, ip: IpAddr) -> Result<(), Duration> {
         let now = self.clock.now();
-        if let Some(streak) = lock(&self.streaks).get(&(account.clone(), IpKey::from(ip))) {
+        let pair = (account.clone(), IpKey::from(ip));
+        if let Some(streak) = lock(&self.streaks).get(&pair) {
             let until = streak
                 .last
                 .saturating_add(Self::delay_after(streak.failures));
             if until > now {
                 return Err(until.since(now));
             }
+        }
+        if self.known(&pair, now) {
+            return Ok(());
         }
         let mut hourly = lock(&self.hourly);
         if let Some(times) = hourly.get_mut(account) {
@@ -289,7 +313,17 @@ impl Backoff {
     }
 
     pub(crate) fn succeed(&self, account: &Account, ip: IpAddr) {
-        lock(&self.streaks).remove(&(account.clone(), IpKey::from(ip)));
+        let pair = (account.clone(), IpKey::from(ip));
+        lock(&self.streaks).remove(&pair);
+        let now = self.clock.now();
+        let mut known = lock(&self.known);
+        if known.len() >= MAX_TRACKED && !known.contains_key(&pair) {
+            known.retain(|_, at| *at <= now && now.since(*at) < KNOWN_ADDRESS_FOR);
+            if known.len() >= MAX_TRACKED {
+                known.clear();
+            }
+        }
+        known.insert(pair, now);
     }
 }
 
@@ -404,6 +438,47 @@ mod tests {
         }
         assert!(backoff.check(&luke, B).is_err());
         clock.advance(HOUR);
+        assert!(backoff.check(&luke, B).is_ok());
+    }
+
+    #[test]
+    fn the_ceiling_does_not_lock_the_owner_out_where_they_signed_in_before() {
+        let clock = clock();
+        let backoff = Backoff::new(clock.clone());
+        let luke = Account::User(UserKey(1));
+        backoff.succeed(&luke, A);
+        for i in 0..ACCOUNT_HOURLY_CEILING {
+            let ip = IpAddr::V4(std::net::Ipv4Addr::from(
+                0x0a00_0000 + u32::try_from(i).unwrap_or(0),
+            ));
+            backoff.fail(&luke, ip);
+        }
+        assert!(backoff.check(&luke, B).is_err());
+        assert!(backoff.check(&luke, A).is_ok());
+        // The exemption is for the ceiling only: guessing from a known address still backs off.
+        for _ in 0..FREE_FAILURES {
+            backoff.fail(&luke, A);
+        }
+        assert_eq!(backoff.check(&luke, A), Err(FIRST_BACKOFF));
+        backoff.succeed(&luke, A);
+        clock.advance(KNOWN_ADDRESS_FOR);
+        assert!(backoff.check(&luke, A).is_ok());
+        for i in 0..ACCOUNT_HOURLY_CEILING {
+            backoff.fail(&luke, IpAddr::V4(std::net::Ipv4Addr::from(0x0b00_0000 + i as u32)));
+        }
+        clock.advance(Duration::from_secs(1));
+        assert!(backoff.check(&luke, A).is_err());
+    }
+
+    #[test]
+    fn app_password_failures_do_not_count_against_sign_in() {
+        let backoff = Backoff::new(clock());
+        let luke = Account::User(UserKey(1));
+        let legacy = luke.clone().app_passwords();
+        for i in 0..ACCOUNT_HOURLY_CEILING {
+            backoff.fail(&legacy, IpAddr::V4(std::net::Ipv4Addr::from(0x0a00_0000 + i as u32)));
+        }
+        assert!(backoff.check(&legacy, B).is_err());
         assert!(backoff.check(&luke, B).is_ok());
     }
 

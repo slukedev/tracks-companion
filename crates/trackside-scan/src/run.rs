@@ -34,6 +34,9 @@ pub const BATCH_FILES: usize = 200;
 pub const BATCH_WAIT: Duration = Duration::from_millis(250);
 /// Capacity of the walker-to-reader channel.
 pub const JOB_QUEUE: usize = 1024;
+/// How long a stopped run waits for the walker before leaving it behind. A walker stuck in a
+/// `stat` on a hung mount cannot be interrupted and would otherwise block every later scan.
+pub const WALKER_GRACE: Duration = Duration::from_secs(10);
 
 /// The scanner settings a run uses.
 #[derive(Clone, Debug)]
@@ -170,6 +173,8 @@ pub fn execute(
     let (msg_tx, msg_rx) = mpsc::sync_channel::<Msg>(JOB_QUEUE);
     let (job_tx, job_rx) = mpsc::sync_channel::<Job>(JOB_QUEUE);
     let job_rx = Arc::new(Mutex::new(job_rx));
+    // Stops this run's threads: the caller's cancel, or the run itself when storage stalls.
+    let stop = input.cancel.child_token();
 
     let walker = {
         let ctx = WalkCtx {
@@ -182,7 +187,7 @@ pub fn execute(
             settle: input.settle,
             settings: settings.clone(),
             catalog: Arc::clone(&services.catalog),
-            cancel: input.cancel.clone(),
+            cancel: stop.clone(),
         };
         let tx = msg_tx.clone();
         std::thread::Builder::new()
@@ -202,18 +207,25 @@ pub fn execute(
         let reader = Arc::clone(&services.reader);
         let artwork = Arc::clone(&services.artwork);
         let cache = Arc::clone(&art_cache);
-        let cancel = input.cancel.clone();
+        let cancel = stop.clone();
         let timeout = settings.file_timeout;
         let handle = std::thread::Builder::new()
             .name("trackside-read".into())
             .spawn(move || {
-                let mut safe = SafeReader::new(reader, timeout);
+                let mut safe = SafeReader::new(reader, timeout).with_stop(cancel.clone());
                 loop {
+                    // A timed wait, so a reader notices a stop even while the walker that
+                    // feeds it is stuck on a hung mount and never closes the queue.
                     let job = {
                         let guard = rx.lock().unwrap_or_else(PoisonError::into_inner);
-                        guard.recv()
+                        guard.recv_timeout(Duration::from_millis(200))
                     };
-                    let Ok(job) = job else { break };
+                    let job = match job {
+                        Ok(job) => job,
+                        Err(RecvTimeoutError::Timeout) if cancel.is_cancelled() => break,
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    };
                     if cancel.is_cancelled() {
                         continue;
                     }
@@ -234,6 +246,9 @@ pub fn execute(
         readers.push(handle);
     }
     drop(msg_tx);
+    // Only the readers hold the queue now, so if they all stop (the coordinator failed) the
+    // walker's next send fails instead of blocking forever on a full queue.
+    drop(job_rx);
 
     let mut coordinator = Coordinator {
         services,
@@ -253,15 +268,36 @@ pub fn execute(
         dirty: HashSet::new(),
         upserted: HashSet::new(),
         summary: None,
+        stop: stop.clone(),
+        stalled: None,
     };
     let result = coordinator.drain(&msg_rx);
+    if result.is_err() {
+        stop.cancel();
+    }
     drop(msg_rx);
-    let _ = walker.join();
     for reader in readers {
         let _ = reader.join();
     }
+    join_walker(walker, &stop);
     result?;
     coordinator.finish(&root)
+}
+
+/// Joins the walker, or after a stop gives it [`WALKER_GRACE`] and then leaves it: it ends on
+/// its own once its blocked call returns, since every channel it sends on is closed by then.
+fn join_walker(walker: std::thread::JoinHandle<()>, stop: &CancellationToken) {
+    if stop.is_cancelled() {
+        let deadline = Instant::now() + WALKER_GRACE;
+        while !walker.is_finished() {
+            if Instant::now() >= deadline {
+                tracing::warn!("the folder walker is stuck on the library's storage; leaving it");
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    let _ = walker.join();
 }
 
 struct WalkCtx {
@@ -555,25 +591,19 @@ fn classify(
                 continue;
             }
         };
-        let meta = if file_type.is_symlink() {
+        let stat = if file_type.is_symlink() {
             if !ctx.settings.follow_symlinks {
                 continue;
             }
-            match std::fs::metadata(&path) {
-                Ok(m) => m,
-                Err(_) => continue,
-            }
+            std::fs::metadata(&path)
         } else {
-            match entry.metadata() {
-                Ok(m) => m,
-                Err(e) => {
-                    let child = child_rel(rel, name);
-                    if ctx.settings.extensions.matches(name) {
-                        send(msgs, Msg::Seen(vec![child.clone()]))?;
-                    }
-                    send(msgs, Msg::Error(error_row(&child, &e.to_string())))?;
-                    continue;
-                }
+            entry.metadata()
+        };
+        let meta = match stat {
+            Ok(m) => m,
+            Err(e) => {
+                stat_failed(ctx, rel, name, file_type, &e, msgs)?;
+                continue;
             }
         };
         out.entries.push(DirEntrySummary {
@@ -593,6 +623,36 @@ fn classify(
         }
     }
     Ok(out)
+}
+
+/// An entry that could not be stat'ed. Its songs must not be marked missing: an audio file
+/// counts as seen, and a folder (or a followed link to one, such as a share mounted elsewhere
+/// that went away) is unreadable. A link the index never had a folder for is just broken.
+fn stat_failed(
+    ctx: &WalkCtx,
+    rel: &[u8],
+    name: &[u8],
+    file_type: std::fs::FileType,
+    error: &std::io::Error,
+    msgs: &SyncSender<Msg>,
+) -> Result<(), WalkStop> {
+    let child = child_rel(rel, name);
+    if ctx.settings.extensions.matches(name) {
+        send(msgs, Msg::Seen(vec![child.clone()]))?;
+        return send(msgs, Msg::Error(error_row(&child, &error.to_string())));
+    }
+    let known_folder = file_type.is_dir()
+        || (file_type.is_symlink() && ctx.catalog.folder_state(ctx.library, &child)?.is_some());
+    if known_folder {
+        return send(msgs, Msg::Unreadable(error_row(&child, &error.to_string())));
+    }
+    if file_type.is_symlink() {
+        return send(
+            msgs,
+            Msg::Error(error_row(&child, &format!("broken link: {error}"))),
+        );
+    }
+    Ok(())
 }
 
 struct FolderFiles<'a> {
@@ -708,6 +768,9 @@ struct Coordinator<'a> {
     dirty: HashSet<Vec<u8>>,
     upserted: HashSet<Vec<u8>>,
     summary: Option<WalkSummary>,
+    stop: CancellationToken,
+    /// Why the run stopped itself because the library's storage stopped answering.
+    stalled: Option<String>,
 }
 
 impl Coordinator<'_> {
@@ -727,7 +790,7 @@ impl Coordinator<'_> {
             if self.pending.files.len() >= BATCH_FILES || due {
                 self.flush()?;
             }
-            if self.input.cancel.is_cancelled() {
+            if self.stop.is_cancelled() {
                 break;
             }
         }
@@ -813,6 +876,17 @@ impl Coordinator<'_> {
                 self.dirty.insert(folder);
                 self.pending_at();
                 self.pending.errors.push(error_row(&result.rel, &error));
+            }
+            Outcome::Stalled(reason) => {
+                self.counts.errors += 1;
+                self.dirty.insert(folder);
+                self.pending_at();
+                self.pending.errors.push(error_row(&result.rel, &reason));
+                if self.stalled.is_none() {
+                    tracing::warn!(library = %self.input.library.id, %reason, "stopping the scan");
+                    self.stalled = Some(reason);
+                }
+                self.stop.cancel();
             }
             Outcome::Quarantine(reason) => {
                 self.counts.errors += 1;
@@ -925,13 +999,21 @@ impl Coordinator<'_> {
     }
 
     fn finish(mut self, root: &Path) -> Result<RunReport, DbError> {
-        let summary = self.summary.take().unwrap_or_default();
+        if let Some(reason) = self.stalled.take() {
+            return self.unavailable(reason, false);
+        }
+        // No summary means the walker never finished (it was left behind after a stop).
+        let Some(summary) = self.summary.take() else {
+            let report = self.report(ScanState::Aborted, Some(String::from("stopped")));
+            self.end(&report, None)?;
+            return Ok(report);
+        };
         if let Some(error) = summary.db_error {
             let report = self.report(ScanState::Failed, Some(error));
             self.end(&report, None)?;
             return Ok(report);
         }
-        if summary.cancelled || self.input.cancel.is_cancelled() {
+        if summary.cancelled || self.stop.is_cancelled() {
             let report = self.report(ScanState::Aborted, Some(String::from("stopped")));
             self.end(&report, None)?;
             return Ok(report);

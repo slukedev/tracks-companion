@@ -102,7 +102,7 @@ impl Auth {
             }
             KeyKind::ApiKey => (token::api_key()?, None),
             KeyKind::AppPassword => {
-                if !self.config.legacy_subsonic {
+                if !self.legacy_subsonic() {
                     return Err(AuthError::Forbidden);
                 }
                 let secret = token::app_password()?;

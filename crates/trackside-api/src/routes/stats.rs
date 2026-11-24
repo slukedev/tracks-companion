@@ -76,7 +76,7 @@ fn zone(name: Option<&str>) -> (TimeZone, String) {
 }
 
 fn day_start(date: Date, tz: &TimeZone) -> Option<i64> {
-    date.to_zoned(tz.clone())
+    date.to_zoned_datetime(tz.clone())
         .ok()
         .map(|z| z.timestamp().as_millisecond())
 }
@@ -86,7 +86,7 @@ pub fn day_buckets(tz: Option<&str>, now: Millis, count: usize) -> DayBuckets {
     let (zone, name) = zone(tz);
     let today = Timestamp::from_millisecond(now.0)
         .unwrap_or(Timestamp::UNIX_EPOCH)
-        .to_zoned(zone.clone())
+        .to_zoned_datetime(zone.clone())
         .date();
     let mut dates = vec![today];
     while dates.len() < count {

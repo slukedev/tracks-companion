@@ -71,10 +71,40 @@ fn load_files(cert: &Path, key: &Path) -> anyhow::Result<ServerConfig> {
     server_config(certs, key)
 }
 
+/// Makes `dir` if needed and leaves it readable by the server's user only: it holds private
+/// keys (the self-signed key, the ACME account and certificate keys).
+fn private_dir(dir: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("cannot restrict {}", dir.display()))?;
+    }
+    Ok(())
+}
+
+/// Writes a private key, never readable by others even for a moment.
+fn write_key(path: &Path, pem: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(path)?;
+    #[cfg(unix)]
+    {
+        // `mode` applies only to a new file; an old one keeps its bits otherwise.
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(pem.as_bytes())
+}
+
 /// A self-signed certificate under `<data>/tls`, made once and kept so its fingerprint stays
 /// the same for paired devices.
 pub fn self_signed(dir: &Path, names: &[String]) -> anyhow::Result<(ServerConfig, String)> {
-    std::fs::create_dir_all(dir)?;
+    private_dir(dir)?;
     let cert_path = dir.join("self-signed.crt");
     let key_path = dir.join("self-signed.key");
     if !cert_path.exists() || !key_path.exists() {
@@ -83,12 +113,7 @@ pub fn self_signed(dir: &Path, names: &[String]) -> anyhow::Result<(ServerConfig
         let made = rcgen::generate_simple_self_signed(subject)
             .context("cannot make a self-signed certificate")?;
         std::fs::write(&cert_path, made.cert.pem())?;
-        std::fs::write(&key_path, made.signing_key.serialize_pem())?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))?;
-        }
+        write_key(&key_path, &made.signing_key.serialize_pem())?;
     }
     let first = CertificateDer::pem_file_iter(&cert_path)?
         .next()
@@ -187,6 +212,7 @@ fn acme(config: &TlsConfig, stop: &CancellationToken) -> anyhow::Result<Option<T
     if config.acme_domains.is_empty() {
         anyhow::bail!("tls.mode is acme but tls.acme_domains is empty");
     }
+    private_dir(&config.acme_cache)?;
     let mut acme = rustls_acme::AcmeConfig::new(config.acme_domains.clone())
         .directory(&config.acme_directory)
         .cache(rustls_acme::caches::DirCache::new(
@@ -238,6 +264,20 @@ mod tests {
         let (_, second) = self_signed(dir.path(), &[])?;
         assert_eq!(first, second);
         assert_eq!(first.len(), 32 * 3 - 1);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_self_signed_key_and_its_folder_are_private() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        install_provider();
+        let dir = tempfile::tempdir()?;
+        let tls = dir.path().join("tls");
+        self_signed(&tls, &[])?;
+        let mode = |p: &Path| std::fs::metadata(p).map(|m| m.permissions().mode() & 0o777);
+        assert_eq!(mode(&tls)?, 0o700);
+        assert_eq!(mode(&tls.join("self-signed.key"))?, 0o600);
         Ok(())
     }
 

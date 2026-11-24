@@ -44,8 +44,8 @@ rcgen = "0.14"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "stream"] }
 
 # Storage and serialization
-rusqlite = { version = "0.41", features = ["bundled", "functions", "blob"] }
-rusqlite_migration = "2.7"
+rusqlite = { version = "0.43", features = ["bundled", "functions", "blob"] }
+rusqlite_migration = "2.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 quick-xml = { version = "0.42", features = ["serialize"] }
@@ -57,7 +57,7 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 clap = { version = "4.6", features = ["derive", "env"] }
-jiff = "0.2"
+jiff = "1.0"
 uuid = { version = "1.29", features = ["v4", "serde"] }
 
 # Hashing and secrets
@@ -77,8 +77,8 @@ ipnet = { version = "2.12", features = ["serde"] }
 lofty = "0.25"
 notify = "8.2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
-qrcode = { version = "0.14", default-features = false, features = ["svg"] }
-mdns-sd = "0.21"
+qrcode = { version = "0.15", default-features = false, features = ["svg"] }
+mdns-sd = "0.22"
 if-addrs = "0.15"
 rust-embed = "8.14"
 mime_guess = "2.0"
@@ -90,7 +90,7 @@ unicode-normalization = "0.1"
 
 # Dev
 proptest = "1.12"
-rstest = "0.28"
+rstest = "0.29"
 insta = { version = "1.49", features = ["json"] }
 tempfile = "3.27"
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }

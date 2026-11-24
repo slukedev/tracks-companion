@@ -104,6 +104,9 @@ pub struct Timing {
     pub unhealthy_recheck: Duration,
     /// The queue pauses while staging or the library has less than this free.
     pub min_free_bytes: u64,
+    /// How long the free-space check may take before the queue pauses as if the volume were
+    /// full: `statfs` on a hung network mount never returns.
+    pub space_check_deadline: Duration,
     pub max_jobs: usize,
     pub search_session: Duration,
     /// How long provider searches of a session may keep running after the response.
@@ -136,6 +139,7 @@ impl Default for Timing {
             health_every: Duration::from_secs(24 * 60 * 60),
             unhealthy_recheck: Duration::from_secs(60),
             min_free_bytes: 256 * 1024 * 1024,
+            space_check_deadline: Duration::from_secs(5),
             max_jobs: 8,
             search_session: Duration::from_secs(10 * 60),
             search_cap: Duration::from_secs(30),

@@ -7,6 +7,7 @@ mod artwork;
 mod cache;
 mod decide;
 mod ffmpeg;
+mod gate;
 mod hls;
 mod jobs;
 mod probe;
@@ -39,6 +40,7 @@ pub use ffmpeg::{FfmpegTranscoder, ffmpeg_args};
 pub use range::{RangeOutcome, evaluate};
 
 use crate::cache::{CacheKey, TranscodeCache};
+use crate::gate::LibraryGate;
 use crate::serve::{Entity, respond_file, system_time_from_ns};
 use crate::slots::Slots;
 
@@ -73,6 +75,11 @@ pub enum MediaError {
     /// The cache volume is too full to write a transcode (`507 insufficient_storage`).
     #[error("not enough free space for the transcode cache")]
     InsufficientStorage,
+    /// The library's filesystem is not answering: every permit for blocking calls on its
+    /// paths is held by a call that has not returned, as on a hung NFS mount
+    /// (`503 library_unavailable` with `Retry-After`).
+    #[error("library unavailable")]
+    LibraryUnavailable,
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -455,6 +462,7 @@ pub struct Media {
     shared: Arc<Shared>,
     db: Db,
     artwork: ArtworkStore,
+    libraries: LibraryGate,
 }
 
 impl std::fmt::Debug for Media {
@@ -546,6 +554,7 @@ impl Media {
             shared,
             db,
             artwork: ArtworkStore::new(cache_dir.join("art"), config.art_cache_max),
+            libraries: LibraryGate::new(gate::LIBRARY_PERMITS, gate::LIBRARY_WAIT),
         })
     }
 
@@ -581,14 +590,25 @@ impl Media {
         request: &Parts,
         disposition: Disposition,
     ) -> Result<Response<Body>, MediaError> {
-        let handle = match tokio::fs::File::open(&file.path).await {
-            Ok(handle) => handle,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+        // Open and stat behind the library's semaphore, so a hung mount cannot take the
+        // blocking pool; the reads that follow are bounded by the stream limits.
+        let path = file.path.clone();
+        let opened = self
+            .libraries
+            .run(file.library, move || {
+                let handle = std::fs::File::open(&path)?;
+                let meta = handle.metadata()?;
+                Ok((handle, meta))
+            })
+            .await;
+        let (handle, meta) = match opened {
+            Ok(opened) => opened,
+            Err(MediaError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Err(MediaError::ContentChanged);
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e),
         };
-        let meta = handle.metadata().await?;
+        let handle = tokio::fs::File::from_std(handle);
         if file_changed(&meta, file) {
             return Err(MediaError::ContentChanged);
         }

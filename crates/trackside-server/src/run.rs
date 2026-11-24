@@ -10,7 +10,6 @@ use std::time::Duration;
 use anyhow::Context;
 use axum::Router;
 use axum::extract::Extension;
-use axum_server::accept::NoDelayAcceptor;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tower_http::compression::CompressionLayer;
@@ -29,6 +28,21 @@ use crate::lock::DataDirLock;
 use crate::scheduler::{self, Retention};
 use crate::tls::{self, Tls};
 use crate::web::{self, JsonOnly, ListenerTls, Metrics, WebState};
+
+/// Timeouts on every connection, not just its first request. Over HTTP/1 the header timeout
+/// also closes keep-alive connections that sit idle that long, so a client sending headers a
+/// byte at a time or parking sockets cannot hold them. Over HTTP/2 pings find peers that are
+/// gone, such as a phone that left Wi-Fi. A macro because the builder's type is hyper-util's.
+macro_rules! connection_timeouts {
+    ($builder:expr, $header_timeout:expr) => {{
+        let builder = $builder;
+        builder.http1().header_read_timeout($header_timeout);
+        builder
+            .http2()
+            .keep_alive_interval(Duration::from_secs(30))
+            .keep_alive_timeout(Duration::from_secs(20));
+    }};
+}
 
 /// The transcoder when ffmpeg is not found: direct play only.
 #[derive(Debug)]
@@ -327,6 +341,7 @@ pub async fn run_with(
         config.server.trusted_proxies.clone(),
         Arc::clone(&clock),
     ));
+    trackside_api::build::apply_stored_auth(&db, &auth, &report).await;
     let transcoder: Arc<dyn Transcoder> =
         match trackside_media::FfmpegTranscoder::detect(config.media.ffmpeg_path.as_deref()) {
             Some(found) => Arc::new(found),
@@ -490,6 +505,7 @@ pub async fn run_with(
         metrics: config.metrics.enabled.then(|| Arc::clone(&metrics)),
         request_timeout: config.server.request_timeout,
         playback: Arc::clone(local.playback()),
+        hsts: matches!(config.tls.mode, TlsMode::Acme | TlsMode::Files),
     };
     let inner = Router::new()
         .merge(trackside_api::router(api))
@@ -530,6 +546,7 @@ pub async fn run_with(
 
     let mut handles = Vec::new();
     let mut servers = tokio::task::JoinSet::new();
+    let connections = web::ConnectionLimit::new(config.server.max_connections);
     for listener in listeners {
         let address = listener.local_addr()?;
         tracing::info!(%address, tls = is_tls, "listening");
@@ -541,21 +558,25 @@ pub async fn run_with(
             .layer(Extension(ListenerTls(is_tls)))
             .into_make_service_with_connect_info::<SocketAddr>();
         let header_timeout = config.server.header_timeout;
-        // Without TCP_NODELAY a small response (a range probe's headers and two bytes) waits
-        // for the client's delayed ACK, adding about 40 ms to every stream start.
+        // The acceptor also sets TCP_NODELAY: without it a small response (a range probe's
+        // headers and two bytes) waits for the client's delayed ACK, adding about 40 ms to
+        // every stream start.
         match &tls {
             Some(tls) => {
-                let server = axum_server::from_tcp_rustls(std_listener, tls.config.clone())?
-                    .map(|rustls| rustls.acceptor(NoDelayAcceptor))
+                let limit = connections.clone();
+                let mut server = axum_server::from_tcp_rustls(std_listener, tls.config.clone())?
+                    .map(|rustls| rustls.acceptor(limit))
                     .handle(handle)
                     .first_request_timeout(header_timeout);
+                connection_timeouts!(server.http_builder(), header_timeout);
                 servers.spawn(async move { server.serve(service).await });
             }
             None => {
-                let server = axum_server::from_tcp(std_listener)?
-                    .acceptor(NoDelayAcceptor)
+                let mut server = axum_server::from_tcp(std_listener)?
+                    .acceptor(connections.clone())
                     .handle(handle)
                     .first_request_timeout(header_timeout);
+                connection_timeouts!(server.http_builder(), header_timeout);
                 servers.spawn(async move { server.serve(service).await });
             }
         }

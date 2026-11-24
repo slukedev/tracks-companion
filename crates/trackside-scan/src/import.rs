@@ -207,6 +207,7 @@ fn read_one(
         Outcome::Failed(error) | Outcome::Quarantine(error) => {
             Err(ScanControlError::Rejected(error))
         }
+        Outcome::Stalled(_) => Err(ScanControlError::Unavailable),
     }
 }
 
@@ -643,6 +644,10 @@ pub async fn poll_inbox(inner: Arc<Inner>) {
     };
     let worker = Arc::clone(&inner);
     let result = tokio::task::spawn_blocking(move || {
+        // The interval and the watcher both start polls; two at once would import the same
+        // file twice, the second failing on a file the first already moved.
+        static POLLING: Mutex<()> = Mutex::new(());
+        let _one_at_a_time = POLLING.lock().unwrap_or_else(PoisonError::into_inner);
         for path in inbox_candidates(&inbox, &worker) {
             if worker.shutdown.is_cancelled() {
                 break;

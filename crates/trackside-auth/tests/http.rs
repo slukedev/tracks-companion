@@ -256,8 +256,8 @@ async fn a_request_forwarded_by_an_untrusted_proxy_never_counts_as_local() -> Te
         "x-forwarded-for",
         http::HeaderValue::from_static("203.0.113.9"),
     );
-    assert!(h.auth.is_local_client(&direct, lan));
-    assert!(!h.auth.is_local_client(&forwarded, lan));
+    assert!(h.auth.is_local_client(&direct, Some(lan), lan));
+    assert!(!h.auth.is_local_client(&forwarded, Some(lan), lan));
 
     assert!(!h.auth.untrusted_proxy_seen());
     let (parts, ()) = http::Request::builder()
@@ -270,7 +270,11 @@ async fn a_request_forwarded_by_an_untrusted_proxy_never_counts_as_local() -> Te
     assert!(h.auth.untrusted_proxy_seen());
 
     let trusted = harness_with(common::config(), vec!["192.168.0.0/16".parse()?])?;
-    assert!(trusted.auth.is_local_client(&forwarded, lan));
+    assert!(trusted.auth.is_local_client(&forwarded, Some(lan), lan));
+    // A tunnel on the host forwarding the internet is not one of the trusted proxies.
+    let tunnel: std::net::IpAddr = "127.0.0.1".parse()?;
+    assert!(!trusted.auth.is_local_client(&forwarded, Some(tunnel), tunnel));
+    assert!(!trusted.auth.is_local_client(&forwarded, None, lan));
     assert_eq!(
         trusted.auth.client_ip(&parts, peer),
         "203.0.113.9".parse::<std::net::IpAddr>()?

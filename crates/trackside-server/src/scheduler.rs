@@ -259,7 +259,7 @@ fn file_len(path: &std::path::Path) -> u64 {
 fn local_date(now: Millis) -> jiff::civil::Date {
     Timestamp::from_millisecond(now.0)
         .unwrap_or(Timestamp::UNIX_EPOCH)
-        .to_zoned(TimeZone::system())
+        .to_zoned_datetime(TimeZone::system())
         .date()
 }
 

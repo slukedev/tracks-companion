@@ -39,6 +39,7 @@ pub(crate) async fn run(inner: Arc<Inner>) {
     }
     let mut last_janitor = Instant::now();
     let mut last_health = Instant::now();
+    let mut space_check: Option<tokio::task::JoinHandle<bool>> = None;
     loop {
         if inner.shutdown.is_cancelled() {
             break;
@@ -55,7 +56,7 @@ pub(crate) async fn run(inner: Arc<Inner>) {
                 inner.check_health(slot).await;
             }
         }
-        let paused = !space_ok(&inner);
+        let paused = !space_ok(&inner, &mut space_check).await;
         if paused != inner.disk_paused.swap(paused, Ordering::Relaxed) {
             if paused {
                 tracing::warn!(
@@ -100,7 +101,29 @@ async fn start(inner: &Arc<Inner>) -> Result<(), DbError> {
     Ok(())
 }
 
-fn space_ok(inner: &Inner) -> bool {
+/// Whether staging and the acquired library have room. `statfs` on a hung network mount
+/// never returns, so it runs on the blocking pool with a deadline, and a check still stuck
+/// from an earlier round is waited on again instead of starting another.
+async fn space_ok(inner: &Arc<Inner>, pending: &mut Option<tokio::task::JoinHandle<bool>>) -> bool {
+    let check = pending.get_or_insert_with(|| {
+        let inner = Arc::clone(inner);
+        tokio::task::spawn_blocking(move || space_ok_blocking(&inner))
+    });
+    match tokio::time::timeout(inner.timing.space_check_deadline, check).await {
+        Ok(result) => {
+            *pending = None;
+            result.unwrap_or(true)
+        }
+        Err(_) => {
+            tracing::warn!(
+                "free space check did not answer; is the acquired library's share hung?"
+            );
+            false
+        }
+    }
+}
+
+fn space_ok_blocking(inner: &Inner) -> bool {
     let mut paths = vec![inner.config.staging_dir.clone()];
     if let Some(target) = inner.cached_target() {
         paths.push(target.root);
@@ -185,8 +208,14 @@ async fn job(
         cancelled_by_user: &cancelled_by_user,
         staging: inner.config.staging_dir.join(id.as_str()),
     };
+    // Ends the lease renewal and frees the job's place even if `execute` panics, which would
+    // otherwise renew a dead job's lease forever and keep its slot.
+    let _cleanup = JobCleanup {
+        inner: Arc::clone(&inner),
+        id: id.clone(),
+        renew,
+    };
     let result = job.execute(row).await;
-    renew.abort();
     if let Err(e) = result {
         tracing::warn!(error = %e, acquisition = %id, "acquisition job failed; it will be retried");
         let retry_at = inner.now().saturating_add(inner.timing.idle_poll);
@@ -206,8 +235,20 @@ async fn job(
             })
             .await;
     }
-    lock(&inner.jobs).remove(&id);
-    inner.wake.notify_one();
+}
+
+struct JobCleanup {
+    inner: Arc<Inner>,
+    id: AcquisitionId,
+    renew: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for JobCleanup {
+    fn drop(&mut self) {
+        self.renew.abort();
+        lock(&self.inner.jobs).remove(&self.id);
+        self.inner.wake.notify_one();
+    }
 }
 
 /// Why a job stopped early.

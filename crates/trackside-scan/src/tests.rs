@@ -582,6 +582,118 @@ fn hanging_parser_times_out_and_quarantines_the_file() -> TestResult {
 }
 
 #[test]
+fn a_stalled_share_stops_the_scan_without_quarantining_or_marking_missing() -> TestResult {
+    let mut h = Harness::new()?;
+    for i in 0..20 {
+        put_wav(&h.root, &format!("{i:02}.wav"), i)?;
+    }
+    h.scan(ScanKind::Full)?;
+    std::fs::remove_file(h.root.join("19.wav"))?;
+    h.settings.file_timeout = Duration::from_millis(200);
+    let (release, rx) = std::sync::mpsc::channel::<()>();
+    h.reader
+        .on("05.wav", Behaviour::Stall(Arc::new(Mutex::new(rx))));
+    let report = h.scan(ScanKind::Full)?;
+    drop(release);
+    assert_eq!(report.state, ScanState::Unavailable);
+    assert!(
+        report
+            .unavailable
+            .as_deref()
+            .is_some_and(|r| r.contains("stopped answering"))
+    );
+    assert!(h.catalog.lock().quarantine.is_empty());
+    assert_eq!(h.catalog.missing(h.key()), 0);
+    Ok(())
+}
+
+#[test]
+fn a_failing_commit_ends_the_scan_instead_of_hanging() -> TestResult {
+    let h = Harness::new()?;
+    for i in 0..(run::JOB_QUEUE as u32 * 2) {
+        put_wav(&h.root, &format!("Singles/{i:04}.wav"), i)?;
+    }
+    h.catalog.lock().fail_commits = true;
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(h.scan(ScanKind::Full).is_err());
+    });
+    let failed = finished.recv_timeout(Duration::from_secs(60))?;
+    assert!(failed);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_followed_link_to_a_vanished_folder_keeps_its_songs() -> TestResult {
+    let mut h = Harness::new()?;
+    h.settings.follow_symlinks = true;
+    let share = h.root.with_file_name("share");
+    put_wav(&share, "Album/1.wav", 1)?;
+    put_wav(&share, "Album/2.wav", 2)?;
+    // Enough local songs that the share-of-known-files guard does not catch the loss.
+    for i in 3..8 {
+        put_wav(&h.root, &format!("Local/{i}.wav"), i)?;
+    }
+    std::os::unix::fs::symlink(share.join("Album"), h.root.join("Linked"))?;
+    std::os::unix::fs::symlink(share.join("never.wav"), h.root.join("broken.wav"))?;
+    h.scan(ScanKind::Full)?;
+    assert_eq!(h.catalog.present(h.key()).len(), 7);
+    std::fs::rename(&share, h.root.with_file_name("share-offline"))?;
+    let report = h.scan(ScanKind::Quick)?;
+    assert_eq!(report.state, ScanState::Done);
+    assert_eq!(h.catalog.missing(h.key()), 0);
+    assert!(
+        h.catalog
+            .lock()
+            .folders
+            .get(&(h.key(), b"Linked".to_vec()))
+            .is_some_and(|f| f.unreadable)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_library_going_unavailable_stops_its_running_scan() -> TestResult {
+    let s = service(&scanner_config(), &ScannerOptions::manual(), false)?;
+    for i in 0..3 {
+        put_wav(&s.root, &format!("{i}.wav"), i)?;
+    }
+    let (release, rx) = std::sync::mpsc::channel::<()>();
+    s.reader
+        .on("1.wav", Behaviour::Hang(Arc::new(Mutex::new(rx))));
+    let (started_tx, started) = std::sync::mpsc::channel::<()>();
+    let started_tx = Mutex::new(started_tx);
+    s.reader.on(
+        "0.wav",
+        Behaviour::Before(Arc::new(move || {
+            let _ = started_tx
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .send(());
+        })),
+    );
+    s.scanner
+        .request_scan(&s.library.id, ScanKind::Full, ScanTrigger::Admin, false)?;
+    started.recv_timeout(Duration::from_secs(10))?;
+    let parked = s.root.with_file_name("parked");
+    std::fs::rename(&s.root, &parked)?;
+    let stopped_at = Instant::now();
+    s.scanner.probe_now();
+    assert!(s.scanner.wait_idle(Duration::from_secs(10)));
+    assert!(stopped_at.elapsed() < Duration::from_secs(10));
+    drop(release);
+    let last = s
+        .catalog
+        .recent_runs(s.library.key, 1)?
+        .pop()
+        .ok_or("no run")?;
+    assert_eq!(last.state, ScanState::Aborted);
+    assert_eq!(s.catalog.missing(s.library.key), 0);
+    Ok(())
+}
+
+#[test]
 fn moved_and_case_renamed_files_keep_their_ids() -> TestResult {
     let h = Harness::new()?;
     put_wav(&h.root, "Old/Song.wav", 1)?;
@@ -1100,6 +1212,27 @@ fn inbox_files_are_imported_into_the_uploads_library() -> TestResult {
             .exists()
     );
     assert!(inbox.join("notes.txt").exists());
+    Ok(())
+}
+
+#[test]
+fn overlapping_inbox_polls_import_each_file_once() -> TestResult {
+    let s = service(&scanner_config(), &ScannerOptions::manual(), true)?;
+    let inbox = s.scanner.inbox_dir().ok_or("no inbox")?.clone();
+    for i in 0..30 {
+        put_wav(&inbox, &format!("drop/{i:02}.wav"), i)?;
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async { tokio::join!(s.scanner.poll_inbox(), s.scanner.poll_inbox()) });
+    let states: Vec<ImportState> = s.catalog.lock().imports.iter().map(|i| i.state).collect();
+    assert_eq!(states.len(), 30, "{states:?}");
+    assert!(
+        states.iter().all(|state| *state == ImportState::Imported),
+        "{states:?}"
+    );
+    assert_eq!(s.catalog.present(s.library.key).len(), 30);
     Ok(())
 }
 

@@ -409,7 +409,16 @@ impl Inner {
             };
             let changed = lib.available != available;
             lib.available = available;
-            changed.then(|| lib.library.id.clone())
+            let id = changed.then(|| lib.library.id.clone());
+            // A scan of a library whose storage went away would only wait on it (a hung
+            // mount blocks the walker for good) and must not judge what is missing.
+            if !available
+                && let Some((running, token)) = &state.running
+                && *running == key
+            {
+                token.cancel();
+            }
+            id
         };
         let Some(id) = changed else {
             return;

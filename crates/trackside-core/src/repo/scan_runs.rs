@@ -110,6 +110,10 @@ pub fn progress(tx: &mut WriteTx<'_>, id: &ScanRunId, counts: &ScanCounts) -> Re
     Ok(())
 }
 
+/// Finished runs kept per library. Quick scans every 30 minutes and a folder scan per watch
+/// event would otherwise grow `scan_runs` and `scan_errors` without bound.
+pub const KEEP_RUNS: u32 = 200;
+
 pub fn finish(
     tx: &mut WriteTx<'_>,
     id: &ScanRunId,
@@ -124,7 +128,22 @@ pub fn finish(
         "UPDATE scan_runs SET state = ?2, finished_at = ?3, message = ?4 WHERE pid = ?1",
     )?
     .execute(params![id, state.as_str(), tx.now(), message])?;
+    prune(tx, run_key(tx, id)?)?;
     get(tx, id)?.ok_or(DbError::NotFound)
+}
+
+/// Deletes the finished runs (and with them their errors) of the library `run` belongs to,
+/// beyond the newest [`KEEP_RUNS`].
+fn prune(tx: &WriteTx<'_>, run: i64) -> Result<(), DbError> {
+    tx.prepare_cached(
+        "DELETE FROM scan_runs WHERE state != 'running'
+           AND library_id = (SELECT library_id FROM scan_runs WHERE id = ?1)
+           AND id NOT IN (SELECT id FROM scan_runs
+                          WHERE library_id = (SELECT library_id FROM scan_runs WHERE id = ?1)
+                          ORDER BY started_at DESC, id DESC LIMIT ?2)",
+    )?
+    .execute(params![run, i64::from(KEEP_RUNS)])?;
+    Ok(())
 }
 
 /// Marks runs left `running` by a crash as `aborted`. Returns how many there were.

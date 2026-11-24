@@ -149,6 +149,9 @@ impl From<MediaError> for ApiError {
                     .with_status(StatusCode::NOT_IMPLEMENTED)
             }
             MediaError::JobExpired => Self::not_found("Transcode"),
+            MediaError::LibraryUnavailable => {
+                Self::unavailable("The song's library is offline", Duration::from_secs(30))
+            }
             MediaError::Unimplemented(what) => {
                 Self::generic(format!("Not implemented yet: {what}"))
             }

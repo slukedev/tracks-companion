@@ -235,7 +235,7 @@ async fn legacy_auth_can_be_turned_off_server_wide() -> TestResult {
     wp1(async {
         let mut config = common::config();
         let on = harness()?;
-        let (_, app) = legacy_user(&on).await?;
+        let (zoe, app) = legacy_user(&on).await?;
         config.legacy_subsonic = false;
         let off = std::sync::Arc::new(trackside_auth::Auth::new(
             on.db.db.clone(),
@@ -249,6 +249,27 @@ async fn legacy_auth_can_be_turned_off_server_wide() -> TestResult {
                 .await,
         )?;
         assert_eq!(error, SubsonicAuthError::TokenNotSupported);
+
+        // The dashboard's switch applies to the running server, not after a restart.
+        let plain = creds(Some("zoe"), None, None, Some(&app), None);
+        on.auth
+            .authenticate_subsonic(&plain, ip(1))
+            .await
+            .map_err(|e| e.to_string())?;
+        on.auth.set_legacy_subsonic(false);
+        let error = subsonic_denied(on.auth.authenticate_subsonic(&plain, ip(1)).await)?;
+        assert_eq!(error, SubsonicAuthError::TokenNotSupported);
+        assert!(
+            on.auth
+                .create_key(zoe, KeyKind::AppPassword, "Old", Scopes::KEY_DEFAULT)
+                .await
+                .is_err()
+        );
+        on.auth.set_legacy_subsonic(true);
+        on.auth
+            .authenticate_subsonic(&plain, ip(1))
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     })
     .await

@@ -657,3 +657,113 @@ async fn subsonic_answers_every_request_the_tracks_app_sends() -> anyhow::Result
     assert_eq!(segment.status, 200, "{segment_url}: {}", segment.text());
     Ok(())
 }
+
+/// A household at once: several players streaming and seeking the same song, others asking
+/// for the same transcode, listens arriving, and a full scan running underneath. Every
+/// stream must carry the exact bytes, the transcode must be made once and agree for everyone,
+/// and nothing may fail or wait on the scan.
+#[tokio::test(flavor = "multi_thread")]
+async fn streams_transcodes_listens_and_a_scan_run_together() -> anyhow::Result<()> {
+    let Some(env) = boot(|s| s).await? else {
+        return Ok(());
+    };
+    let halo = env.song("Halo").await?;
+    let id = halo["id"].as_str().unwrap_or_default().to_owned();
+    let original = std::fs::read(
+        env.music().join(
+            env.lib
+                .track("Halo")
+                .map(|t| t.rel.clone())
+                .unwrap_or_default(),
+        ),
+    )?;
+    let library = env.library_id().await?;
+    let started = Instant::now();
+    let mut tasks = tokio::task::JoinSet::new();
+    for player in 0..8usize {
+        let (c, key, id, original) = (
+            env.client.clone(),
+            env.key.clone(),
+            id.clone(),
+            original.clone(),
+        );
+        tasks.spawn(async move {
+            let url = format!("/songs/{id}/stream");
+            for round in 0..5usize {
+                let from = (player * 997 + round * 131) % (original.len() - 1);
+                let part = ranged(&c, &url, &key, Some(&format!("bytes={from}-"))).await?;
+                anyhow::ensure!(part.status == 206, "player {player}: {}", part.status);
+                anyhow::ensure!(
+                    part.body == &original[from..],
+                    "player {player}: wrong bytes"
+                );
+            }
+            let whole = ranged(&c, &url, &key, None).await?;
+            anyhow::ensure!(whole.body == original, "player {player}: wrong file");
+            Ok(None)
+        });
+    }
+    for listener in 0..4usize {
+        let (c, key, id) = (env.client.clone(), env.key.clone(), id.clone());
+        tasks.spawn(async move {
+            let now = trackside_e2e::now_ms();
+            let items: Vec<Value> = (0..50i64)
+                .map(|i| {
+                    json!({"client_listen_id": format!("HOUSE-{listener}-{i}"), "song_id": id,
+                        "started_at": trackside_e2e::rfc3339(now - 60_000 * (i + 1)),
+                        "played_ms": 2000, "title": "Halo", "artist": "Beyoncé",
+                        "duration_ms": 2000})
+                })
+                .collect();
+            let reply = c
+                .post(
+                    "/listens",
+                    &key,
+                    &json!({"client_time": trackside_e2e::rfc3339(now), "listens": items}),
+                )
+                .await?;
+            anyhow::ensure!(reply.status == 200, "listens: {}", reply.text());
+            Ok(None)
+        });
+    }
+    for _ in 0..4 {
+        let (c, key, id) = (env.client.clone(), env.key.clone(), id.clone());
+        tasks.spawn(async move {
+            let url = format!("/songs/{id}/download?profile=aac-128");
+            let reply = ranged(&c, &url, &key, None).await?;
+            anyhow::ensure!(reply.status == 200, "transcode: {}", reply.text());
+            Ok(Some((reply.header("etag").map(str::to_owned), reply.body)))
+        });
+    }
+    let scan = env
+        .client
+        .post(
+            &format!("/admin/libraries/{library}/scan"),
+            &env.admin,
+            &json!({"kind": "full"}),
+        )
+        .await?;
+    assert_eq!(scan.status, 202, "{}", scan.text());
+    let mut transcodes = Vec::new();
+    while let Some(done) = tasks.join_next().await {
+        if let Some(transcode) = done?? {
+            transcodes.push(transcode);
+        }
+    }
+    let finished = common::wait_scan(&env.client, &env.admin, &library).await?;
+    assert_eq!(finished["state"], "done", "{finished}");
+    assert_eq!(transcodes.len(), 4);
+    assert!(
+        transcodes.windows(2).all(|w| w[0] == w[1]),
+        "every caller gets the same transcode"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(60),
+        "took {:?}: {}",
+        started.elapsed(),
+        env.server.log_text()
+    );
+    let after = env.song("Halo").await?;
+    assert_eq!(after["id"], halo["id"], "the scan kept the id");
+    Ok(())
+}

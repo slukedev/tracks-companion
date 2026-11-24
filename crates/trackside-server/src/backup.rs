@@ -54,7 +54,7 @@ pub fn parse_name(name: &str) -> Option<(&'static str, Millis)> {
     };
     let at = jiff::civil::DateTime::strptime("%Y%m%dT%H%M%SZ", stamp)
         .ok()?
-        .to_zoned(TimeZone::UTC)
+        .to_zoned_datetime(TimeZone::UTC)
         .ok()?
         .timestamp();
     Some((kind, Millis(at.as_millisecond())))
@@ -155,6 +155,8 @@ impl Backups {
         let target = self.dir.join(backup_name(kind, now));
         db.backup_into(&target)
             .map_err(|e| OpsError::Io(std::io::Error::other(e.to_string())))?;
+        // The copy holds password and key hashes and sealed secrets, like the database.
+        restrict(&target);
         if let Some(key) = &self.secret_key
             && key.exists()
         {
@@ -206,7 +208,7 @@ pub fn next_run(schedule: BackupSchedule, now: Timestamp, zone: &TimeZone) -> Op
             minute,
         } => (Some(weekday), hour, minute),
     };
-    let today = now.to_zoned(zone.clone()).date();
+    let today = now.to_zoned_datetime(zone.clone()).date();
     for offset in 0..9 {
         let date = today.checked_add(jiff::Span::new().days(offset)).ok()?;
         if weekday.is_some_and(|w| date.weekday() != w) {
@@ -216,7 +218,7 @@ pub fn next_run(schedule: BackupSchedule, now: Timestamp, zone: &TimeZone) -> Op
             jiff::civil::Time::new(i8::try_from(hour).ok()?, i8::try_from(minute).ok()?, 0, 0)
                 .ok()?;
         let at = zone
-            .to_ambiguous_zoned(date.to_datetime(time))
+            .to_ambiguous_zoned_datetime(date.to_datetime(time))
             .later()
             .ok()?
             .timestamp();
@@ -434,6 +436,12 @@ mod tests {
         assert_eq!(list.iter().filter(|b| b.kind == "scheduled").count(), 2);
         assert_eq!(list.iter().filter(|b| b.kind == "manual").count(), 1);
         assert_eq!(list[0].name, "trackside-20261114T123000Z.db");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = backups.path(&list[0].name).ok_or("no backup file")?;
+            assert_eq!(std::fs::metadata(path)?.permissions().mode() & 0o077, 0);
+        }
         Ok(())
     }
 }

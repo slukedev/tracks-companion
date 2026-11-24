@@ -87,7 +87,7 @@ It reuses `tracks-model` as a git dependency pinned to an exact revision of the 
 ```
 ./
   Cargo.toml                  workspace, shared dependency versions, lints (same lint set as the Tracks engine)
-  rust-toolchain.toml         channel 1.99.0; targets x86_64/aarch64 linux musl and gnu
+  rust-toolchain.toml         channel 1.100.0; targets x86_64/aarch64 linux musl and gnu
   crates/
     trackside-core/           domain types, ids, config, Db (writer + readers), migrations,
                               repositories, change log, sync, search, similarity, event bus,
@@ -1267,7 +1267,9 @@ deleted.
 
 Dashboard login sets `__Host-trackside_session` with `HttpOnly; Secure; SameSite=Strict;
 Path=/` (the `Secure` flag and `__Host-` prefix are dropped only when the request arrived over
-plain HTTP from a private or loopback address, so a LAN-only install still works). State-changing
+plain HTTP from a private or loopback address, so a LAN-only install still works; a request with
+forwarding headers counts only when its peer is in `server.trusted_proxies`, so a tunnel on the
+host never makes internet clients look local). State-changing
 requests with a session must carry `X-Trackside-CSRF: 1` and an `Origin` matching the request's
 host; browsers cannot send that header cross-origin without a CORS preflight, which the server
 never grants. Changing a password ends every other session; revoking devices is a separate choice.
@@ -1293,7 +1295,8 @@ an unlocked browser can do.
 `u`+`t`+`s` and `u`+`p` (plain or `enc:`) are verified against the user's active app passwords
 (decrypting each, there are few), only when the user has `legacy_subsonic` and the server has
 `auth.legacy_subsonic = true` (default true; per-user default off). `apiKey` is always accepted.
-Mixing `apiKey` with `u` is error 43. ADR 0005 has the reasoning.
+Mixing `apiKey` with `u` is error 43. ADR 0005 has the reasoning. Turning `auth.legacy_subsonic`
+off in the dashboard applies to the next request, so it stops every app password at once.
 
 ### Media tokens
 
@@ -1311,7 +1314,15 @@ after 7 days. Revoking a device bumps its epoch. The server redacts `mt`, `apiKe
   the same header).
 - Per username and IP pair, after 5 consecutive failures: exponential delay from 2 s up to
   15 minutes. Keyed by the pair so an attacker cannot lock a user out from elsewhere; a global
-  per-username ceiling of 100 failures an hour slows distributed guessing.
+  per-username ceiling of 100 failures an hour slows distributed guessing. The ceiling does not
+  apply at an address the account signed in from successfully in the last 30 days, so guesses
+  from elsewhere cannot lock the owner out at home. App password failures (`/rest`) are counted
+  apart from the login password, so a legacy client with a stale app password cannot hold up
+  sign-in.
+- Per server: `server.max_connections` open connections across every listener; one over that
+  is closed at once. `server.header_timeout` bounds every request's headers and idle HTTP/1
+  keep-alive connections; HTTP/2 connections are pinged every 30 s and TCP keepalive probes find
+  peers that vanished in the middle of a request.
 - Per key: 50 requests a second, burst 200, excluding media bytes.
 - Per user: 8 concurrent streams and 3 concurrent transcodes; over that, `429` with
   `Retry-After: 1`.
@@ -1809,8 +1820,8 @@ The server starts with no file at all: data in the platform default directory, l
 | `server.base_path` | `TRACKSIDE_SERVER__BASE_PATH` | `""` | URL prefix behind a proxy |
 | `server.public_urls` **D** | `TRACKSIDE_SERVER__PUBLIC_URLS` | `[]` | extra candidate URLs for pairing |
 | `server.trusted_proxies` | `TRACKSIDE_SERVER__TRUSTED_PROXIES` | `[]` | CIDRs whose forwarding headers are believed |
-| `server.max_connections` | `TRACKSIDE_SERVER__MAX_CONNECTIONS` | `1024` | accepted connections at once |
-| `server.header_timeout` | `TRACKSIDE_SERVER__HEADER_TIMEOUT` | `"30s"` | time to receive request headers |
+| `server.max_connections` | `TRACKSIDE_SERVER__MAX_CONNECTIONS` | `1024` | open connections at once, across listeners; more are closed at once |
+| `server.header_timeout` | `TRACKSIDE_SERVER__HEADER_TIMEOUT` | `"30s"` | time to receive request headers; also how long an idle HTTP/1 keep-alive connection stays open |
 | `server.request_timeout` | `TRACKSIDE_SERVER__REQUEST_TIMEOUT` | `"60s"` | non-streaming handlers |
 | `server.shutdown_grace` | `TRACKSIDE_SERVER__SHUTDOWN_GRACE` | `"10s"` | drain time on stop |
 | `tls.mode` | `TRACKSIDE_TLS__MODE` | `"off"` | `off`, `files`, `acme`, `self-signed` |
@@ -2028,8 +2039,10 @@ Response headers (set in `trackside-server/src/web.rs`):
 | isolation set | `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Resource-Policy: same-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()` |
 | `/rest` | only the first row, because web Subsonic players on other origins load covers and audio |
 
-There is no `Strict-Transport-Security`: TLS is often terminated by a proxy that sets it, and a
-LAN install on plain HTTP must keep working.
+With `tls.mode = "acme"` or `"files"`, responses on the TLS listeners also carry
+`Strict-Transport-Security: max-age=31536000` (this host only, no `includeSubDomains`). It is
+not sent with a self-signed certificate, where browsers would then refuse to let anyone click
+through the warning, nor over plain HTTP; behind a proxy, the proxy sets it.
 
 ---
 

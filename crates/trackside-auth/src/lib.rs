@@ -579,6 +579,9 @@ pub struct Auth {
     touched: Mutex<HashMap<KeyId, Millis>>,
     setup_done: AtomicBool,
     untrusted_proxy: AtomicBool,
+    /// `auth.legacy_subsonic`: starts from the configuration, and the dashboard's setting
+    /// changes it while the server runs.
+    legacy_subsonic: AtomicBool,
     setup_token_file: Mutex<Option<PathBuf>>,
     streams: limit::Slots,
     transcodes: limit::Slots,
@@ -633,6 +636,7 @@ impl Auth {
             touched: Mutex::new(HashMap::new()),
             setup_done: AtomicBool::new(false),
             untrusted_proxy: AtomicBool::new(false),
+            legacy_subsonic: AtomicBool::new(config.legacy_subsonic),
             setup_token_file: Mutex::new(None),
             streams: limit::Slots::new(STREAMS_PER_USER),
             transcodes: limit::Slots::new(TRANSCODES_PER_USER),
@@ -661,6 +665,19 @@ impl Auth {
         proxy::client_ip(&self.trusted_proxies, &parts.headers, peer)
     }
 
+    /// Whether `u`+`t`+`s` and `u`+`p` are accepted at all, and app passwords can be made.
+    pub fn legacy_subsonic(&self) -> bool {
+        self.legacy_subsonic
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Turns legacy Subsonic auth on or off server-wide. It applies to the next request, so
+    /// turning it off stops every app password at once.
+    pub fn set_legacy_subsonic(&self, on: bool) {
+        self.legacy_subsonic
+            .store(on, std::sync::atomic::Ordering::Release);
+    }
+
     /// Whether requests have come through a proxy that is not trusted, for the dashboard.
     pub fn untrusted_proxy_seen(&self) -> bool {
         self.untrusted_proxy
@@ -669,11 +686,17 @@ impl Auth {
 
     /// Whether a client may get the plain HTTP session cookie: a private or loopback address
     /// that reached the server directly, or through a trusted proxy that named it. A request
-    /// forwarded by a proxy that is not trusted never counts, since every client behind it
-    /// would.
-    pub fn is_local_client(&self, headers: &http::HeaderMap, client: IpAddr) -> bool {
+    /// forwarded by a peer that is not trusted never counts, since every client behind it
+    /// (a tunnel on the same host, say) would, even when other proxies are trusted.
+    pub fn is_local_client(
+        &self,
+        headers: &http::HeaderMap,
+        peer: Option<IpAddr>,
+        client: IpAddr,
+    ) -> bool {
         is_local_address(client)
-            && (!proxy::has_forwarding(headers) || !self.trusted_proxies.is_empty())
+            && (!proxy::has_forwarding(headers)
+                || peer.is_some_and(|p| proxy::is_trusted(&self.trusted_proxies, p)))
     }
 
     /// A forwarding header such as `X-Forwarded-Proto` or `X-Forwarded-Host`, only when the

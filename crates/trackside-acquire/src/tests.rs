@@ -4,7 +4,7 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -288,10 +288,14 @@ impl MediaOps for FakeMedia {
 }
 
 #[derive(Debug)]
-struct FakeSpace(AtomicU64);
+/// Free bytes, and whether `statfs` hangs as it does on a hung network mount.
+struct FakeSpace(AtomicU64, AtomicBool);
 
 impl FreeSpace for FakeSpace {
     fn available(&self, _path: &Path) -> std::io::Result<u64> {
+        while self.1.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
         Ok(self.0.load(Ordering::SeqCst))
     }
 }
@@ -415,7 +419,7 @@ impl World {
             clock,
             scan: Arc::new(FakeScanControl::new()),
             media,
-            space: Arc::new(FakeSpace(AtomicU64::new(u64::MAX))),
+            space: Arc::new(FakeSpace(AtomicU64::new(u64::MAX), AtomicBool::new(false))),
             library,
             library_key,
             config,
@@ -909,6 +913,41 @@ async fn disk_full_pauses_and_resumes() {
     );
 
     world.space.0.store(u64::MAX, Ordering::SeqCst);
+    let done = wait_for(&mut events, &view.id, is(AcquisitionState::Done)).await;
+    assert_eq!(done.song, Some(song));
+    assert!(!acquirer.paused_for_space());
+}
+
+// Real time: paused time does not advance while a blocking task runs, and this one hangs.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hung_free_space_check_pauses_the_queue_instead_of_the_runtime() {
+    let world = World::new().await;
+    world.space.1.store(true, Ordering::SeqCst);
+    let provider = FakeProvider::new(
+        ProviderName::Soulseek,
+        vec![candidate(ProviderName::Soulseek, "a", true)],
+    );
+    let song = world.song_added();
+    let acquirer = world.start_timed(
+        vec![provider.clone()],
+        Timing {
+            idle_poll: Duration::from_millis(50),
+            space_check_deadline: Duration::from_millis(100),
+            ..World::timing()
+        },
+    );
+    let mut events = world.events.subscribe();
+    let view = acquirer.request(&world.member, halo()).await.unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while !acquirer.paused_for_space() {
+        assert!(tokio::time::Instant::now() < deadline, "never paused");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(acquirer.paused_for_space());
+    assert_eq!(provider.searches.load(Ordering::SeqCst), 0);
+
+    world.space.1.store(false, Ordering::SeqCst);
     let done = wait_for(&mut events, &view.id, is(AcquisitionState::Done)).await;
     assert_eq!(done.song, Some(song));
     assert!(!acquirer.paused_for_space());

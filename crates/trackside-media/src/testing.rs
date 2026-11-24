@@ -27,6 +27,8 @@ struct State {
     fail_next: u32,
     hls: FakeHls,
     output_len: usize,
+    stdout_stalls: bool,
+    panic_next: bool,
 }
 
 /// Records every spec and writes deterministic bytes instead of encoding.
@@ -55,6 +57,8 @@ impl FakeTranscoder {
                 fail_next: 0,
                 hls: FakeHls::Manual,
                 output_len: 4096,
+                stdout_stalls: false,
+                panic_next: false,
             }),
             gate: Arc::new(Semaphore::new(Semaphore::MAX_PERMITS)),
         }
@@ -93,6 +97,16 @@ impl FakeTranscoder {
     /// Bytes written for every file or stdout transcode.
     pub fn set_output_len(&self, len: usize) {
         self.lock().output_len = len;
+    }
+
+    /// Stdout transcodes write nothing and never end, like ffmpeg stuck on a hung input.
+    pub fn stall_stdout(&self) {
+        self.lock().stdout_stalls = true;
+    }
+
+    /// The next spawn panics, as a bug in the job task would.
+    pub fn panic_next(&self) {
+        self.lock().panic_next = true;
     }
 
     /// Every spec spawned so far, in order.
@@ -181,19 +195,27 @@ impl Transcoder for FakeTranscoder {
         if self.version.is_none() {
             return Err(MediaError::NoTranscoder);
         }
-        let (fail, hls, len) = {
+        let (fail, hls, len, stalls) = {
             let mut state = self.lock();
+            assert!(
+                !std::mem::take(&mut state.panic_next),
+                "injected transcoder panic"
+            );
             state.spawned.push(spec.clone());
             let fail = state.fail_next > 0;
             if fail {
                 state.fail_next -= 1;
             }
-            (fail, state.hls, state.output_len)
+            (fail, state.hls, state.output_len, state.stdout_stalls)
         };
         let stdout = if matches!(spec.output, TranscodeOutput::Stdout) {
             let (mut writer, reader) = tokio::io::duplex(64 * 1024);
             let bytes = Self::output_for(&spec, len);
             tokio::spawn(async move {
+                if stalls {
+                    // The writer stays open, so the reader never sees an end.
+                    std::future::pending::<()>().await;
+                }
                 let _ = writer.write_all(&bytes).await;
             });
             Some(reader)

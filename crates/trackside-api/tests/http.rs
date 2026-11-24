@@ -550,6 +550,25 @@ async fn admin_endpoints_need_a_session_and_csrf() -> TestResult {
 }
 
 #[tokio::test]
+async fn turning_legacy_subsonic_off_in_the_dashboard_applies_at_once() -> TestResult {
+    let server = start().await?;
+    let cookie = server.setup_admin().await?;
+    assert!(server.auth.legacy_subsonic());
+    for (value, expected) in [(json!(false), false), (Value::Null, true)] {
+        let response = server
+            .http
+            .patch(server.url("/admin/settings"))
+            .headers(server.session(&cookie))
+            .json(&json!({ "auth.legacy_subsonic": value }))
+            .send()
+            .await?;
+        assert_eq!(response.status(), 200, "{:?}", response.text().await);
+        assert_eq!(server.auth.legacy_subsonic(), expected);
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn features_acquisition_follows_the_acquirer_and_endpoints_404_without_it() -> TestResult {
     let closed = start().await?;
     closed.setup_admin().await?;

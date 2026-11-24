@@ -117,6 +117,11 @@ async fn run_job(
     file: SongFile,
     priority: watch::Receiver<Priority>,
 ) {
+    let _settle = Settle {
+        shared: shared.clone(),
+        job: job.clone(),
+        key: key.clone(),
+    };
     let result = transcode_to_cache(&shared, &job, &key, &file, priority).await;
     if let Err(JobError::Failed(message)) = &result {
         tracing::warn!(song = %file.song, profile = key.profile.as_str(), %message, "transcode failed");
@@ -129,6 +134,39 @@ async fn run_job(
         }
     }
     job.state.send_replace(JobState::Done(result));
+}
+
+/// Takes a job out of the single-flight map and fails its waiters if the task ends without
+/// finishing it (a panic), so later requests start a fresh job instead of joining a dead one.
+struct Settle {
+    shared: Arc<Shared>,
+    job: Arc<FileJob>,
+    key: CacheKey,
+}
+
+impl Drop for Settle {
+    fn drop(&mut self) {
+        let settled = self.job.state.send_if_modified(|state| {
+            if matches!(state, JobState::Done(_)) {
+                return false;
+            }
+            *state = JobState::Done(Err(JobError::Failed("the transcode job stopped".into())));
+            true
+        });
+        if settled {
+            let mut jobs = self
+                .shared
+                .jobs
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if jobs
+                .get(&self.key)
+                .is_some_and(|j| Arc::ptr_eq(j, &self.job))
+            {
+                jobs.remove(&self.key);
+            }
+        }
+    }
 }
 
 async fn acquire_by_priority(
@@ -463,8 +501,12 @@ async fn stream_stdout(
     tokio::spawn(async move {
         let _permit = permit;
         let wait = process.wait();
+        // pump_reader only sees a departed client on its next send, which never comes while
+        // ffmpeg is stuck on its input, so watch the receiver directly.
+        let gone = tx.clone();
         tokio::select! {
             () = shutdown.cancelled() => {}
+            () = gone.closed() => {}
             completed = pump_reader(stdout, estimate, tx) => {
                 if completed {
                     let _ = tokio::time::timeout(Duration::from_secs(10), wait).await;

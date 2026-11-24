@@ -13,12 +13,18 @@ targets = [
 [advisories]
 version = 2
 yanked = "deny"
+# Report unmaintained crates anywhere in the graph, not only direct dependencies. This was the
+# default before cargo-deny 0.22, which narrowed it to the workspace.
+unmaintained = "all"
 # Add an advisory here only with a comment saying why it does not affect Trackside and
 # when to look again.
 ignore = [
     # paste is a compile-time macro used by lofty. Unmaintained, but it runs only in the
     # compiler and has no known vulnerability. Look again when lofty drops it.
     { id = "RUSTSEC-2024-0436", reason = "build-time only, via lofty" },
+    # chrono is unmaintained, with no known vulnerability. Only rustls-acme 0.15 (the `acme`
+    # feature) uses it, to read certificate validity dates. Look again when rustls-acme drops it.
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained, no vulnerability; via rustls-acme only" },
 ]
 
 [licenses]

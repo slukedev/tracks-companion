@@ -88,7 +88,10 @@ acme_domains = ["music.example.com"]
 acme_email = "you@example.com"
 ```
 
-It answers the TLS-ALPN-01 challenge on port 443, so 443 must reach it from the internet. In
+It answers the TLS-ALPN-01 challenge on port 443, so 443 must reach it from the internet. With
+a real certificate (this mode or `files`) Trackside sends `Strict-Transport-Security`, so browsers
+use HTTPS for that name from then on. Certificates and the ACME account key in `<data>/acme` are
+kept readable by the server's user only. In
 Docker, publish `443:443`; under systemd, give it `CAP_NET_BIND_SERVICE`
 ([install.md](install.md#systemd)). Certificates are kept in `<data>/acme`.
 

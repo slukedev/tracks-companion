@@ -749,6 +749,47 @@ async fn progressive_aac_is_fragmented_stdout() -> TestResult {
     Ok(())
 }
 
+#[tokio::test]
+async fn a_job_that_dies_fails_its_waiters_and_the_next_request_starts_afresh() -> TestResult {
+    let f = fixture()?;
+    let song = f.flac("a.flac")?;
+    f.fake.panic_next();
+    let first = tokio::time::timeout(
+        Duration::from_secs(5),
+        f.media
+            .ensure_cached(&song, Profile::Aac128, Priority::Download),
+    )
+    .await?;
+    assert!(first.is_err());
+    let second = f
+        .media
+        .ensure_cached(&song, Profile::Aac128, Priority::Download)
+        .await?;
+    assert!(second.size > 0);
+    assert_eq!(f.media.transcode_load().0, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_stuck_progressive_transcode_gives_its_slot_back_when_the_client_leaves() -> TestResult {
+    let f = fixture()?;
+    let song = f.flac("a.flac")?;
+    f.fake.stall_stdout();
+    let response = f
+        .media
+        .progressive_transcode(&song, Profile::Aac256, None, false)
+        .await?;
+    assert_eq!(f.media.transcode_load().0, 1);
+    drop(response);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while f.media.transcode_load().0 != 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
+    Ok(())
+}
+
 fn hls_song(
     f: &Fixture,
     name: &str,
