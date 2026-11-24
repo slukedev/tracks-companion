@@ -1477,7 +1477,11 @@ fn watched_renames_move_songs_within_into_and_out_of_the_library() -> TestResult
         .build()?;
     let s = watching(
         &runtime,
-        &[("A/01 Song.wav", 1), ("B/keep.wav", 2), ("C/02 Song.wav", 3)],
+        &[
+            ("A/01 Song.wav", 1),
+            ("B/keep.wav", 2),
+            ("C/02 Song.wav", 3),
+        ],
     )?;
     let outside = s.root.with_file_name("outside");
     put_wav(&outside, "D/03 Song.wav", 4)?;
@@ -1589,7 +1593,7 @@ fn libraries_are_unwatched_when_removed_disabled_or_moved() -> TestResult {
     s.catalog.lock().libraries.clear();
     s.scanner.probe_now();
     assert_eq!(watched(), Vec::<PathBuf>::new());
-    assert!(s.scanner.status().is_empty());
+    assert_eq!(s.scanner.status(), Vec::new());
     let runs = s.catalog.lock().runs.len();
     put_wav(&moved, "B/03 Song.wav", 3)?;
     std::thread::sleep(Duration::from_secs(1));

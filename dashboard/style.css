@@ -294,7 +294,7 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; }
 /* Phones and small tablets: a top bar for identity, a tab bar for the main pages, the rest in a sheet. */
 @media (max-width: 860px) {
   :root { --bar-h: 58px; }
-  .shell { grid-template-columns: minmax(0, 1fr); background: var(--bg); }
+  .shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr auto; background: var(--bg); }
   .shell.solo-nav { --bar-h: 0px; }
   .shell.solo-nav .sidebar, .shell.solo-nav .scrim { display: none; }
   .topbar {
@@ -304,8 +304,9 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; }
   }
   .topbar .brand { padding: 0; }
   .topbar .btn { background: rgba(255, 255, 255, 0.1); border-color: transparent; color: #fff; }
+  /* Sticky, not fixed: it stays in the page's flow, so nothing scrolls under it at the end. */
   .tabbar {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 45;
+    position: sticky; bottom: 0; z-index: 45;
     display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
     height: calc(var(--bar-h) + env(safe-area-inset-bottom)); padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
     background: var(--rail);
@@ -339,7 +340,7 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; }
   .nav-foot { margin-top: 0; }
   .scrim { position: fixed; inset: 0 0 calc(var(--bar-h) + env(safe-area-inset-bottom)) 0; z-index: 41; background: var(--overlay); opacity: 0; visibility: hidden; transition: opacity var(--t-exit) ease, visibility 0s linear var(--t-exit); }
   .shell.nav-open .scrim { opacity: 1; visibility: visible; transition: opacity var(--t-base) ease; }
-  .main { padding-top: var(--s5); padding-bottom: calc(var(--bar-h) + env(safe-area-inset-bottom) + var(--s6)); }
+  .main { padding-top: var(--s5); padding-bottom: var(--s6); }
   html { scroll-padding-top: 68px; }
 }
 @media (min-width: 861px) { .scrim { display: none; } }
@@ -475,6 +476,7 @@ select.input option { background-color: var(--surface); color: var(--ink); }
 .input:disabled, .input[readonly] { color: var(--ink-2); background: var(--surface-2); }
 .input[aria-invalid="true"] { border-color: var(--bad); }
 .input.mono { font-family: var(--mono); font-size: var(--t-sm); }
+.input.mono::placeholder { font-family: var(--font); }
 .input.short { max-width: 150px; }
 .input.time { max-width: 130px; }
 @media (pointer: coarse) {

@@ -81,6 +81,11 @@ pub const KEYS: &[KeyInfo] = &[
         List,
     ),
     key(
+        "server.local_networks",
+        "TRACKSIDE_SERVER__LOCAL_NETWORKS",
+        List,
+    ),
+    key(
         "server.max_connections",
         "TRACKSIDE_SERVER__MAX_CONNECTIONS",
         Integer,

@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "https_required",
+    "message": "Use the server's https address. Passwords and keys aren't accepted over plain HTTP from outside your network.",
+    "request_id": "7a1e4c9b2d8f4a6c9e3b5d7f1a2c4e6b"
+  }
+}

@@ -31,6 +31,7 @@ fn sample(kind: ValueKind, key: &str) -> &'static str {
         (_, "metrics.listen") => "127.0.0.1:9090",
         (_, "server.listen") => "0.0.0.0:4747,[::1]:4748",
         (_, "server.trusted_proxies") => "10.0.0.0/8,fd00::/8",
+        (_, "server.local_networks") => "2001:db8:1::/64",
         (_, "auth.login_rate" | "acquire.ytdlp.search_rate") => "5/30s",
         (_, "scanner.quick_interval" | "scanner.full_interval") => "off",
         (_, k)
@@ -51,6 +52,7 @@ fn sample(kind: ValueKind, key: &str) -> &'static str {
                 || k.ends_with("min_free")
                 || k.ends_with("max_file")
                 || k.ends_with("max_file_bytes")
+                || k.ends_with("max_bytes")
                 || k.ends_with("memory")
                 || k == "database.cache"
                 || k == "database.mmap" =>

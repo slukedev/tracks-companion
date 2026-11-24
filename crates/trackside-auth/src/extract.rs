@@ -27,6 +27,11 @@ pub struct AdminSession(pub Principal);
 #[derive(Clone, Debug)]
 pub struct SessionUser(pub Principal);
 
+/// A request on which a password or key may be sent: over HTTPS, or from a nearby client
+/// (see [`Auth::secrets_allowed`]). Otherwise `403 https_required`, before anything is checked.
+#[derive(Clone, Copy, Debug)]
+pub struct SecureTransport;
+
 /// The client's address after trusted-proxy handling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClientIp(pub IpAddr);
@@ -42,6 +47,7 @@ impl AuthError {
             }
             Self::Csrf => (StatusCode::FORBIDDEN, "csrf"),
             Self::SetupRequired => (StatusCode::FORBIDDEN, "setup_required"),
+            Self::HttpsRequired => (StatusCode::FORBIDDEN, "https_required"),
             Self::CredentialInQuery | Self::Invalid(_) => {
                 (StatusCode::BAD_REQUEST, self.bad_request_code())
             }
@@ -194,5 +200,21 @@ where
     ) -> impl Future<Output = Result<Self, AuthError>> + Send {
         let auth = Arc::<Auth>::from_ref(state);
         std::future::ready(Ok(Self(peer_ip(&auth, parts))))
+    }
+}
+
+impl<S> FromRequestParts<S> for SecureTransport
+where
+    S: Send + Sync,
+    Arc<Auth>: FromRef<S>,
+{
+    type Rejection = AuthError;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> impl Future<Output = Result<Self, AuthError>> + Send {
+        let auth = Arc::<Auth>::from_ref(state);
+        std::future::ready(auth.require_secure_transport(parts).map(|()| Self))
     }
 }

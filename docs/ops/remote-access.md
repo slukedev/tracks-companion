@@ -14,9 +14,27 @@ works from outside, and tell it about that address.
 | [Cloudflare Tunnel](#cloudflare-tunnel) | the dashboard only | a Cloudflare account |
 
 Whichever you choose, add the address in the dashboard under **Settings**, Other addresses (or
-in `server.public_urls`), then pair again or reopen Tracks so it picks the list up. The
-Addresses list on the same page shows every address the server knows and whether it could
-reach each one.
+in `server.public_urls`). Devices that are already paired pick it up without pairing again: the
+server tells open apps within seconds, and Tracks checks again whenever it comes to the
+foreground. The Addresses list on the same page shows every address the server knows and
+whether it could reach each one.
+
+## How devices learn new addresses
+
+Paired devices ask the server for its current list of addresses (`GET /api/v1/server/urls`), and
+the server tells connected apps when the list changes. Only signed-in devices can read it. The
+list comes only from what the server detects on its own network interfaces and from the
+addresses you set; nothing a visitor sends can add one.
+
+An address on the list still has to prove it's your server before Tracks sends it anything
+secret, exactly as at pairing. Over HTTPS its certificate must be valid for the name, or match
+the fingerprint of the server's self-signed certificate. So a wrong or stale address on the
+list is harmless: Tracks just doesn't use it. Remove an address you no longer use, such as an
+old domain, so Tracks stops trying it.
+
+If you use `tls.mode = "self-signed"`, only the server's own LAN addresses carry the
+fingerprint. A public `https://` address must have a certificate from a real authority, such
+as Caddy's or the built-in ACME one.
 
 ## Tailscale
 

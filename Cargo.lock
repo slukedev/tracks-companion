@@ -3542,6 +3542,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "trackside-cloud"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "governor",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracks-model",
+ "trackside-core",
+]
+
+[[package]]
 name = "trackside-core"
 version = "0.1.0"
 dependencies = [

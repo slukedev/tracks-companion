@@ -247,6 +247,8 @@ keep = 14
 | `acquire.member_active` **D** | `TRACKSIDE_ACQUIRE__MEMBER_ACTIVE` | `5` | |
 | `acquire.global_daily` **D** | `TRACKSIDE_ACQUIRE__GLOBAL_DAILY` | `500` | |
 | `acquire.instant_play` **D** | `TRACKSIDE_ACQUIRE__INSTANT_PLAY` | `false` | stream-through for ytdlp candidates |
+| `acquire.fetched_keep` **D** | `TRACKSIDE_ACQUIRE__FETCHED_KEEP` | `500` | songs played without being kept that stay for replays |
+| `acquire.fetched_max_bytes` **D** | `TRACKSIDE_ACQUIRE__FETCHED_MAX_BYTES` | `"20GiB"` | the most those songs may take |
 | `acquire.reject_words` | `TRACKSIDE_ACQUIRE__REJECT_WORDS` | `live`, `remix`, `karaoke`, `instrumental`, `cover`, `nightcore`, `sped up`, `slowed`, `8d`, `reverb`, `acapella`, `tribute` | |
 | `acquire.path_template` | `TRACKSIDE_ACQUIRE__PATH_TEMPLATE` | `"{album_artist}/{album}/{disc}-{track:02} {title}.{ext}"`, or `{artist}/Singles/{title}.{ext}` without an album | |
 | `acquire.ytdlp.enabled` **D** | `TRACKSIDE_ACQUIRE__YTDLP__ENABLED` | `false` | |

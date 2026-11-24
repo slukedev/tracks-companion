@@ -544,6 +544,17 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
         },
     )?;
     put(
+        "error-https-required.json",
+        &wire::ErrorEnvelope {
+            error: wire::ErrorBody {
+                code: String::from("https_required"),
+                message: trackside_auth::AuthError::HttpsRequired.to_string(),
+                details: None,
+                request_id: Some(String::from("7a1e4c9b2d8f4a6c9e3b5d7f1a2c4e6b")),
+            },
+        },
+    )?;
+    put(
         "error-quota.json",
         &wire::ErrorEnvelope {
             error: wire::ErrorBody {
@@ -1178,6 +1189,21 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             "",
         ),
     )?;
+    let urls = server_summary(false).urls;
+    put(
+        "server-urls.json",
+        &wire::auth::ServerUrls {
+            server_id: SERVER_ID.to_owned(),
+            version: build::urls_version(&urls),
+            urls,
+        },
+    )?;
+    put(
+        "server-urls-event.json",
+        &wire::events::ServerUrlsEvent {
+            version: build::urls_version(&server_summary(false).urls),
+        },
+    )?;
     put(
         "acquisition-downloading.json",
         &map::acquisition(&view(&s, AcquisitionState::Downloading), ""),
@@ -1239,6 +1265,13 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             providers: vec![map::provider(&provider())],
             active: 2,
             today: 14,
+            fetched: Some(wire::admin::FetchedUsage {
+                songs: 212,
+                bytes: 7_400_000_000,
+                fetching: 1,
+                keep: 500,
+                max_bytes: 20 << 30,
+            }),
         }),
         users: wire::admin::OverviewUsers {
             count: 4,
@@ -1848,6 +1881,11 @@ fn fixtures_deserialize_into_their_wire_types() -> TestResult {
         ("decision-hls.json", back::<wire::playback::Decision>),
         ("acquisition-search.json", back::<wire::acquisition::Search>),
         ("admin/overview.json", back::<wire::admin::Overview>),
+        ("server-urls.json", back::<wire::auth::ServerUrls>),
+        (
+            "server-urls-event.json",
+            back::<wire::events::ServerUrlsEvent>,
+        ),
         ("admin/user.json", back::<wire::admin::AdminUser>),
         (
             "admin/acquisitions.json",
@@ -1918,6 +1956,7 @@ fn dashboard_fixtures_match_server_shapes() -> TestResult {
             "admin/overview.json",
             "admin-overview.json",
             &[
+                "acquisition.fetched",
                 "acquisition.providers[].cooldown_until",
                 "acquisition.providers[].latest_known",
                 "acquisition.providers[].settings.",

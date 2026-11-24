@@ -11,7 +11,7 @@ use axum::routing::{get, patch, post};
 use base64::Engine;
 use http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use sha2::{Digest, Sha256};
-use trackside_auth::extract::{Authed, ClientIp, SessionUser};
+use trackside_auth::extract::{Authed, ClientIp, SecureTransport, SessionUser};
 use trackside_auth::{
     IssuedDeviceKey, KeyKind, NewDevice, NewUser, PairPoll, Principal, Scopes, SessionCookie,
 };
@@ -187,6 +187,7 @@ async fn signed_in(
 }
 
 async fn setup(
+    _secure: SecureTransport,
     State(state): State<ApiState>,
     ClientIp(ip): ClientIp,
     headers: HeaderMap,
@@ -245,6 +246,7 @@ async fn session_get(
 }
 
 async fn reauth(
+    _secure: SecureTransport,
     SessionUser(principal): SessionUser,
     State(state): State<ApiState>,
     ClientIp(ip): ClientIp,
@@ -255,6 +257,7 @@ async fn reauth(
 }
 
 async fn session_create(
+    _secure: SecureTransport,
     State(state): State<ApiState>,
     ClientIp(ip): ClientIp,
     headers: HeaderMap,
@@ -313,6 +316,7 @@ pub fn pair_result_body(
 }
 
 async fn login(
+    _secure: SecureTransport,
     State(state): State<ApiState>,
     ClientIp(ip): ClientIp,
     Json(body): Json<LoginRequest>,
@@ -425,6 +429,7 @@ async fn me_patch(
 }
 
 async fn change_password(
+    _secure: SecureTransport,
     Authed(principal): Authed<WRITE>,
     State(state): State<ApiState>,
     ClientIp(ip): ClientIp,
@@ -561,6 +566,7 @@ async fn pairing_code_cancel(
 }
 
 async fn claim(
+    _secure: SecureTransport,
     State(state): State<ApiState>,
     ClientIp(ip): ClientIp,
     Json(body): Json<ClaimRequest>,
@@ -602,6 +608,7 @@ pub fn spaced_code(code: &str) -> String {
 }
 
 async fn pair_request(
+    _secure: SecureTransport,
     State(state): State<ApiState>,
     ClientIp(ip): ClientIp,
     Json(body): Json<PairRequestBody>,
@@ -619,6 +626,7 @@ async fn pair_request(
 }
 
 async fn pair_poll(
+    _secure: SecureTransport,
     State(state): State<ApiState>,
     Path(id): Path<String>,
     headers: HeaderMap,
@@ -699,6 +707,7 @@ async fn invite_info(
 }
 
 async fn invite_accept(
+    _secure: SecureTransport,
     State(state): State<ApiState>,
     ClientIp(ip): ClientIp,
     Path(token): Path<String>,
@@ -738,6 +747,7 @@ async fn reset_info(
 }
 
 async fn reset_use(
+    _secure: SecureTransport,
     State(state): State<ApiState>,
     Path(token): Path<String>,
     Json(body): Json<NewPassword>,
@@ -825,6 +835,7 @@ async fn my_keys(
 }
 
 async fn create_key(
+    _secure: SecureTransport,
     SessionUser(principal): SessionUser,
     State(state): State<ApiState>,
     ClientIp(ip): ClientIp,

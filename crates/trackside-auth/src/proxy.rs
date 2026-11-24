@@ -108,6 +108,30 @@ pub(crate) fn forwarded_value<'h>(
         .filter(|v| !v.is_empty())
 }
 
+/// Whether the forwarding headers say the client used HTTPS: the first `X-Forwarded-Proto`
+/// value, or the first `proto` of `Forwarded`. Only meaningful from a proxy whose word counts.
+pub(crate) fn forwarded_https(headers: &HeaderMap) -> bool {
+    let https = |v: &str| v.trim().trim_matches('"').eq_ignore_ascii_case("https");
+    if let Some(proto) = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+    {
+        return https(proto);
+    }
+    headers
+        .get(http::header::FORWARDED)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .and_then(|element| {
+            element.split(';').find_map(|pair| {
+                let (name, value) = pair.split_once('=')?;
+                name.trim().eq_ignore_ascii_case("proto").then(|| https(value))
+            })
+        })
+        .unwrap_or(false)
+}
+
 /// Whether a request carries any forwarding header, as a reverse proxy adds.
 pub(crate) fn has_forwarding(headers: &HeaderMap) -> bool {
     [

@@ -106,6 +106,13 @@ export async function answer(route, { values = {}, body, query = {}, variant }) 
     }[route];
     if (empty) return empty();
   }
+  if (route === 'GET /admin/users/{id}' && values.id) {
+    const { users } = await fixture('admin-users');
+    const base = await fixture('admin-user');
+    const user = users.find((u) => u.id === values.id);
+    if (!user) fail(404, 'not_found', '');
+    return user.id === base.id ? base : { ...user, devices: 0, api_keys: 0, sessions: 0 };
+  }
   if (route === 'GET /admin/imports') {
     if (query.cursor) return { imports: [] };
     const page = await fixture('admin-imports');

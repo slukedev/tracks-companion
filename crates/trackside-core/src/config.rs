@@ -249,6 +249,10 @@ pub struct ServerConfig {
     pub base_path: String,
     pub public_urls: Vec<String>,
     pub trusted_proxies: Vec<ipnet::IpNet>,
+    /// Networks that count as local besides the private, loopback, link-local and Tailscale
+    /// ranges, such as a LAN's global IPv6 prefix: their clients may send passwords and keys
+    /// over plain HTTP.
+    pub local_networks: Vec<ipnet::IpNet>,
     pub max_connections: u32,
     #[serde(deserialize_with = "duration", serialize_with = "ser::duration")]
     pub header_timeout: Duration,
@@ -623,6 +627,7 @@ impl Config {
                 base_path: String::new(),
                 public_urls: Vec::new(),
                 trusted_proxies: Vec::new(),
+                local_networks: Vec::new(),
                 max_connections: 1024,
                 header_timeout: Duration::from_secs(30),
                 request_timeout: Duration::from_secs(60),

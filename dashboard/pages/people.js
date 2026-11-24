@@ -122,7 +122,7 @@ async function personPage(ctx, id) {
     sessionsSection(ctx, user, name, theirSessions),
     accessSection(ctx, user, libraries),
     signInSection(ctx, user, name, isSelf),
-    deleteSection(ctx, user, name));
+    isSelf ? null : deleteSection(ctx, user, name));
 }
 
 /** A quiet Remove/Revoke/End button that asks first; the dialog carries the red. */

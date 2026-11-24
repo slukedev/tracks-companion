@@ -1668,9 +1668,9 @@ staging. It writes no acquisition row, no library song and no change log, and is
 only a request (section 9, lifecycle) fetches a song to keep.
 
 - A song asked by name that the caller's libraries have answers with that song's id.
-- The cache is in memory and on disk: at most 1 GiB, an entry goes 6 hours after its last play,
-  and the least recently played go first when it is full. It is emptied at start. A replay
-  within that window is served from the cached file without asking the provider again.
+- Fetched songs stay for replays, which are served from the file without asking the provider
+  again, within two limits: `acquire.fetched_keep` songs (default 500) and
+  `acquire.fetched_max_bytes` (default 20 GiB). See retention below.
 - Limits: the provider's fetch concurrency and cooldown, the user's search rate limit for
   title-and-artist plays, at most 2 songs being fetched per user, and the user's usual stream
   and transcode slots when the stream is served.
@@ -1678,6 +1678,32 @@ only a request (section 9, lifecycle) fetches a song to keep.
   enabled provider that streams (`features.acquisition.external_play`); it does not need
   `acquire.instant_play`.
 - A later request for the same song downloads and keeps it as usual.
+
+Retention of fetched songs:
+
+- The index is in memory, and on disk as `entry.json` beside each finished song's file (file
+  name, size, title, artist, who started it, when it was fetched and last played, and the
+  `song_key`s it answered by name). It is written through a temporary file and a rename once the
+  fetch completes, and again when the last-played time changed, at the next sweep.
+- A sweep runs after every fetch, when either limit is changed, and on the acquirer's hourly
+  janitor round. It evicts finished songs, least recently played first (a song never streamed
+  counts from when it was fetched), until both limits hold. It never evicts a song still being
+  fetched, one whose file a stream or a transcode holds, or one played in the last 30 minutes;
+  those count toward the limits, which can be exceeded until they are free.
+- Eviction holds the same lock as starting a fetch, so it never races a new fetch of the same
+  song. A song picked for eviction is not handed out any more; a play of it waits for the sweep
+  and then fetches it again. Its folder is renamed into `<data>/cache/external/.trash/` (the
+  moment it leaves the index), then deleted. A failed rename leaves it in the index for the next
+  sweep. These songs are not in the library, so nothing goes through `/sync`; HLS for them runs
+  from the file through a per-user job, and nothing of theirs is in the transcode cache.
+- At start, and on each janitor round, the folder is reconciled with the index: the trash is
+  emptied, and a folder without a whole `entry.json`, or whose file is missing or the wrong
+  size (a crash midway), is deleted. Links are never followed.
+- `<data>/cache/external/.trackside-play-cache` is written at the first load. While it cannot be
+  read (an unmounted share), or any step takes longer than 5 s (a hung one), nothing is evicted
+  and the index is left as it is.
+- `GET /admin/overview` shows the songs, bytes, songs being fetched and the limits under
+  `acquisition.fetched`.
 
 ### 9.6 What Tracks sees
 
@@ -1707,6 +1733,20 @@ The server keeps a list of base URLs a client may use:
 - Every candidate is a base URL that already includes `server.base_path`; clients append
   `/api/v1/...`. Relative URLs in responses (decisions, QR links, instant-play streams) are
   absolute paths that start with the base path and resolve against the candidate's origin.
+- The list is built only from the interfaces and the configuration or settings, never from a
+  request header.
+
+### Address updates
+
+Paired devices learn a changed list without pairing again. `GET /api/v1/server/urls` (any
+authenticated caller with the `library` scope) returns the list with a `version`: the first 16
+bytes of SHA-256 over the list's JSON, in hex, also the `ETag`. The server compares the list
+with the last one it announced every 15 seconds and right after `server.public_urls` changes in
+the dashboard, and sends SSE `server_urls` with the new version when it differs. Tracks asks
+with `If-None-Match` when it comes to the foreground or reconnects to events, and on that event.
+An address new to the list is held to the same rules as any other: it is used only after its own
+endpoint proof and, over HTTPS, a certificate that passes the system's checks or matches
+`fingerprint`.
 
 ### Pairing
 
@@ -1894,6 +1934,8 @@ The server starts with no file at all: data in the platform default directory, l
 | `acquire.member_active` **D** | `TRACKSIDE_ACQUIRE__MEMBER_ACTIVE` | `5` | |
 | `acquire.global_daily` **D** | `TRACKSIDE_ACQUIRE__GLOBAL_DAILY` | `500` | |
 | `acquire.instant_play` **D** | `TRACKSIDE_ACQUIRE__INSTANT_PLAY` | `false` | stream-through for ytdlp candidates |
+| `acquire.fetched_keep` **D** | `TRACKSIDE_ACQUIRE__FETCHED_KEEP` | `500` | songs played without being kept that stay fetched |
+| `acquire.fetched_max_bytes` **D** | `TRACKSIDE_ACQUIRE__FETCHED_MAX_BYTES` | `"20GiB"` | the most those songs may take |
 | `acquire.reject_words` | `TRACKSIDE_ACQUIRE__REJECT_WORDS` | list in 9.1 | |
 | `acquire.path_template` | `TRACKSIDE_ACQUIRE__PATH_TEMPLATE` | see 9 | |
 | `acquire.ytdlp.enabled` **D** | `TRACKSIDE_ACQUIRE__YTDLP__ENABLED` | `false` | |

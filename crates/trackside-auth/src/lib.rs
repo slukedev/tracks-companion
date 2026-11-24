@@ -80,6 +80,9 @@ pub enum AuthError {
     MediaTokenExpired,
     #[error("setup required")]
     SetupRequired,
+    /// A password or key sent over plain HTTP from an address that is not nearby.
+    #[error("Use the server's https address. Passwords and keys aren't accepted over plain HTTP from outside your network.")]
+    HttpsRequired,
     #[error("not found")]
     NotFound,
     #[error("conflict: {0}")]
@@ -569,6 +572,9 @@ pub struct Auth {
     secret: Arc<SecretKey>,
     media_key: Zeroizing<[u8; 32]>,
     trusted_proxies: Vec<ipnet::IpNet>,
+    /// `server.local_networks`: more networks that count as nearby, beside the private,
+    /// loopback, link-local and Tailscale ranges.
+    local_networks: Vec<ipnet::IpNet>,
     clock: Arc<dyn Clock>,
     hasher: password::Hasher,
     ip_failures: limit::FailureLimiter<limit::IpKey>,
@@ -648,7 +654,63 @@ impl Auth {
             db,
             config: config.clone(),
             trusted_proxies,
+            local_networks: Vec::new(),
             clock,
+        }
+    }
+
+    /// Adds `server.local_networks`: networks whose clients may send passwords and keys over
+    /// plain HTTP and get a plain session cookie, like private addresses.
+    #[must_use]
+    pub fn with_local_networks(mut self, networks: Vec<ipnet::IpNet>) -> Self {
+        self.local_networks = networks;
+        self
+    }
+
+    /// Private, loopback, link-local, unique-local, Tailscale, or in `server.local_networks`.
+    fn is_nearby(&self, ip: IpAddr) -> bool {
+        proof::is_nearby_address(ip) || proxy::is_trusted(&self.local_networks, ip)
+    }
+
+    /// Whether a password or key may be accepted on this request: over HTTPS (directly, or
+    /// through a trusted proxy that says so), or over plain HTTP from a nearby client. A
+    /// request without a peer address (a router driven in-process) counts as nearby.
+    pub fn secrets_allowed(&self, parts: &Parts) -> bool {
+        if parts.extensions.get::<Https>().is_some() {
+            return true;
+        }
+        let Some(peer) = parts
+            .extensions
+            .get::<axum::extract::ConnectInfo<SocketAddr>>()
+            .map(|info| info.0)
+        else {
+            return true;
+        };
+        let headers = &parts.headers;
+        if proxy::is_trusted(&self.trusted_proxies, peer.ip()) {
+            return proxy::forwarded_https(headers)
+                || self.is_nearby(proxy::client_ip(&self.trusted_proxies, headers, peer));
+        }
+        if !self.is_nearby(peer.ip()) {
+            return false;
+        }
+        if !proxy::has_forwarding(headers) {
+            return true;
+        }
+        // A nearby proxy that is not in `server.trusted_proxies`: only someone on this network
+        // could forge its headers, and they may use plain HTTP anyway, so its word is taken
+        // for this one question. An internet client it forwards over plain HTTP is refused.
+        let hop = [ipnet::IpNet::from(proxy::canonical(peer.ip()))];
+        proxy::forwarded_https(headers)
+            || self.is_nearby(proxy::client_ip(&hop, headers, peer))
+    }
+
+    /// [`Auth::secrets_allowed`] as an error: [`AuthError::HttpsRequired`].
+    pub fn require_secure_transport(&self, parts: &Parts) -> Result<(), AuthError> {
+        if self.secrets_allowed(parts) {
+            Ok(())
+        } else {
+            Err(AuthError::HttpsRequired)
         }
     }
 
@@ -699,7 +761,7 @@ impl Auth {
         peer: Option<IpAddr>,
         client: IpAddr,
     ) -> bool {
-        is_local_address(client)
+        (is_local_address(client) || proxy::is_trusted(&self.local_networks, client))
             && (!proxy::has_forwarding(headers)
                 || peer.is_some_and(|p| proxy::is_trusted(&self.trusted_proxies, p)))
     }

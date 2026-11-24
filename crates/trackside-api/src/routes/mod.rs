@@ -2,6 +2,7 @@
 
 pub(crate) mod account;
 pub(crate) mod acquisition;
+pub(crate) mod addresses;
 pub(crate) mod admin;
 pub(crate) mod enrichment;
 mod events;
@@ -41,6 +42,7 @@ pub(crate) fn router(state: ApiState) -> Router {
     let api = Router::new()
         .merge(public::routes())
         .merge(account::routes())
+        .merge(addresses::routes())
         .merge(library::routes())
         .merge(sync::routes())
         .merge(media::routes())

@@ -178,15 +178,32 @@ async fn downloads_resume_and_transcoded_downloads_wait_for_the_whole_file() -> 
         priming, 1024,
         "the edit list skips AAC priming, for gapless playback"
     );
+    // ffmpeg 9.1 counts the movie header in the sample rate (44100), earlier versions in 1000.
+    let timescale = movie_timescale(&aac.body).ok_or_else(|| anyhow::anyhow!("no movie header"))?;
+    let segment_ms = u64::from(segment) * 1000 / u64::from(timescale.max(1));
     assert!(
-        (1990..=2010).contains(&segment),
-        "the edit ends at the source's end: {segment}"
+        (1990..=2010).contains(&segment_ms),
+        "the edit ends at the source's end: {segment} at timescale {timescale}"
     );
     eprintln!(
         "aac-128 download of a 2 s song took {:?}",
         started.elapsed()
     );
     Ok(())
+}
+
+/// The `mvhd` timescale, the unit of edit list segment durations.
+fn movie_timescale(bytes: &[u8]) -> Option<u32> {
+    let at = bytes.windows(4).position(|w| w == b"mvhd")?;
+    // version 0 has 32-bit creation and modification times, version 1 64-bit ones
+    let offset = match bytes.get(at + 4)? {
+        0 => 16,
+        1 => 24,
+        _ => return None,
+    };
+    Some(u32::from_be_bytes(
+        bytes.get(at + offset..at + offset + 4)?.try_into().ok()?,
+    ))
 }
 
 /// The first `elst` entry: (segment duration in the movie timescale, media time).

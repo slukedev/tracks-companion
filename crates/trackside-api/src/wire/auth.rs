@@ -120,6 +120,15 @@ pub struct ServerUrl {
     pub fingerprint: Option<String>,
 }
 
+/// `GET /server/urls`: the addresses a paired device may use, and the version naming this list
+/// (also the `ETag`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerUrls {
+    pub server_id: String,
+    pub version: String,
+    pub urls: Vec<ServerUrl>,
+}
+
 /// The server as `PairResult` and `/me` describe it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerSummary {

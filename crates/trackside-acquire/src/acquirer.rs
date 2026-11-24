@@ -15,9 +15,8 @@ use trackside_core::control::{
     AcquireControl, AcquireError, AcquireFeature, AcquireRequest, AcquisitionFilter,
     AcquisitionState, AcquisitionView, AdminAcquisitionView, AdminCandidate, CandidateFormat,
     CandidateView, ExternalPlay, ExternalPlayRequest, ExternalQuery, ExternalSearch, FetchedUsage,
-    GrowingFile,
-    HlsJobId, InstantStream, InstantStreamUrls, ProviderChange, ProviderHealthState, ProviderStats,
-    ProviderStatus, ProviderTest, Quality, ScanControl,
+    GrowingFile, HlsJobId, InstantStream, InstantStreamUrls, ProviderChange, ProviderHealthState,
+    ProviderStats, ProviderStatus, ProviderTest, Quality, ScanControl,
 };
 use trackside_core::ids::PublicId;
 use trackside_core::records::Page;
@@ -149,7 +148,7 @@ impl Default for Timing {
                 per: Duration::from_secs(60),
             },
             ytdlp_release_base: String::from(update::DEFAULT_RELEASE_BASE),
-            external_in_use: Duration::from_secs(30 * 60),
+            external_in_use: Duration::from_mins(30),
             external_per_user: 2,
         }
     }

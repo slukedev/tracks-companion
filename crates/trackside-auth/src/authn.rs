@@ -40,6 +40,7 @@ impl Auth {
             if class == RouteClass::Admin {
                 return Err(AuthError::Forbidden);
             }
+            self.require_secure_transport(parts)?;
             return self.authenticate_key(token, ip, class).await;
         }
         if class == RouteClass::Media

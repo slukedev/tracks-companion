@@ -214,8 +214,7 @@ impl Inner {
             match state.libs.get_mut(&library.key) {
                 Some(lib) => {
                     if lib.watching == WatchMode::Events
-                        && (lib.library.root != library.root
-                            || !crate::watch::wants(self, library))
+                        && (lib.library.root != library.root || !crate::watch::wants(self, library))
                     {
                         unwatch.push(lib.library.root.clone());
                         lib.watching = WatchMode::Off;

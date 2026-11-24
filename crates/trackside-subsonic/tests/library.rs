@@ -246,6 +246,48 @@ async fn cover_art_missing_is_404_with_error_70() -> TestResult {
 }
 
 #[tokio::test]
+async fn credentials_over_plain_http_from_the_internet_are_refused() -> TestResult {
+    let fx = Fixture::start().await?;
+    let id = pid(&fx.halo.id);
+    let hex = fx
+        .member_password
+        .bytes()
+        .fold(String::new(), |mut hex, b| {
+            let _ = write!(hex, "{b:02x}");
+            hex
+        });
+    let password_url = format!(
+        "/rest/ping?u={}&p=enc:{hex}&v=1.16.1&c=Feishin&f=json",
+        support::encode(&fx.member_name)
+    );
+    let targets = [
+        fx.key_url(&fx.member_key, "ping", &[]),
+        fx.tracks_url("ping", &[], true),
+        password_url,
+        fx.key_url(&fx.member_key, "stream", &[("id", id)]),
+    ];
+    let addr = fx.server.addr;
+    let public = ("x-test-peer", "203.0.113.7:4000");
+    for target in &targets {
+        let refused = support::send(addr, "GET", target, &[public], &[]).await?;
+        assert_eq!(refused.error_code(), Some(50), "{target}");
+        if target.contains("/rest/stream") {
+            assert_eq!(refused.status, 403, "{target}");
+        }
+        let spoofed = [public, ("x-forwarded-proto", "https")];
+        let spoofed = support::send(addr, "GET", target, &spoofed, &[]).await?;
+        assert_eq!(spoofed.error_code(), Some(50), "{target}");
+        let over_https = [public, ("x-test-https", "1")];
+        let lan = [("x-test-peer", "192.168.1.20:4000")];
+        for headers in [&over_https[..], &lan[..]] {
+            let allowed = support::send(addr, "GET", target, headers, &[]).await?;
+            assert_eq!(allowed.error_code(), None, "{target} with {headers:?}");
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn members_see_only_their_own_now_playing_and_admins_see_all() -> TestResult {
     let fx = Fixture::start().await?;
     let id = pid(&fx.halo.id);

@@ -44,6 +44,12 @@ pub struct UploadEvent {
     pub song_id: Option<String>,
 }
 
+/// `server_urls`: the server's addresses changed; fetch `GET /server/urls`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerUrlsEvent {
+    pub version: String,
+}
+
 /// `session`: the credential was revoked and the stream ends.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionEvent {

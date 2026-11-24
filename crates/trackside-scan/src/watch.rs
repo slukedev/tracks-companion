@@ -107,7 +107,9 @@ pub fn start(inner: &Arc<Inner>, handle: &tokio::runtime::Handle) {
         let seen = match result {
             // A rescan request can come without paths and with any kind, so it goes first.
             Ok(event) if event.need_rescan() => vec![Seen::Rescan],
-            Ok(event) if is_relevant(event.kind) => event.paths.into_iter().map(Seen::Path).collect(),
+            Ok(event) if is_relevant(event.kind) => {
+                event.paths.into_iter().map(Seen::Path).collect()
+            }
             Ok(_) => return,
             // Recursive watches report the folders they could not cover here.
             Err(error) => {

@@ -663,7 +663,9 @@ impl Inner {
             let _ = self.within(tokio::fs::create_dir_all(&trash)).await;
         }
         for dir in picked.failed {
-            let _ = self.within(tokio::fs::rename(&dir, trash_name(&trash, &dir))).await;
+            let _ = self
+                .within(tokio::fs::rename(&dir, trash_name(&trash, &dir)))
+                .await;
         }
         let mut evicted = 0_u32;
         for (token, dir) in picked.victims {
@@ -751,7 +753,9 @@ impl Inner {
 /// A unique place in the trash for `dir`.
 fn trash_name(trash: &Path, dir: &Path) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    let name = dir.file_name().map_or_else(Default::default, |n| n.to_string_lossy().into_owned());
+    let name = dir
+        .file_name()
+        .map_or_else(Default::default, |n| n.to_string_lossy().into_owned());
     trash.join(format!("{name}.{}", NEXT.fetch_add(1, Ordering::Relaxed)))
 }
 
@@ -839,14 +843,19 @@ mod tests {
     use super::*;
     use trackside_core::random_id;
 
-    const GRACE: Duration = Duration::from_secs(30 * 60);
+    const GRACE: Duration = Duration::from_mins(30);
     const NOW: Millis = Millis(1_000_000_000);
 
     fn at(minutes_ago: i64) -> Millis {
         Millis(NOW.0 - minutes_ago * 60_000)
     }
 
-    fn song(cache: &mut ExternalCache, bytes: u64, fetched: Millis, played: Option<Millis>) -> CandidateToken {
+    fn song(
+        cache: &mut ExternalCache,
+        bytes: u64,
+        fetched: Millis,
+        played: Option<Millis>,
+    ) -> CandidateToken {
         let token: CandidateToken = random_id();
         let manifest = Manifest {
             v: 1,
@@ -883,7 +892,7 @@ mod tests {
         let mut cache = ExternalCache::default();
         song(&mut cache, 10, at(120), None);
         song(&mut cache, 10, at(110), None);
-        assert!(victims(&mut cache, limits(2, 20)).is_empty());
+        assert_eq!(victims(&mut cache, limits(2, 20)), Vec::new());
     }
 
     #[test]
@@ -942,7 +951,10 @@ mod tests {
     fn songs_in_use_are_skipped_but_still_count() {
         let mut cache = ExternalCache::default();
         let held = song(&mut cache, 10, at(300), None);
-        let _stream = cache.entries[&held].holder.as_ref().map(watch::Sender::subscribe);
+        let _stream = cache.entries[&held]
+            .holder
+            .as_ref()
+            .map(watch::Sender::subscribe);
         let recent = song(&mut cache, 10, at(300), Some(at(29)));
         let idle = song(&mut cache, 10, at(200), None);
         let fetching: CandidateToken = random_id();
@@ -956,18 +968,21 @@ mod tests {
                     path: PathBuf::from("x"),
                     state,
                 },
-                ..Entry::finished(PathBuf::from("x"), Manifest {
-                    v: 1,
-                    file: String::from("a"),
-                    bytes: 0,
-                    title: String::new(),
-                    artist: String::new(),
-                    duration_ms: None,
-                    started_by: 2,
-                    fetched_at: at(500).0,
-                    played_at: None,
-                    keys: Vec::new(),
-                })
+                ..Entry::finished(
+                    PathBuf::from("x"),
+                    Manifest {
+                        v: 1,
+                        file: String::from("a"),
+                        bytes: 0,
+                        title: String::new(),
+                        artist: String::new(),
+                        duration_ms: None,
+                        started_by: 2,
+                        fetched_at: at(500).0,
+                        played_at: None,
+                        keys: Vec::new(),
+                    },
+                )
             },
         );
         assert_eq!(victims(&mut cache, limits(1, u64::MAX)), vec![idle]);
@@ -975,7 +990,10 @@ mod tests {
         assert!(cache.entries[&recent].usable());
         assert!(cache.entries[&fetching].usable());
         assert_eq!(cache.usage(), (3, 30, 1));
-        assert!(victims(&mut cache, limits(0, 0)).is_empty(), "only songs in use are left");
+        assert!(
+            victims(&mut cache, limits(0, 0)).is_empty(),
+            "only songs in use are left"
+        );
     }
 
     #[test]
@@ -988,7 +1006,10 @@ mod tests {
         assert!(victims(&mut cache, limits(0, 0)).is_empty(), "picked once");
         cache.evicted(&token, false);
         assert!(cache.touch(&token, NOW).is_some());
-        assert_eq!(cache.pick(NOW, limits(0, 0), Duration::ZERO).victims.len(), 1);
+        assert_eq!(
+            cache.pick(NOW, limits(0, 0), Duration::ZERO).victims.len(),
+            1
+        );
         cache.evicted(&token, true);
         assert!(cache.entries.is_empty());
         assert!(cache.by_key.is_empty());

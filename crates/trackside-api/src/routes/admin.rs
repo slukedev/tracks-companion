@@ -1498,6 +1498,9 @@ async fn patch_settings(
     })
     .await?;
     apply_acquisition_settings(&state, &changes).await;
+    if changes.iter().any(|(n, _)| *n == "server.public_urls") {
+        super::addresses::announce(&state).await;
+    }
     if changes.iter().any(|(n, _)| *n == settings::LEGACY_SUBSONIC) {
         let on = settings::effective_bool(&state, settings::LEGACY_SUBSONIC).await;
         state.auth.set_legacy_subsonic(on);

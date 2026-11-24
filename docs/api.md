@@ -607,6 +607,47 @@ is left out for a session or an API key.
 `{"current_password", "new_password", "sign_out_devices": false}`: `204`; from a session it needs
 a recent password check (section 6).
 
+### `GET /api/v1/server/urls` (scope: library)
+
+The addresses a paired device may use now, so it learns new ones (a public domain or tailnet
+name the owner added, a changed LAN address) without pairing again.
+
+```json
+{
+  "server_id": "5f0c2b9e-8a3d-4c1e-9b7a-2d6e4f8a1c3b",
+  "version": "a746df40293cc8d2b0f1b1ea782c9d87",
+  "urls": [
+    {"url": "http://192.168.1.20:4747", "kind": "lan", "tls": false},
+    {"url": "http://home.local:4747", "kind": "lan", "tls": false},
+    {"url": "https://music.example.com", "kind": "public", "tls": true}
+  ]
+}
+```
+
+- `urls` is the same list, in the same order and shape, as `server.urls` in PairResult and
+  `/me` (section 6): detected LAN addresses, then `server.public_urls` from the configuration or
+  the dashboard. It never comes from the request: no `Host`, `X-Forwarded-Host` or other header
+  adds, removes or changes an address.
+- `version` names the list: the same list always has the same version, across restarts. It is
+  also the strong `ETag`; send `If-None-Match` to get `304` when nothing changed.
+- SSE `server_urls` (section 13) says the list changed, with the new `version`. Clients connect to
+  events only in the foreground, so they also ask with `If-None-Match` when they come to the
+  foreground or reconnect.
+- `401` without a credential. Any device key, session or API key with the `library` scope may
+  read it.
+
+How a client treats the list:
+
+- It replaces the stored candidates with `urls` and races them as before (ADR 0009). An address
+  that is gone from the list is no longer used.
+- The list is only as good as the connection it came over, so a client reads it only from an
+  address that has already proven itself (ADR 0011).
+- Being on the list does not make an address trusted. A new address is used, like any other,
+  only after it gives a matching `/ping` proof for itself; over HTTPS its certificate must pass
+  the system's checks, or match `fingerprint` when one is given, and a certificate that does
+  neither is refused. A plain `http://` address gets a credential only when it is nearby
+  (section 5).
+
 ### Media token
 
 `POST /api/v1/media-token` (device key, scope: stream), with no request body:
@@ -992,6 +1033,7 @@ caller can see, in sync as well.
 | `scan` | `{"library_id", "state", "files_seen", "added", "updated", "missing"}` | admins only, at most once a second |
 | `acquisition` | Acquisition (15.3) | the caller's requests; admins see all |
 | `upload` | `{"id", "state", "song_id"?}` | the caller's uploads |
+| `server_urls` | `{"version"}` | the server's addresses changed; call `GET /server/urls` (section 7) |
 | `session` | `{"reason": "revoked"}` | the credential was revoked; the stream ends |
 
 `id` of each event is the seq at the time. Each event type is sent only to callers allowed to see
@@ -1195,7 +1237,10 @@ stream is played from one that can. `200`:
 
 `stream` works as in section 15.5 (append `mt`; scope: stream). When the caller's library has
 the song after all, the answer has `song_id` and no `stream`; play that song instead. The same
-song asked again within a few hours plays from what the server already fetched.
+song asked again plays from what the server already fetched, while it keeps it: the server keeps
+the most recently played of these songs within limits the admin sets (section 16), so a
+`stream` URL can stop working (`404`) once the song has not been played for a while. Ask again
+with the same body to get it back; it may be fetched again.
 
 - `400 bad_request` without a candidate or title and artist.
 - `404 not_found` when nothing matched.
@@ -1228,7 +1273,9 @@ fixtures in `dashboard/dev/fixtures/` use the same shapes.
                  "song_count": 48211, "scanning": false}],
   "media": {"ffmpeg": {"found": true, "version": "7.1"}, "transcodes": {"running": 1, "queued": 0},
             "transcode_cache_bytes": 2100000000},
-  "acquisition": {"enabled": true, "providers": [], "active": 2, "today": 14},
+  "acquisition": {"enabled": true, "providers": [], "active": 2, "today": 14,
+                  "fetched": {"songs": 212, "bytes": 7400000000, "fetching": 1, "keep": 500,
+                              "max_bytes": 21474836480}},
   "users": {"count": 4, "devices": 7},
   "backups": {"last": {"name": "trackside-20261114T033000Z.db", "at": "2026-11-14T03:30:00.000Z",
                        "bytes": 790000000},
@@ -1244,6 +1291,12 @@ fixtures in `dashboard/dev/fixtures/` use the same shapes.
 - `acquisition` is left out when the server was built without acquisition, and has
   `"enabled": false` when it can do it but it is switched off. `providers` holds ProviderStatus
   objects (below).
+- `acquisition.fetched` is what songs played without being kept (section 15.6) take now:
+  `songs` and `bytes` that are fetched and kept for replays, `fetching` still coming in, and the
+  limits `keep` and `max_bytes` (the settings `acquire.fetched_keep` and
+  `acquire.fetched_max_bytes`). `songs` and `bytes` can be over the limits for a while: a song
+  being fetched, streamed, transcoded or played in the last 30 minutes is never evicted. Left out
+  when the acquirer cannot tell.
 - `backups.last`, `backups.next_at` and `backups.last_error` are left out when there is none.
 - A problem has `severity` (`info`, `warning` or `error`), a stable `code` (`library_unavailable`,
   `inotify_limit`), a `title` of six words or fewer
@@ -1366,6 +1419,9 @@ files were left for later because they were still being written (`scanner.settle
 - `PATCH /admin/settings`: `{"key": value, ...}`; keys set by config are `409` with
   `details.reason = "set_by_config"`. Any `auth.*` key needs a recent password. `null` returns a
   key to its default.
+- `acquire.fetched_keep` (a whole number, default `500`) and `acquire.fetched_max_bytes` (a size,
+  default `"20GiB"`) limit songs played without being kept. Lowering either evicts at once, least
+  recently played first. `0` keeps none beyond those in use.
 - Secret keys (`enrichment.lastfm_api_key`) are write-only: `PATCH` takes the text, which is
   sealed with the server's secret key before it is stored, and needs a recent password; `GET`
   and every response show only whether one is set, as `"value": true` or `false`.

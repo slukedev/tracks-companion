@@ -32,6 +32,7 @@ pub mod build {
         listen_line, me_body, pair_result_body, qr_link, spaced_code,
     };
     pub use crate::routes::acquisition::{external_play_body, search_body};
+    pub use crate::routes::addresses::urls_version;
     pub use crate::routes::admin::{
         admin_library, admin_user, audit_summary, invite_state, library_problems_for,
         overview_library, scan_detail_body,
@@ -259,6 +260,8 @@ pub struct LocalState {
         HashMap<(UserKey, trackside_core::CandidateToken), trackside_core::control::HlsJobId>,
     >,
     latest_seq: AtomicI64,
+    /// The version of the address list last announced over events.
+    urls_version: Mutex<Option<String>>,
     now_playing: NowPlayingRegistry,
     playback: Arc<PlaybackLoad>,
     shutdown: CancellationToken,
@@ -320,6 +323,10 @@ impl LocalState {
 
     pub fn shutdown(&self) -> &CancellationToken {
         &self.shutdown
+    }
+
+    pub(crate) fn urls_version(&self) -> &Mutex<Option<String>> {
+        &self.urls_version
     }
 
     /// Everyone's current now-playing report that has not expired at `now`, the most recent
@@ -417,6 +424,7 @@ impl FromRef<ApiState> for Arc<Auth> {
 pub fn router(state: ApiState) -> Router {
     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
         runtime.spawn(follow_seq(state.events.clone(), Arc::clone(&state.local)));
+        runtime.spawn(routes::addresses::watch(state.clone()));
     }
     routes::router(state)
 }

@@ -20,17 +20,19 @@ use crate::ids::{LibraryKey, Seq, UserKey};
 use crate::time::{Clock, Millis};
 
 /// The schema version this build creates and understands (`PRAGMA user_version`).
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 const MIGRATION_1: &str = include_str!("../migrations/0001_initial.sql");
 const MIGRATION_2: &str = include_str!("../migrations/0002_stats_and_reauth.sql");
 const MIGRATION_3: &str = include_str!("../migrations/0003_enrichment.sql");
+const MIGRATION_4: &str = include_str!("../migrations/0004_cloud.sql");
 
 fn migrations() -> Migrations<'static> {
     Migrations::new(vec![
         M::up(MIGRATION_1),
         M::up(MIGRATION_2),
         M::up(MIGRATION_3),
+        M::up(MIGRATION_4),
     ])
 }
 
