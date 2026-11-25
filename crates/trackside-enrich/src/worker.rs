@@ -11,10 +11,13 @@ use tokio::sync::{Notify, oneshot};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use trackside_core::config::Secret;
-use trackside_core::enrich::{EnrichControl, EnrichStatus, EnrichTest, Target};
+use trackside_core::enrich::{
+    EnrichControl, EnrichStatus, EnrichTest, ExternalArtStore, QUEUE_MAX, Target,
+};
 use trackside_core::repo::enrichment::{self as store, ArtistFacts, Kind};
 use trackside_core::{BoxFuture, Db, DbError, Millis};
 
+use crate::art::{self, ArtError};
 use crate::lastfm::{self, LastFmError, Method};
 
 /// How the worker paces itself and how long answers are kept.
@@ -36,6 +39,11 @@ pub struct EnrichOptions {
     pub batch: u32,
     /// Similar artists and songs and top songs asked for per call.
     pub limit: u32,
+    /// The only origins cover images are fetched from.
+    pub image_hosts: Vec<String>,
+    /// How long a cover that could not be fetched (an unreachable host) waits before it is
+    /// looked up again.
+    pub art_retry_ttl: Duration,
 }
 
 impl Default for EnrichOptions {
@@ -51,6 +59,11 @@ impl Default for EnrichOptions {
             idle_recheck: Duration::from_secs(3600),
             batch: 25,
             limit: 50,
+            image_hosts: crate::art::IMAGE_HOSTS
+                .iter()
+                .map(|h| (*h).to_owned())
+                .collect(),
+            art_retry_ttl: Duration::from_hours(1),
         }
     }
 }
@@ -71,6 +84,8 @@ struct State {
 struct Inner {
     db: Db,
     http: reqwest::Client,
+    images: reqwest::Client,
+    art_store: RwLock<Option<Arc<dyn ExternalArtStore>>>,
     options: EnrichOptions,
     key: RwLock<Option<Secret>>,
     state: Mutex<State>,
@@ -117,6 +132,8 @@ impl Enricher {
         let inner = Arc::new(Inner {
             db,
             http,
+            images: art::client()?,
+            art_store: RwLock::new(None),
             options,
             key: RwLock::new(key),
             state: Mutex::new(State::default()),
@@ -125,6 +142,15 @@ impl Enricher {
         });
         tokio::spawn(run(Arc::clone(&inner), shutdown));
         Ok(Arc::new(Self { inner }))
+    }
+
+    /// Where covers for suggested songs go. Without one, cover lookups are skipped.
+    pub fn set_art_store(&self, store: Arc<dyn ExternalArtStore>) {
+        *self
+            .inner
+            .art_store
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(store);
     }
 }
 
@@ -178,17 +204,136 @@ impl Inner {
     }
 
     async fn is_fresh(&self, target: &Target) -> Result<bool, DbError> {
+        let now = self.now();
+        if let Target::Art { key, .. } = target {
+            let key = key.clone();
+            return self
+                .db
+                .read(move |c| store::art_is_fresh(c, &key, now))
+                .await;
+        }
         let (kind, key) = kind_key(target);
         let key = key.to_owned();
-        let now = self.now();
         self.db
             .read(move |c| store::is_fresh(c, kind, &key, now))
             .await
     }
 
+    fn art_store(&self) -> Option<Arc<dyn ExternalArtStore>> {
+        self.art_store
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// A paced image download from an allowed host.
+    async fn download(&self, url: reqwest::Url) -> Result<Vec<u8>, ArtError> {
+        {
+            let mut next = self.next_call.lock().await;
+            tokio::time::sleep_until(*next).await;
+            *next = Instant::now() + self.options.min_interval;
+        }
+        art::download(&self.images, url, self.options.request_timeout).await
+    }
+
+    /// The cover of a suggested song: `track.getInfo`, then `album.getInfo` when the track's
+    /// album has no image, then the image itself, checked and kept in the artwork cache.
+    async fn fetch_art(&self, key: &Secret, song_key: &str, title: &str, artist: &str) -> Outcome {
+        let Some(store) = self.art_store() else {
+            return Outcome::Done;
+        };
+        let found = async {
+            let info = self
+                .call(
+                    key,
+                    Method::TrackInfo,
+                    &[("artist", artist), ("track", title)],
+                )
+                .await?;
+            let cover = lastfm::track_cover(&info);
+            if cover.image.is_some() {
+                return Ok(cover.image);
+            }
+            let Some(album) = cover.album else {
+                return Ok(None);
+            };
+            let by = cover.album_artist.unwrap_or_else(|| artist.to_owned());
+            let info = self
+                .call(
+                    key,
+                    Method::AlbumInfo,
+                    &[("artist", &by), ("album", &album)],
+                )
+                .await?;
+            Ok::<_, LastFmError>(lastfm::album_cover(&info))
+        }
+        .await;
+        let image = match found {
+            Ok(image) => image,
+            Err(e) if e.is_unknown() => None,
+            Err(e) if e.is_key_problem() => return Outcome::KeyRejected(e),
+            Err(e) if e.is_retryable() => return Outcome::Retry(e),
+            Err(e) => {
+                self.note_error(e.to_string());
+                None
+            }
+        };
+        let mut ttl = self.options.unknown_ttl;
+        let mut stored = None;
+        if let Some(url) = image {
+            match self.keep_image(&store, &url).await {
+                Ok(id) => {
+                    stored = Some(id);
+                    ttl = self.options.ttl;
+                }
+                Err(e) => {
+                    if e.is_transient() {
+                        ttl = self.options.art_retry_ttl;
+                    }
+                    tracing::debug!(error = %e, "cover not kept");
+                }
+            }
+        }
+        let (song_key, ttl) = (song_key.to_owned(), Self::ttl_ms(ttl));
+        match self
+            .db
+            .write(move |tx| store::store_art(tx, &song_key, stored.as_ref(), ttl))
+            .await
+        {
+            Ok(()) => Outcome::Done,
+            Err(e) => Outcome::Skipped(e.to_string()),
+        }
+    }
+
+    /// Fetches and stores the image at `url` unless it is already held. Never fetches from
+    /// a host outside the allowed list.
+    async fn keep_image(
+        &self,
+        store: &Arc<dyn ExternalArtStore>,
+        url: &str,
+    ) -> Result<trackside_core::ExternalArtId, ArtError> {
+        let url = art::allowed(url, &self.options.image_hosts).ok_or(ArtError::Host)?;
+        let id = art::image_id(&url);
+        if store.has(&id) {
+            return Ok(id);
+        }
+        let bytes = self.download(url).await?;
+        let (store, kept) = (Arc::clone(store), id.clone());
+        tokio::task::spawn_blocking(move || store.put(&kept, &bytes))
+            .await
+            .map_err(|e| ArtError::NotImage(e.to_string()))?
+            .map_err(ArtError::NotImage)?;
+        Ok(id)
+    }
+
     async fn fetch(&self, key: &Secret, target: &Target) -> Outcome {
         let limit = self.options.limit.to_string();
         let result = match target {
+            Target::Art {
+                key: song_key,
+                title,
+                artist,
+            } => return self.fetch_art(key, song_key, title, artist).await,
             Target::Artist { name, .. } => self.fetch_artist(key, name, &limit).await,
             Target::Song { title, artist, .. } => self
                 .call(
@@ -247,6 +392,9 @@ impl Inner {
     }
 
     async fn save(&self, target: &Target, fetched: Option<Fetched>) -> Result<(), DbError> {
+        if matches!(target, Target::Art { .. }) {
+            return Ok(());
+        }
         let ttl = Self::ttl_ms(self.options.ttl);
         let unknown_ttl = Self::ttl_ms(self.options.unknown_ttl);
         let target = target.clone();
@@ -316,7 +464,7 @@ enum Fetched {
 fn kind_key(target: &Target) -> (Kind, &str) {
     match target {
         Target::Artist { identity, .. } => (Kind::Artist, identity),
-        Target::Song { key, .. } => (Kind::Song, key),
+        Target::Song { key, .. } | Target::Art { key, .. } => (Kind::Song, key),
     }
 }
 
@@ -435,6 +583,33 @@ impl EnrichControl for Enricher {
             inner.wake.notify_one();
             let _ = tokio::time::timeout(wait, join_all(receivers)).await;
         })
+    }
+
+    fn queue(&self, targets: Vec<Target>) {
+        let inner = &self.inner;
+        if inner.key().is_none() {
+            return;
+        }
+        {
+            let mut state = inner.state();
+            if state.rejected {
+                return;
+            }
+            let (art, lookups): (Vec<Target>, Vec<Target>) = targets
+                .into_iter()
+                .partition(|t| matches!(t, Target::Art { .. }));
+            for target in lookups.into_iter().rev() {
+                if state.urgent.len() < QUEUE_MAX && !state.urgent.contains(&target) {
+                    state.urgent.push_front(target);
+                }
+            }
+            for target in art {
+                if state.urgent.len() < QUEUE_MAX && !state.urgent.contains(&target) {
+                    state.urgent.push_back(target);
+                }
+            }
+        }
+        inner.wake.notify_one();
     }
 
     fn set_key(&self, key: Option<Secret>) {

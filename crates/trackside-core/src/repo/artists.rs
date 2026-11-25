@@ -183,6 +183,27 @@ pub fn by_name(c: &Connection, a: &Access, name: &str) -> Result<Option<Artist>,
         .next())
 }
 
+/// [`by_name`] for many names at once, by identity.
+pub fn by_names<'a>(
+    c: &Connection,
+    a: &Access,
+    names: impl Iterator<Item = &'a str>,
+) -> Result<HashMap<String, Artist>, DbError> {
+    let identities: Vec<String> = names.map(tracks_model::folded).collect();
+    let list = json_strings(identities.iter().map(String::as_str));
+    Ok(load(
+        c,
+        a,
+        None,
+        "r.identity IN (SELECT value FROM json_each(?1))",
+        "",
+        &[&list],
+    )?
+    .into_iter()
+    .map(|artist| (artist.identity.clone(), artist))
+    .collect())
+}
+
 /// How many artists the caller can see.
 pub fn count(c: &Connection, a: &Access) -> Result<u64, DbError> {
     let vis = visible(a, "x.library_id", None);

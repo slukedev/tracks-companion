@@ -1,6 +1,7 @@
 //! Library browsing and search (api.md sections 8 and 9). Every read filters by the caller's
 //! libraries inside the repositories.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use axum::Router;
@@ -11,6 +12,7 @@ use http::{HeaderMap, StatusCode};
 use serde::Deserialize;
 use trackside_auth::Scopes;
 use trackside_auth::extract::Authed;
+use trackside_core::enrich::Target;
 use trackside_core::records::ItemRef;
 use trackside_core::repo::albums::{self, AlbumFilter, AlbumSort};
 use trackside_core::repo::enrichment as enrichment_repo;
@@ -21,7 +23,10 @@ use trackside_core::{
     AlbumId, ArtistId, FolderId, LibraryId, PublicId, SongId, recommend, similar,
 };
 
-use super::{annotations, cached_json, enrichment, library_etag, read, songs_with_me};
+use super::{
+    annotations, cached_json, enrichment, library_etag, matches_etag, read, rusqlite_conn,
+    songs_with_me, suggestion_etag,
+};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::{Query, body_id, json_with, path_id};
 use crate::wire::library::{
@@ -194,45 +199,83 @@ async fn similar_songs(
     State(state): State<ApiState>,
     Path(id): Path<String>,
     Query(query): Query<CountQuery>,
+    headers: HeaderMap,
 ) -> ApiResult<Response> {
     let id: SongId = path_id(&id)?;
     let count = limit(query.count, 20, 100);
-    let access = principal.access.clone();
-    let seed_id = id.clone();
-    let seed = read(&state, move |c| {
-        songs::get(c, &access, &seed_id)?.ok_or(trackside_core::DbError::NotFound)
-    })
-    .await?;
-    enrichment::look_up(&state, enrichment::song_targets(&seed)).await;
-    let access = principal.access.clone();
     let external = sees_external(&state, &principal);
-    let (found, missing) = read(&state, move |c| {
+    let etag = suggestion_etag(
+        &state,
+        &principal.access,
+        &format!("similar-{id}-{count}-{external}"),
+    );
+    if matches_etag(&headers, &etag) {
+        return Ok(cached_json(&headers, &etag, &()));
+    }
+    let access = principal.access.clone();
+    let now = state.db.clock().now();
+    let (seed, found, offered) = read(&state, move |c| {
+        let seed = songs::get(c, &access, &id)?.ok_or(trackside_core::DbError::NotFound)?;
         let found = similar::similar_songs(c, &access, &id, count)?;
-        let missing = if external {
-            enrichment_repo::missing_similar(c, &access, &seed.song_key, count.min(EXTERNAL_MAX))?
+        let offered = if external {
+            let missing = enrichment_repo::missing_similar(
+                c,
+                &access,
+                &seed.song_key,
+                count.min(EXTERNAL_MAX),
+            )?;
+            Some(with_art(c, missing, now)?)
         } else {
-            Vec::new()
+            None
         };
-        Ok((found, missing))
+        Ok((seed, found, offered))
     })
     .await?;
+    let mut lookups = enrichment::song_targets(&seed);
+    let external = offered.map(|(list, art)| {
+        lookups.extend(art);
+        list
+    });
+    enrichment::look_up(&state, lookups);
     let songs = songs_with_me(&state, &principal.access, found).await?;
-    Ok(json_with(
-        StatusCode::OK,
-        &SuggestedSongs {
-            songs,
-            external: suggestions(external, missing),
-        },
+    Ok(cached_json(
+        &headers,
+        &etag,
+        &SuggestedSongs { songs, external },
     ))
 }
 
-fn suggestions(external: bool, missing: Vec<(String, String)>) -> Option<Vec<Suggestion>> {
-    external.then(|| {
-        missing
-            .into_iter()
-            .map(|(title, artist)| Suggestion { title, artist })
-            .collect()
-    })
+/// Songs to request as Suggestions, each with its cover once one was looked up, and the
+/// cover lookups still to make.
+fn with_art(
+    c: &rusqlite_conn::Connection,
+    missing: Vec<(String, String)>,
+    now: trackside_core::Millis,
+) -> Result<(Vec<Suggestion>, Vec<Target>), trackside_core::DbError> {
+    let keys: Vec<String> = missing
+        .iter()
+        .map(|(title, artist)| tracks_model::song_key(title, artist))
+        .collect();
+    let art = enrichment_repo::external_art(c, &keys)?;
+    let due: HashSet<String> = enrichment_repo::art_due(c, &keys, now)?
+        .into_iter()
+        .collect();
+    let mut lookups = Vec::new();
+    let list = missing
+        .into_iter()
+        .zip(&keys)
+        .map(|((title, artist), key)| {
+            if due.contains(key) {
+                lookups.push(Target::art(&title, &artist));
+            }
+            Suggestion {
+                artwork_id: art.get(key).cloned().flatten().map(|id| id.to_string()),
+                title,
+                artist,
+            }
+        })
+        .collect();
+    Ok((list, lookups))
 }
 
 async fn song_lyrics(
@@ -411,9 +454,7 @@ async fn artist(
     .await?;
     if bio.is_none() {
         // The page answers at once; the next visit has what this lookup finds.
-        let state = state.clone();
-        let target = enrichment::artist_target(&found);
-        tokio::spawn(async move { enrichment::look_up(&state, vec![target]).await });
+        enrichment::look_up(&state, vec![enrichment::artist_target(&found)]);
     }
     let items = std::iter::once(ItemRef::Artist(found.id.clone()))
         .chain(
@@ -446,46 +487,49 @@ async fn top_songs(
     State(state): State<ApiState>,
     Path(id): Path<String>,
     Query(query): Query<CountQuery>,
+    headers: HeaderMap,
 ) -> ApiResult<Response> {
     let id: ArtistId = path_id(&id)?;
     let count = limit(query.count, 20, 100);
-    let found = visible_artist(&state, &principal.access, &id).await?;
-    enrichment::look_up(&state, vec![enrichment::artist_target(&found)]).await;
-    let access = principal.access.clone();
     let external = sees_external(&state, &principal);
-    let (top, missing) = read(&state, move |c| {
+    let etag = suggestion_etag(
+        &state,
+        &principal.access,
+        &format!("top-{id}-{count}-{external}"),
+    );
+    if matches_etag(&headers, &etag) {
+        return Ok(cached_json(&headers, &etag, &()));
+    }
+    let access = principal.access.clone();
+    let now = state.db.clock().now();
+    let (found, top, offered) = read(&state, move |c| {
+        let found = artists::get(c, &access, &id)?.ok_or(trackside_core::DbError::NotFound)?;
         let top = songs::top_for_artist(c, &access, &id, count)?;
-        let missing = if external {
-            enrichment_repo::missing_top(c, &access, &found.identity, count.min(EXTERNAL_MAX))?
-                .into_iter()
-                .map(|title| (title, found.name.clone()))
-                .collect()
+        let offered = if external {
+            let missing =
+                enrichment_repo::missing_top(c, &access, &found.identity, count.min(EXTERNAL_MAX))?
+                    .into_iter()
+                    .map(|title| (title, found.name.clone()))
+                    .collect();
+            Some(with_art(c, missing, now)?)
         } else {
-            Vec::new()
+            None
         };
-        Ok((top, missing))
+        Ok((found, top, offered))
     })
     .await?;
+    let mut lookups = vec![enrichment::artist_target(&found)];
+    let external = offered.map(|(list, art)| {
+        lookups.extend(art);
+        list
+    });
+    enrichment::look_up(&state, lookups);
     let songs = songs_with_me(&state, &principal.access, top).await?;
-    Ok(json_with(
-        StatusCode::OK,
-        &SuggestedSongs {
-            songs,
-            external: suggestions(external, missing),
-        },
+    Ok(cached_json(
+        &headers,
+        &etag,
+        &SuggestedSongs { songs, external },
     ))
-}
-
-async fn visible_artist(
-    state: &ApiState,
-    access: &trackside_core::Access,
-    id: &ArtistId,
-) -> ApiResult<trackside_core::records::Artist> {
-    let (access, id) = (access.clone(), id.clone());
-    read(state, move |c| {
-        artists::get(c, &access, &id)?.ok_or(trackside_core::DbError::NotFound)
-    })
-    .await
 }
 
 #[derive(Debug, Deserialize)]
@@ -501,20 +545,30 @@ async fn similar_artists(
     State(state): State<ApiState>,
     Path(id): Path<String>,
     Query(query): Query<SimilarArtistsQuery>,
+    headers: HeaderMap,
 ) -> ApiResult<Response> {
     let id: ArtistId = path_id(&id)?;
     let count = limit(query.count, 15, 100);
-    let seed = visible_artist(&state, &principal.access, &id).await?;
-    enrichment::look_up(&state, vec![enrichment::artist_target(&seed)]).await;
+    let etag = suggestion_etag(
+        &state,
+        &principal.access,
+        &format!("artists-{id}-{count}-{}", query.in_library),
+    );
+    if matches_etag(&headers, &etag) {
+        return Ok(cached_json(&headers, &etag, &()));
+    }
     let access = principal.access.clone();
-    let found = read(&state, move |c| {
-        if query.in_library {
-            similar::similar_artists_in_library(c, &access, &id, count)
+    let (seed, found) = read(&state, move |c| {
+        let seed = artists::get(c, &access, &id)?.ok_or(trackside_core::DbError::NotFound)?;
+        let found = if query.in_library {
+            similar::similar_artists_in_library(c, &access, &id, count)?
         } else {
-            similar::similar_artists(c, &access, &id, count)
-        }
+            similar::similar_artists(c, &access, &id, count)?
+        };
+        Ok((seed, found))
     })
     .await?;
+    enrichment::look_up(&state, vec![enrichment::artist_target(&seed)]);
     let body = SimilarArtists {
         artists: found
             .iter()
@@ -527,7 +581,7 @@ async fn similar_artists(
             })
             .collect(),
     };
-    Ok(json_with(StatusCode::OK, &body))
+    Ok(cached_json(&headers, &etag, &body))
 }
 
 /// `GET /songs/top`: the most played songs on this server (api.md section 8, Shelves).
@@ -535,12 +589,17 @@ async fn server_top_songs(
     Authed(principal): Authed<LIBRARY>,
     State(state): State<ApiState>,
     Query(query): Query<CountQuery>,
+    headers: HeaderMap,
 ) -> ApiResult<Response> {
     let count = limit(query.count, 50, 200);
+    let etag = suggestion_etag(&state, &principal.access, &format!("top-{count}"));
+    if matches_etag(&headers, &etag) {
+        return Ok(cached_json(&headers, &etag, &()));
+    }
     let access = principal.access.clone();
     let found = read(&state, move |c| recommend::top_songs(c, &access, count)).await?;
     let songs = songs_with_me(&state, &principal.access, found).await?;
-    Ok(json_with(StatusCode::OK, &Songs { songs }))
+    Ok(cached_json(&headers, &etag, &Songs { songs }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -581,17 +640,24 @@ async fn get_more(
     let access = principal.access.clone();
     let now = state.db.clock().now();
     let external = sees_external(&state, &principal);
-    let found = read(&state, move |c| {
-        recommend::get_more(c, &access, now, count, external)
+    let (found, offered) = read(&state, move |c| {
+        let mut found = recommend::get_more(c, &access, now, count, external)?;
+        let offered = if external {
+            Some(with_art(c, std::mem::take(&mut found.external), now)?)
+        } else {
+            None
+        };
+        Ok((found, offered))
     })
     .await?;
+    let external = offered.map(|(list, art)| {
+        enrichment::look_up(&state, art);
+        list
+    });
     let songs = songs_with_me(&state, &principal.access, found.songs).await?;
     Ok(json_with(
         StatusCode::OK,
-        &SuggestedSongs {
-            songs,
-            external: suggestions(external, found.external),
-        },
+        &SuggestedSongs { songs, external },
     ))
 }
 
@@ -607,10 +673,10 @@ async fn picks(
     let access = principal.access.clone();
     let now = state.db.clock().now();
     let external = sees_external(&state, &principal);
-    let (found, missing) = read(&state, move |c| {
+    let (found, offered) = read(&state, move |c| {
         let picks = recommend::picks(c, &access, now, &zone, count)?;
-        let mut missing: Vec<(String, String)> = Vec::new();
-        if external {
+        let offered = if external {
+            let mut missing: Vec<(String, String)> = Vec::new();
             for seed in &picks.seeds {
                 for pair in
                     enrichment_repo::missing_similar(c, &access, &seed.song_key, EXTERNAL_MAX)?
@@ -621,27 +687,27 @@ async fn picks(
                 }
             }
             missing.truncate(EXTERNAL_MAX as usize);
-        }
-        Ok((picks, missing))
+            Some(with_art(c, missing, now)?)
+        } else {
+            None
+        };
+        Ok((picks, offered))
     })
     .await?;
-    let targets: Vec<_> = found
+    let mut lookups: Vec<_> = found
         .seeds
         .iter()
         .flat_map(enrichment::song_targets)
         .collect();
-    if !targets.is_empty() {
-        // Answers at once from what is stored; the next call has what these lookups find.
-        let state = state.clone();
-        tokio::spawn(async move { enrichment::look_up(&state, targets).await });
-    }
+    let external = offered.map(|(list, art)| {
+        lookups.extend(art);
+        list
+    });
+    enrichment::look_up(&state, lookups);
     let songs = songs_with_me(&state, &principal.access, found.songs).await?;
     Ok(json_with(
         StatusCode::OK,
-        &SuggestedSongs {
-            songs,
-            external: suggestions(external, missing),
-        },
+        &SuggestedSongs { songs, external },
     ))
 }
 
@@ -811,10 +877,11 @@ async fn search_library(
         .await;
         match search {
             Ok(Ok(found)) => {
+                let art = super::acquisition::candidate_art(&state, &found.candidates).await?;
                 body.external = Some(ExternalSection {
+                    candidates: super::acquisition::candidates(&found.candidates, &art),
                     search_id: found.search_id,
                     complete: found.complete,
-                    candidates: found.candidates.iter().map(map::candidate).collect(),
                 });
             }
             Ok(Err(e)) => tracing::warn!(error = %e, "external search failed"),

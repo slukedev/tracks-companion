@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use super::sql::{join_rel, json_ints, json_strings, opt_u8, opt_u32, to_u32, to_u64, visible};
 use crate::access::Access;
 use crate::db::DbError;
-use crate::ids::{AlbumId, ArtistId, FolderId, LibraryKey, PublicId, SongId};
+use crate::ids::{AlbumId, ArtistId, FolderId, LibraryKey, PublicId, SongId, UserKey};
 use crate::records::{
     AudioFormat, Codec, Container, Credit, CreditRole, Explicit, ReplayGain, Song, SongFile,
     SongMbz,
@@ -418,6 +418,20 @@ pub fn top_for_artist(
     count: u32,
 ) -> Result<Vec<Song>, DbError> {
     let count = count.clamp(1, 500);
+    crate::memo::cached(
+        "top_for_artist",
+        || format!("{}/{artist}/{count}", crate::memo::access_key(a)),
+        Vec::len,
+        || compute_top_for_artist(c, a, artist, count),
+    )
+}
+
+fn compute_top_for_artist(
+    c: &Connection,
+    a: &Access,
+    artist: &ArtistId,
+    count: u32,
+) -> Result<Vec<Song>, DbError> {
     let tail = format!(
         "WHERE s.id IN (SELECT sa.song_id FROM song_artists sa
                         WHERE sa.artist_id = (SELECT id FROM artists WHERE pid = ?1)
@@ -439,6 +453,297 @@ pub fn top_for_artist(
         visible(a, "s.library_id", None)
     );
     load(c, &tail, &[artist, &a.user])
+}
+
+/// A song as [`top_for_artists`] ranks it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TopSong {
+    pub id: SongId,
+    pub song_key: String,
+    /// The display artist, as tagged.
+    pub artist: String,
+}
+
+/// What ranks a song among an artist's songs apart from plays, stars and ratings.
+#[derive(Clone, Debug)]
+struct ArtistSong {
+    id: i64,
+    song: TopSong,
+    year: Option<i64>,
+    album_sort: Option<String>,
+    disc: i64,
+    track: i64,
+}
+
+/// An artist's visible songs, kept per library generation.
+#[derive(Debug)]
+struct ArtistSongs {
+    identity: String,
+    songs: Vec<ArtistSong>,
+}
+
+fn artist_songs(
+    c: &Connection,
+    a: &Access,
+    artists: &[ArtistId],
+) -> Result<HashMap<ArtistId, std::sync::Arc<ArtistSongs>>, DbError> {
+    // What the caller may see is all that matters here, so callers who see the same
+    // libraries share these.
+    let access = format!("{:?}", a.libraries);
+    let mut out = HashMap::new();
+    let mut wanted = Vec::new();
+    for artist in artists {
+        match crate::memo::library_get::<ArtistSongs>(
+            "lib:artist_songs",
+            &format!("{access}/{artist}"),
+        ) {
+            Some(held) => {
+                out.insert(artist.clone(), held);
+            }
+            None => wanted.push(artist),
+        }
+    }
+    if wanted.is_empty() {
+        return Ok(out);
+    }
+    let list = json_strings(wanted.iter().map(|id| id.as_str()));
+    let sql = format!(
+        "SELECT DISTINCT r.pid, r.identity, s.id, s.pid, s.song_key, s.artist, al.year,
+                al.sort_name, coalesce(s.disc_number, 1), coalesce(s.track_number, 0)
+         FROM artists r
+         JOIN song_artists sa ON sa.artist_id = r.id AND sa.role IN ('main', 'featured')
+         JOIN songs s ON s.id = sa.song_id
+         LEFT JOIN albums al ON al.id = s.album_id
+         WHERE r.pid IN (SELECT value FROM json_each(?1)) AND s.missing_since IS NULL AND {}",
+        visible(a, "s.library_id", None)
+    );
+    let mut loaded: HashMap<ArtistId, ArtistSongs> = HashMap::new();
+    let mut statement = c.prepare_cached(&sql)?;
+    let mut rows = statement.query([&list])?;
+    while let Some(row) = rows.next()? {
+        let entry = loaded.entry(row.get(0)?).or_insert_with(|| ArtistSongs {
+            identity: String::new(),
+            songs: Vec::new(),
+        });
+        entry.identity = row.get(1)?;
+        entry.songs.push(ArtistSong {
+            id: row.get(2)?,
+            song: TopSong {
+                id: row.get(3)?,
+                song_key: row.get(4)?,
+                artist: row.get(5)?,
+            },
+            year: row.get(6)?,
+            album_sort: row.get(7)?,
+            disc: row.get(8)?,
+            track: row.get(9)?,
+        });
+    }
+    for artist in wanted {
+        let found = std::sync::Arc::new(loaded.remove(artist).unwrap_or(ArtistSongs {
+            identity: String::new(),
+            songs: Vec::new(),
+        }));
+        crate::memo::library_put(
+            "lib:artist_songs",
+            format!("{access}/{artist}"),
+            std::sync::Arc::clone(&found),
+            found.songs.len(),
+        );
+        out.insert(artist.clone(), found);
+    }
+    Ok(out)
+}
+
+/// Plays of each song, from `play_stats`, kept between reads and brought up to date from the
+/// listens added since: `repo::listens::submit` is the only writer of `play_stats` and adds
+/// exactly one play per stored listen of a library song. Rows go only when a user is deleted,
+/// which changes the users' fingerprint the totals are kept under, so they are built again.
+#[derive(Debug, Default)]
+struct Plays(HashMap<String, i64>);
+
+fn add_new_plays(
+    c: &Connection,
+    plays: &mut HashMap<String, i64>,
+    user: Option<UserKey>,
+    after: i64,
+) -> Result<(), DbError> {
+    let mut statement = c.prepare_cached(
+        "SELECT song_pid FROM listens
+         WHERE id > ?1 AND song_pid IS NOT NULL AND (?2 IS NULL OR user_id = ?2)",
+    )?;
+    let mut rows = statement.query(params![after, user])?;
+    while let Some(row) = rows.next()? {
+        *plays.entry(row.get(0)?).or_default() += 1;
+    }
+    Ok(())
+}
+
+fn updated(
+    c: &Connection,
+    older: Option<(i64, std::sync::Arc<Plays>)>,
+    user: Option<UserKey>,
+    full: &str,
+) -> Result<Plays, DbError> {
+    if let Some((after, held)) = older {
+        let mut plays =
+            std::sync::Arc::try_unwrap(held).map_or_else(|shared| shared.0.clone(), |p| p.0);
+        add_new_plays(c, &mut plays, user, after)?;
+        return Ok(Plays(plays));
+    }
+    let mut statement = c.prepare_cached(full)?;
+    let rows = statement.query_map(params![user], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(Plays(rows.collect::<Result<_, _>>()?))
+}
+
+/// Everyone's plays of each song.
+fn play_totals(c: &Connection) -> Result<std::sync::Arc<Plays>, DbError> {
+    let (users, last_user, last_listen): (i64, i64, i64) = c
+        .prepare_cached(
+            "SELECT (SELECT count(*) FROM users), (SELECT coalesce(max(id), 0) FROM users),
+                    (SELECT coalesce(max(id), 0) FROM listens)",
+        )?
+        .query_row([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+    // Who the users are: a deleted user takes their plays along, so the totals start over.
+    let fingerprint = UserKey(users.wrapping_mul(1_000_003).wrapping_add(last_user));
+    crate::memo::per_user("play_totals", fingerprint, last_listen, |older| {
+        updated(
+            c,
+            older,
+            None,
+            "SELECT song_pid, sum(play_count) FROM play_stats
+             WHERE ?1 IS NULL GROUP BY song_pid",
+        )
+    })
+}
+
+/// The caller's own plays of each song, kept until they listen again.
+fn own_plays(c: &Connection, a: &Access) -> Result<std::sync::Arc<Plays>, DbError> {
+    let last_listen: i64 = c
+        .prepare_cached("SELECT coalesce(max(id), 0) FROM listens WHERE user_id = ?1")?
+        .query_row([a.user], |row| row.get(0))?;
+    crate::memo::per_user("own_plays", a.user, last_listen, |older| {
+        updated(
+            c,
+            older,
+            Some(a.user),
+            "SELECT song_pid, play_count FROM play_stats WHERE user_id = ?1",
+        )
+    })
+}
+
+/// The caller's own stars and ratings of songs.
+#[derive(Debug, Default)]
+struct Mine {
+    stars: std::collections::HashSet<String>,
+    ratings: HashMap<String, i64>,
+}
+
+fn mine(c: &Connection, a: &Access) -> Result<std::sync::Arc<Mine>, DbError> {
+    crate::memo::cached(
+        "my_songs",
+        || a.user.0.to_string(),
+        |m: &std::sync::Arc<Mine>| (m.stars.len() + m.ratings.len()) / 4,
+        || {
+            let mut out = Mine::default();
+            let mut statement = c.prepare_cached(
+                "SELECT item_pid FROM stars WHERE user_id = ?1 AND item_kind = 'song'",
+            )?;
+            let mut rows = statement.query([a.user])?;
+            while let Some(row) = rows.next()? {
+                out.stars.insert(row.get(0)?);
+            }
+            let mut statement = c.prepare_cached(
+                "SELECT item_pid, rating FROM ratings WHERE user_id = ?1 AND item_kind = 'song'",
+            )?;
+            let mut rows = statement.query([a.user])?;
+            while let Some(row) = rows.next()? {
+                out.ratings.insert(row.get(0)?, row.get(1)?);
+            }
+            Ok(std::sync::Arc::new(out))
+        },
+    )
+}
+
+/// [`top_for_artist`] for many artists at once, as brief songs: each list holds the same
+/// songs in the same order that function gives. The ranking is computed here from the same
+/// values its SQL reads, so the order is the same, ties included. Artists the caller cannot
+/// see, or without songs, are left out.
+pub fn top_for_artists(
+    c: &Connection,
+    a: &Access,
+    artists: &[ArtistId],
+    count: u32,
+) -> Result<HashMap<ArtistId, Vec<TopSong>>, DbError> {
+    let count = count.clamp(1, 500) as usize;
+    if artists.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let catalog = artist_songs(c, a, artists)?;
+    let totals = play_totals(c)?;
+    let own = own_plays(c, a)?;
+    let mine = mine(c, a)?;
+    let identities = json_strings(catalog.values().map(|s| s.identity.as_str()));
+    let mut ranks: HashMap<String, HashMap<String, i64>> = HashMap::new();
+    {
+        let mut statement = c.prepare_cached(
+            "SELECT artist_identity, song_key, min(rank) FROM enrichment_top_songs
+             WHERE artist_identity IN (SELECT value FROM json_each(?1))
+             GROUP BY artist_identity, song_key",
+        )?;
+        let mut rows = statement.query([&identities])?;
+        while let Some(row) = rows.next()? {
+            ranks
+                .entry(row.get(0)?)
+                .or_default()
+                .insert(row.get(1)?, row.get(2)?);
+        }
+    }
+    let mut out = HashMap::new();
+    for (artist, found) in catalog {
+        if found.songs.is_empty() {
+            continue;
+        }
+        let own_ranks = ranks.get(&found.identity);
+        let mut scored: Vec<(f64, Option<i64>, &ArtistSong)> = found
+            .songs
+            .iter()
+            .map(|s| {
+                let pid = s.song.id.as_str();
+                // As the SQL adds them: whole plays and stars, then Last.fm's rank as a real.
+                let whole = totals.0.get(pid).copied().unwrap_or(0)
+                    + own.0.get(pid).copied().unwrap_or(0)
+                    + 5 * i64::from(mine.stars.contains(pid));
+                let rank = own_ranks
+                    .and_then(|r| r.get(&s.song.song_key))
+                    .map_or(0.0, |r| 20.0 / (1 + r) as f64);
+                (whole as f64 + rank, mine.ratings.get(pid).copied(), s)
+            })
+            .collect();
+        scored.sort_by(|x, y| {
+            y.0.total_cmp(&x.0)
+                .then_with(|| match (x.1, y.1) {
+                    (Some(p), Some(q)) => q.cmp(&p),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                })
+                .then_with(|| x.2.year.cmp(&y.2.year))
+                .then_with(|| x.2.album_sort.cmp(&y.2.album_sort))
+                .then_with(|| x.2.disc.cmp(&y.2.disc))
+                .then_with(|| x.2.track.cmp(&y.2.track))
+                .then_with(|| x.2.id.cmp(&y.2.id))
+        });
+        out.insert(
+            artist,
+            scored
+                .into_iter()
+                .take(count)
+                .map(|(_, _, s)| s.song.clone())
+                .collect(),
+        );
+    }
+    Ok(out)
 }
 
 /// Every visible song by internal id, for Subsonic's legacy empty `search3` paging. Returns the

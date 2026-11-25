@@ -237,6 +237,20 @@ pub(crate) fn library_etag(state: &ApiState, access: &Access) -> String {
     )
 }
 
+/// The weak `ETag` of a suggestion list that does not depend on the time: the database
+/// generation (which moves with every change suggestions read, listens and Last.fm data
+/// included), the caller and their sync epoch, and `what` (the endpoint and its parameters),
+/// with the process start so a restart never reuses one.
+pub(crate) fn suggestion_etag(state: &ApiState, access: &Access, what: &str) -> String {
+    format!(
+        "W/\"{:x}-g{}-{}-{}-{what}\"",
+        state.server.started_at.0,
+        state.db.generation(),
+        access.user.0,
+        access.sync_epoch
+    )
+}
+
 /// Whether `If-None-Match` names `etag` (weak comparison).
 pub(crate) fn matches_etag(headers: &HeaderMap, etag: &str) -> bool {
     let strip = |t: &str| t.trim().trim_start_matches("W/").to_owned();

@@ -459,7 +459,9 @@ async fn an_older_database_is_backed_up_and_migrated_and_a_newer_one_refused() -
     {
         let db = rusqlite::Connection::open(&db_path)?;
         db.execute_batch(
-            "DROP TABLE cloud_devices; DROP TABLE cloud_entities; DROP TABLE cloud_items;
+            "DROP TABLE external_art; DROP INDEX listens_user_id;
+             DROP INDEX similar_songs_target;
+             DROP TABLE cloud_devices; DROP TABLE cloud_entities; DROP TABLE cloud_items;
              DROP TABLE cloud_meta; DROP TABLE cloud_state;
              DROP TABLE enrichment_fetches; DROP TABLE enrichment_artists;
              DROP TABLE enrichment_top_songs; DROP TABLE enrichment_song_names;
@@ -475,7 +477,7 @@ async fn an_older_database_is_backed_up_and_migrated_and_a_newer_one_refused() -
     let backup = std::fs::read_dir(env.server.data_dir().join("backups"))?
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .find(|n| n.starts_with("pre-migrate-v1-v4-"));
+        .find(|n| n.starts_with("pre-migrate-v1-v5-"));
     assert!(
         backup.is_some(),
         "no pre-migration backup: {}",

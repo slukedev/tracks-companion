@@ -36,6 +36,7 @@ ring.workspace = true
 [dev-dependencies]
 trackside-core = { workspace = true, features = ["testing"] }
 trackside-media = { workspace = true, features = ["testing"] }
+trackside-subsonic.workspace = true
 tempfile.workspace = true
 reqwest.workspace = true
 rustls.workspace = true

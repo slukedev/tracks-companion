@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use rusqlite::Connection;
 use trackside_auth::Scopes;
-use trackside_core::enrich::{ON_DEMAND_WAIT, Target};
+use trackside_core::enrich::Target;
 use trackside_core::records::{Album, Artist, Folder, Song};
 use trackside_core::{Access, AlbumId, ArtistId, Millis, PublicId, SongId, repo, similar};
 
@@ -277,11 +277,11 @@ fn artist_of(c: &Connection, a: &Access, id: AnyId) -> Result<Artist, ApiError> 
     repo::artists::get(c, a, &artist_id)?.ok_or_else(|| ApiError::not_found("Artist"))
 }
 
-/// Starts the Last.fm lookups a request needs and waits briefly; answers come from what is
-/// stored either way.
-async fn look_up(call: &Call<'_>, targets: Vec<Target>) {
+/// Puts the Last.fm lookups a request needs first in line, without waiting: answers come
+/// from what is stored, and a later request has what the lookups find.
+fn look_up(call: &Call<'_>, targets: Vec<Target>) {
     if !targets.is_empty() {
-        call.state().enrich.ensure(targets, ON_DEMAND_WAIT).await;
+        call.state().enrich.queue(targets);
     }
 }
 
@@ -298,7 +298,7 @@ pub async fn artist_info(call: &Call<'_>, element: &'static str) -> Result<Reply
         AnyId::parse(call.params.required("id")?).ok_or_else(|| ApiError::not_found("Artist"))?;
     let count = call.params.count("count", 20, 100)?;
     let artist = call.read(move |c, a| artist_of(c, a, id)).await?;
-    look_up(call, vec![artist_target(&artist)]).await;
+    look_up(call, vec![artist_target(&artist)]);
     let node = call
         .read(move |c, a| {
             let similar: Vec<Artist> =
@@ -439,7 +439,7 @@ pub async fn similar_songs(call: &Call<'_>, element: &'static str) -> Result<Rep
             })
         })
         .await?;
-    look_up(call, targets).await;
+    look_up(call, targets);
     let songs = call
         .read(move |c, a| {
             let songs = similar_to(c, a, id, count)?;
@@ -480,7 +480,7 @@ pub async fn top_songs(call: &Call<'_>) -> Result<Reply, ApiError> {
         })
         .await?;
     if let Some(artist) = &artist {
-        look_up(call, vec![artist_target(artist)]).await;
+        look_up(call, vec![artist_target(artist)]);
     }
     let songs = call
         .read(move |c, a| {

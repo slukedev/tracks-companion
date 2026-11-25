@@ -10,7 +10,7 @@ Versions follow [semantic versioning](https://semver.org). Release tags are
 ## 0.1.0 (unreleased)
 
 The first release of Trackside, a music server for Tracks that you run yourself. The database
-starts at schema 4; there is nothing to upgrade from.
+starts at schema 5; there is nothing to upgrade from.
 
 - Indexes your music and keeps song ids stable through retags, moves and renames, even across
   a rebuilt database.
@@ -54,9 +54,13 @@ starts at schema 4; there is nothing to upgrade from.
 - Suggestions from Last.fm with one server-wide API key, set in the dashboard under Settings,
   Last.fm (with a Test button) or in the config: similar songs and artists, top songs and artist
   bios for every user, ranked by each user's own listens and stars, with no Last.fm account
-  needed. Only public read calls with artist and track names are made, at most a few a second,
-  and answers are kept for 30 days. Users who can request songs also see suggestions the
-  server doesn't have yet.
+  needed. Only public read calls with artist, track and album names are made, at most a few a
+  second, and answers are kept for 30 days. Users who can request songs also see suggestions
+  the server doesn't have yet, with their cover once it has been looked up; covers come only
+  from Last.fm's image hosts, are checked and kept in the artwork cache, and apps load them
+  from your server. Suggestions never wait for Last.fm, and the shelves (picks, Get More, the
+  mixes, top songs, similar songs and artists) are kept between requests until something they
+  read changes, so they answer in milliseconds on a large library.
 - Apple Music for Tracks on Android: save your MusicKit key in the dashboard under Settings,
   Apple Music, and your server signs short-lived developer tokens for your apps, so the key never
   leaves it. See [configuration](docs/ops/configuration.md) for getting a key from Apple.

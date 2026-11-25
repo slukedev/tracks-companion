@@ -397,13 +397,15 @@ pub async fn run_with(
                 .await
         }
     };
-    let enrich: Arc<dyn trackside_core::EnrichControl> = trackside_enrich::Enricher::start(
+    let enricher = trackside_enrich::Enricher::start(
         db.clone(),
         lastfm_key,
         trackside_enrich::EnrichOptions::default(),
         shutdown.clone(),
     )
     .context("cannot start Last.fm enrichment")?;
+    enricher.set_art_store(Arc::new(media.artwork_store().clone()));
+    let enrich: Arc<dyn trackside_core::EnrichControl> = enricher;
 
     let tls = tls::setup(&config.tls, &config.data_dir, &shutdown)?;
     let mut listeners = Vec::new();

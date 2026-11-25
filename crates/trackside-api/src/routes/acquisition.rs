@@ -1,6 +1,8 @@
 //! Acquisition (api.md section 15). Every endpoint answers `404` unless `/me` would carry
 //! `features.acquisition` for this caller, as if it did not exist.
 
+use std::collections::HashMap;
+
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{Path, Request, State};
@@ -11,10 +13,10 @@ use serde::Deserialize;
 use trackside_auth::extract::{Authed, MediaAuthed};
 use trackside_auth::{Principal, Scopes};
 use trackside_core::control::{
-    AcquireRequest, AcquisitionFilter, AcquisitionState, AcquisitionStateFilter, ExternalPlay,
-    ExternalPlayRequest, ExternalQuery, ExternalSearch, GrowState, InstantStream,
+    AcquireRequest, AcquisitionFilter, AcquisitionState, AcquisitionStateFilter, CandidateView,
+    ExternalPlay, ExternalPlayRequest, ExternalQuery, ExternalSearch, GrowState, InstantStream,
 };
-use trackside_core::{AcquisitionId, CandidateToken};
+use trackside_core::{AcquisitionId, CandidateToken, ExternalArtId};
 use trackside_media::{HlsPart, Priority};
 
 use super::account::acquisition_feature;
@@ -50,14 +52,51 @@ fn available(state: &ApiState, principal: &Principal) -> ApiResult<()> {
     }
 }
 
-/// The search's wire shape.
-pub fn search_body(found: &ExternalSearch) -> Search {
+/// The search's wire shape. `art` holds covers looked up for suggestions by `song_key`.
+pub fn search_body<S: std::hash::BuildHasher>(
+    found: &ExternalSearch,
+    art: &HashMap<String, ExternalArtId, S>,
+) -> Search {
     Search {
         search_id: found.search_id.clone(),
         complete: found.complete,
         in_library: found.in_library.iter().map(map::song).collect(),
-        candidates: found.candidates.iter().map(map::candidate).collect(),
+        candidates: candidates(&found.candidates, art),
     }
+}
+
+/// Candidates with the covers in `art`, by `song_key`.
+pub(crate) fn candidates<S: std::hash::BuildHasher>(
+    found: &[CandidateView],
+    art: &HashMap<String, ExternalArtId, S>,
+) -> Vec<wire_acq::Candidate> {
+    found
+        .iter()
+        .map(|c| map::candidate(c, art.get(&tracks_model::song_key(&c.title, &c.artist))))
+        .collect()
+}
+
+/// Covers already looked up for suggested songs with the same `song_key` as a candidate.
+/// Never starts a lookup: search results are not suggestions.
+pub(crate) async fn candidate_art(
+    state: &ApiState,
+    found: &[CandidateView],
+) -> ApiResult<HashMap<String, ExternalArtId>> {
+    let keys: Vec<String> = found
+        .iter()
+        .map(|c| tracks_model::song_key(&c.title, &c.artist))
+        .collect();
+    if keys.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let stored = super::read(state, move |c| {
+        trackside_core::repo::enrichment::external_art(c, &keys)
+    })
+    .await?;
+    Ok(stored
+        .into_iter()
+        .filter_map(|(key, id)| Some((key, id?)))
+        .collect())
 }
 
 /// Free text, or title and artist.
@@ -88,7 +127,8 @@ async fn search(
     available(&state, &principal)?;
     let query = external_query(body)?;
     let found = state.acquire.search(&principal.access, query).await?;
-    Ok(json_with(StatusCode::OK, &search_body(&found)))
+    let art = candidate_art(&state, &found.candidates).await?;
+    Ok(json_with(StatusCode::OK, &search_body(&found, &art)))
 }
 
 async fn search_more(
@@ -98,7 +138,8 @@ async fn search_more(
 ) -> ApiResult<Response> {
     available(&state, &principal)?;
     let found = state.acquire.search_more(&principal.access, &id).await?;
-    Ok(json_with(StatusCode::OK, &search_body(&found)))
+    let art = candidate_art(&state, &found.candidates).await?;
+    Ok(json_with(StatusCode::OK, &search_body(&found, &art)))
 }
 
 async fn request(

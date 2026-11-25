@@ -1,5 +1,5 @@
 //! Last.fm enrichment: its status and a test call for the dashboard (api.md section 16,
-//! Suggestions), and the on-demand lookups library requests start.
+//! Suggestions), and the lookups library requests start in the background.
 
 use axum::Router;
 use axum::extract::State;
@@ -8,7 +8,7 @@ use axum::routing::{get, post};
 use http::StatusCode;
 use trackside_auth::extract::AdminSession;
 use trackside_core::config::Secret;
-use trackside_core::enrich::{ON_DEMAND_WAIT, Target};
+use trackside_core::enrich::Target;
 
 use super::settings;
 use crate::ApiState;
@@ -68,11 +68,11 @@ async fn test(
     ))
 }
 
-/// Starts lookups a request needs and waits briefly for them; answers come from what is
-/// stored either way.
-pub(crate) async fn look_up(state: &ApiState, targets: Vec<Target>) {
+/// Puts lookups a request needs first in line. Never waits: the answer comes from what is
+/// stored, and the next request has what these lookups find.
+pub(crate) fn look_up(state: &ApiState, targets: Vec<Target>) {
     if !targets.is_empty() {
-        state.enrich.ensure(targets, ON_DEMAND_WAIT).await;
+        state.enrich.queue(targets);
     }
 }
 

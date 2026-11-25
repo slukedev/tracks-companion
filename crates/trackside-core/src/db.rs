@@ -7,7 +7,7 @@
 //! [`ServerEvent::Changed`] only after the commit succeeds.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{
@@ -21,12 +21,13 @@ use crate::ids::{LibraryKey, Seq, UserKey};
 use crate::time::{Clock, Millis};
 
 /// The schema version this build creates and understands (`PRAGMA user_version`).
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 const MIGRATION_1: &str = include_str!("../migrations/0001_initial.sql");
 const MIGRATION_2: &str = include_str!("../migrations/0002_stats_and_reauth.sql");
 const MIGRATION_3: &str = include_str!("../migrations/0003_enrichment.sql");
 const MIGRATION_4: &str = include_str!("../migrations/0004_cloud.sql");
+const MIGRATION_5: &str = include_str!("../migrations/0005_suggestions.sql");
 
 fn migrations() -> Migrations<'static> {
     Migrations::new(vec![
@@ -34,6 +35,7 @@ fn migrations() -> Migrations<'static> {
         M::up(MIGRATION_2),
         M::up(MIGRATION_3),
         M::up(MIGRATION_4),
+        M::up(MIGRATION_5),
     ])
 }
 
@@ -258,6 +260,7 @@ pub struct WriteTx<'c> {
     changes: Vec<Change>,
     now: Millis,
     next_seq: i64,
+    touched: std::cell::Cell<bool>,
 }
 
 impl WriteTx<'_> {
@@ -305,6 +308,13 @@ impl WriteTx<'_> {
         Ok(seq)
     }
 
+    /// Marks that this transaction changes what suggestions read without recording a change
+    /// (a listen sent by name, Last.fm data), so results kept in the [`crate::memo`] are
+    /// not used after it commits.
+    pub fn touch(&self) {
+        self.touched.set(true);
+    }
+
     /// A savepoint inside this transaction, for work that may be undone on its own.
     pub fn savepoint(&mut self) -> Result<rusqlite::Savepoint<'_>, DbError> {
         Ok(self.tx.savepoint()?)
@@ -350,6 +360,11 @@ struct Inner {
     /// The seq of the last committed change, copied from the writer after each commit so
     /// [`Db::current_seq`] never waits on the writer's lock (which a long write holds).
     committed_seq: AtomicI64,
+    /// Moves after every commit that changes what suggestions read (see [`crate::memo`]).
+    generation: AtomicU64,
+    /// Moves after every commit that changes songs, albums, artists or libraries.
+    library_generation: AtomicU64,
+    memo: Arc<crate::memo::Memo>,
     events: EventBus,
     clock: Arc<dyn Clock>,
 }
@@ -465,6 +480,9 @@ impl Db {
         Ok(Self {
             inner: Arc::new(Inner {
                 committed_seq: AtomicI64::new(next_seq - 1),
+                generation: AtomicU64::new(0),
+                library_generation: AtomicU64::new(0),
+                memo: Arc::default(),
                 writer: Mutex::new(Writer { conn, next_seq }),
                 idle_readers: Mutex::new(Vec::new()),
                 path,
@@ -482,6 +500,23 @@ impl Db {
     /// copy of the writer's counter, so it costs no query and never blocks on a running write.
     pub fn current_seq(&self) -> Seq {
         Seq(self.inner.committed_seq.load(Ordering::Acquire))
+    }
+
+    /// Moves after every committed write that changes what suggestions read: any recorded
+    /// change but play queues and acquisitions, and any [`WriteTx::touch`]. Results in the
+    /// [`crate::memo`] are kept per generation.
+    pub fn generation(&self) -> u64 {
+        self.inner.generation.load(Ordering::Acquire)
+    }
+
+    /// Moves after every committed write that changes songs, albums, artists or libraries.
+    pub fn library_generation(&self) -> u64 {
+        self.inner.library_generation.load(Ordering::Acquire)
+    }
+
+    /// Derived results kept between reads.
+    pub fn memo(&self) -> &crate::memo::Memo {
+        &self.inner.memo
     }
 
     /// Runs SQLite's `quick_check` (or the slower, thorough `integrity_check` with `full`) on
@@ -578,7 +613,14 @@ impl Db {
         &self,
         f: impl FnOnce(&Connection) -> Result<T, DbError>,
     ) -> Result<T, DbError> {
-        self.with_reader(|conn| in_snapshot(conn, f))
+        // Read before the snapshot starts, so nothing newer is stored under it.
+        let generation = crate::memo::Generations {
+            all: self.generation(),
+            library: self.library_generation(),
+        };
+        self.with_reader(|conn| {
+            crate::memo::scope(&self.inner.memo, generation, || in_snapshot(conn, f))
+        })
     }
 
     /// Lends a reader connection outside any transaction (the writer, in memory).
@@ -628,17 +670,35 @@ impl Db {
                 changes: Vec::new(),
                 now: self.inner.clock.now(),
                 next_seq: *next_seq,
+                touched: std::cell::Cell::new(false),
             };
             let value = f(&mut write).map_err(DbError::classify)?;
             let WriteTx {
                 tx,
                 changes,
                 next_seq: after,
+                touched,
                 ..
             } = write;
             tx.commit().map_err(|e| DbError::from(e).classify())?;
             *next_seq = after;
             self.inner.committed_seq.store(after - 1, Ordering::Release);
+            let derived = touched.get()
+                || changes
+                    .iter()
+                    .any(|c| !matches!(c.kind, ChangeKind::PlayQueue | ChangeKind::Acquisition));
+            let library = changes.iter().any(|c| {
+                matches!(
+                    c.kind,
+                    ChangeKind::Song | ChangeKind::Album | ChangeKind::Artist | ChangeKind::Library
+                )
+            });
+            if library {
+                self.inner.library_generation.fetch_add(1, Ordering::AcqRel);
+            }
+            if derived {
+                self.inner.generation.fetch_add(1, Ordering::AcqRel);
+            }
             (value, changes, Seq(after - 1))
         };
         if !changes.is_empty() {

@@ -814,6 +814,17 @@ impl Media {
         }
     }
 
+    /// A cover fetched for a suggestion, at a snapped size or the original.
+    /// [`MediaError::NotFound`] when it is not (or no longer) in the cache.
+    pub async fn external_artwork(
+        &self,
+        id: &trackside_core::ExternalArtId,
+        size: Option<u32>,
+        request: &Parts,
+    ) -> Result<Response<Body>, MediaError> {
+        self.artwork.respond_external(id, size, request).await
+    }
+
     /// Puts a lost original back into the cache from the file the database says it came
     /// from. True when it is back.
     async fn restore_artwork(&self, id: &ArtworkId) -> bool {

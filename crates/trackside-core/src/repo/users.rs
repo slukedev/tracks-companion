@@ -317,6 +317,7 @@ pub fn delete(tx: &mut WriteTx<'_>, key: UserKey) -> Result<(), DbError> {
         .execute([key])?;
     tx.prepare_cached("DELETE FROM users WHERE id = ?1")?
         .execute([key])?;
+    tx.touch();
     Ok(())
 }
 
@@ -339,6 +340,7 @@ pub fn set_libraries(
             "UPDATE users SET sync_epoch = sync_epoch + 1, updated_at = ?2 WHERE id = ?1",
         )?
         .execute(params![key, tx.now()])?;
+        tx.touch();
     }
     Ok(())
 }

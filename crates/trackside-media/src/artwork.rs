@@ -11,7 +11,7 @@ use http::header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, ETAG};
 use http::request::Parts;
 use http::{Response, StatusCode};
 use image::{ImageFormat, ImageReader, Limits};
-use trackside_core::{ArtworkId, PublicId};
+use trackside_core::{ArtworkId, ExternalArtId, PublicId};
 
 use crate::MediaError;
 use crate::range::{RangeOutcome, evaluate};
@@ -23,6 +23,12 @@ pub const ART_SIZES: [u32; 6] = [64, 128, 256, 300, 600, 1200];
 pub const MAX_ORIGINAL_BYTES: usize = 32 * 1024 * 1024;
 /// Neither side of an original may exceed this.
 pub const MAX_DIMENSION: u32 = 8192;
+/// Covers fetched for suggestions larger than this are refused.
+pub const MAX_EXTERNAL_BYTES: usize = 2 * 1024 * 1024;
+/// Neither side of a fetched cover may be smaller than this, or larger than
+/// [`MAX_EXTERNAL_DIMENSION`].
+pub const MIN_EXTERNAL_DIMENSION: u32 = 16;
+pub const MAX_EXTERNAL_DIMENSION: u32 = 4096;
 const JPEG_QUALITY: u8 = 85;
 const IMMUTABLE: &str = "private, max-age=31536000, immutable";
 
@@ -84,8 +90,8 @@ struct Inner {
 /// Content-addressed artwork originals and resized copies under `<cache>/art`.
 ///
 /// Originals live at `<dir>/<id[1..3]>/<id>`, resized JPEGs next to them as `<id>-<size>.jpg`.
-/// Only resized copies count toward `max_bytes` and are evicted; originals are what the
-/// scanner put in.
+/// Only resized copies and covers fetched for suggestions (`<id>.img`) count toward
+/// `max_bytes` and are evicted; originals are what the scanner put in.
 #[derive(Clone, Debug)]
 pub struct ArtworkStore {
     inner: Arc<Inner>,
@@ -183,18 +189,48 @@ impl ArtworkStore {
         &self.inner.dir
     }
 
-    fn shard(&self, id: &ArtworkId) -> PathBuf {
-        let s = id.as_str();
-        self.inner.dir.join(s.get(1..3).unwrap_or("00"))
+    fn shard(&self, id: &str) -> PathBuf {
+        self.inner.dir.join(id.get(1..3).unwrap_or("00"))
     }
 
     /// Where the original for `id` is stored.
     pub fn original_path(&self, id: &ArtworkId) -> PathBuf {
-        self.shard(id).join(id.as_str())
+        self.shard(id.as_str()).join(id.as_str())
     }
 
-    fn resized_path(&self, id: &ArtworkId, size: u32) -> PathBuf {
+    /// Where a cover fetched for suggestions is stored.
+    pub fn external_path(&self, id: &ExternalArtId) -> PathBuf {
+        self.shard(id.as_str()).join(format!("{id}.img"))
+    }
+
+    fn resized_path(&self, id: &str, size: u32) -> PathBuf {
         self.shard(id).join(format!("{id}-{size}.jpg"))
+    }
+
+    /// Checks and stores a cover fetched for a suggestion: at most [`MAX_EXTERNAL_BYTES`],
+    /// a JPEG, PNG, WebP or GIF by its magic bytes, and sides between
+    /// [`MIN_EXTERNAL_DIMENSION`] and [`MAX_EXTERNAL_DIMENSION`]. It counts toward the cache
+    /// limit and is evicted like a resized copy. Blocking.
+    pub fn put_external(&self, id: &ExternalArtId, bytes: &[u8]) -> Result<(), MediaError> {
+        if bytes.len() > MAX_EXTERNAL_BYTES {
+            return Err(MediaError::TooLarge);
+        }
+        let (_, _, width, height) = inspect(bytes)?;
+        if width.min(height) < MIN_EXTERNAL_DIMENSION {
+            return Err(MediaError::Unsupported(String::from("image too small")));
+        }
+        if width.max(height) > MAX_EXTERNAL_DIMENSION {
+            return Err(MediaError::TooLarge);
+        }
+        let path = self.external_path(id);
+        write_atomic(&path, bytes)?;
+        self.record_resized(&path, bytes.len() as u64);
+        Ok(())
+    }
+
+    /// Whether a fetched cover is held.
+    pub fn has_external(&self, id: &ExternalArtId) -> bool {
+        self.external_path(id).is_file()
     }
 
     /// Stores an original image, checking its type and dimensions before decoding it.
@@ -257,7 +293,7 @@ impl ArtworkStore {
                 };
                 for file in files.flatten() {
                     let path = file.path();
-                    if path.extension().is_some_and(|e| e == "jpg")
+                    if path.extension().is_some_and(|e| e == "jpg" || e == "img")
                         && let Ok(meta) = file.metadata()
                     {
                         found.push((meta.modified().ok(), path, meta.len()));
@@ -347,6 +383,30 @@ impl ArtworkStore {
         size: Option<u32>,
         parts: &Parts,
     ) -> Result<Response<Body>, MediaError> {
+        self.respond_at(id.as_str(), &self.original_path(id), size, parts)
+            .await
+    }
+
+    /// [`Self::respond`] for a cover fetched for suggestions, resized the same way.
+    pub(crate) async fn respond_external(
+        &self,
+        id: &ExternalArtId,
+        size: Option<u32>,
+        parts: &Parts,
+    ) -> Result<Response<Body>, MediaError> {
+        let path = self.external_path(id);
+        let response = self.respond_at(id.as_str(), &path, size, parts).await?;
+        self.touch(&path);
+        Ok(response)
+    }
+
+    async fn respond_at(
+        &self,
+        id: &str,
+        original_path: &Path,
+        size: Option<u32>,
+        parts: &Parts,
+    ) -> Result<Response<Body>, MediaError> {
         if let Some(requested) = size {
             let snapped = snap_size(requested);
             let resized = self.resized_path(id, snapped);
@@ -359,7 +419,7 @@ impl ArtworkStore {
                     parts,
                 );
             }
-            let original = read_original(&self.original_path(id)).await?;
+            let original = read_original(original_path).await?;
             let (format, mime, width, height) = inspect(&original)?;
             if width.max(height) <= snapped {
                 return image_response(original, mime, &format!("\"{id}\""), parts);
@@ -373,7 +433,7 @@ impl ArtworkStore {
             self.land(&resized);
             return image_response(made?, "image/jpeg", &format!("\"{id}-{snapped}\""), parts);
         }
-        let original = read_original(&self.original_path(id)).await?;
+        let original = read_original(original_path).await?;
         let (_, mime, _, _) = inspect(&original)?;
         image_response(original, mime, &format!("\"{id}\""), parts)
     }
@@ -487,6 +547,16 @@ fn image_response(
         Body::from(bytes)
     };
     builder.body(body).map_err(|e| http_error(&e))
+}
+
+impl trackside_core::enrich::ExternalArtStore for ArtworkStore {
+    fn has(&self, id: &ExternalArtId) -> bool {
+        self.has_external(id)
+    }
+
+    fn put(&self, id: &ExternalArtId, bytes: &[u8]) -> Result<(), String> {
+        self.put_external(id, bytes).map_err(|e| e.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -629,7 +699,7 @@ mod tests {
         let first_bytes = body_bytes(first).await?;
         let resized = image::load_from_memory(&first_bytes)?;
         assert_eq!((resized.width(), resized.height()), (600, 300));
-        let cached = store.resized_path(&meta.id, 600);
+        let cached = store.resized_path(meta.id.as_str(), 600);
         assert!(cached.is_file());
 
         let second = store.respond(&meta.id, Some(600), &get(&[])).await?;
@@ -669,9 +739,65 @@ mod tests {
         );
         assert_eq!(body_bytes(a?).await?, body_bytes(b?).await?);
         store.respond(&meta.id, Some(64), &get(&[])).await?;
-        assert!(!store.resized_path(&meta.id, 128).exists());
-        assert!(store.resized_path(&meta.id, 64).exists());
+        assert!(!store.resized_path(meta.id.as_str(), 128).exists());
+        assert!(store.resized_path(meta.id.as_str(), 64).exists());
         assert!(store.has(&meta.id));
+        Ok(())
+    }
+
+    #[test]
+    fn fetched_covers_must_be_real_images_of_sane_size() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let store = ArtworkStore::new(dir.path(), 1 << 30);
+        let id = ExternalArtId::derive("4128a6eb29f94943c9d206c08e625904");
+        for (bytes, why) in [
+            (b"<html>not a picture</html>".to_vec(), "not an image"),
+            (huge_png_header(), "too large to decode"),
+            (png(8, 8), "too small"),
+            (png(5000, 20), "too wide"),
+            (vec![0u8; MAX_EXTERNAL_BYTES + 1], "too many bytes"),
+        ] {
+            assert!(store.put_external(&id, &bytes).is_err(), "{why}");
+            assert!(!store.has_external(&id), "{why}");
+        }
+        store.put_external(&id, &png(300, 300))?;
+        assert!(store.has_external(&id));
+        assert_eq!(
+            store.external_path(&id),
+            dir.path()
+                .join(&id.as_str()[1..3])
+                .join(format!("{id}.img"))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fetched_covers_are_served_resized_and_evicted_with_the_cache()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let store = ArtworkStore::new(dir.path(), 1 << 30);
+        let id = ExternalArtId::derive("one");
+        store.put_external(&id, &png(700, 700))?;
+        let resized = store.respond_external(&id, Some(300), &get(&[])).await?;
+        assert_eq!(resized.headers()[CONTENT_TYPE], "image/jpeg");
+        assert_eq!(resized.headers()[ETAG], format!("\"{id}-300\"").as_str());
+        assert_eq!(resized.headers()[CACHE_CONTROL], IMMUTABLE);
+        let original = store.respond_external(&id, None, &get(&[])).await?;
+        assert_eq!(original.headers()[CONTENT_TYPE], "image/png");
+        assert!(store.resized_bytes() > 0, "counted toward the cache limit");
+
+        // With the cache full, a new cover pushes the least recently used out.
+        let dir = tempfile::tempdir()?;
+        let store = ArtworkStore::new(dir.path(), 1);
+        let (one, two) = (ExternalArtId::derive("one"), ExternalArtId::derive("two"));
+        store.put_external(&one, &png(64, 64))?;
+        store.put_external(&two, &png(64, 64))?;
+        assert!(store.has_external(&two));
+        assert!(!store.has_external(&one), "evicted");
+        assert!(matches!(
+            store.respond_external(&one, None, &get(&[])).await,
+            Err(MediaError::NotFound)
+        ));
         Ok(())
     }
 

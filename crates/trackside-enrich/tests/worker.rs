@@ -8,8 +8,9 @@ use std::time::{Duration, Instant};
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use tokio_util::sync::CancellationToken;
+use trackside_core::ExternalArtId;
 use trackside_core::config::Secret;
-use trackside_core::enrich::{EnrichControl, Target};
+use trackside_core::enrich::{EnrichControl, ExternalArtStore, Target};
 use trackside_core::repo::enrichment as store;
 use trackside_core::testing::{TestDb, scanned};
 use trackside_core::{Clock, Millis, Role};
@@ -38,6 +39,58 @@ struct Fake {
     calls: Mutex<Vec<Call>>,
     count: tokio::sync::watch::Sender<usize>,
     reply: Box<Reply>,
+    /// Where the answers say images are: this server unless a test points them elsewhere.
+    image_base: Mutex<String>,
+    /// Image paths asked for.
+    images: Mutex<Vec<String>>,
+    /// What an image request gets: status, content type and bytes.
+    image: Mutex<(u16, &'static str, Vec<u8>)>,
+}
+
+/// The start of a PNG: enough for the fake store, which checks the signature as the real one
+/// checks the whole image.
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\n fake image";
+
+async fn image(
+    State(fake): State<Arc<Fake>>,
+    uri: axum::http::Uri,
+) -> (
+    axum::http::StatusCode,
+    [(&'static str, &'static str); 1],
+    Vec<u8>,
+) {
+    fake.images
+        .lock()
+        .expect("test setup")
+        .push(uri.path().to_owned());
+    let (status, kind, bytes) = fake.image.lock().expect("test setup").clone();
+    (
+        axum::http::StatusCode::from_u16(status).expect("test setup"),
+        [("content-type", kind)],
+        bytes,
+    )
+}
+
+/// Keeps images in memory, refusing anything that does not start like a PNG.
+#[derive(Debug, Default)]
+struct FakeStore {
+    kept: Mutex<HashMap<ExternalArtId, Vec<u8>>>,
+}
+
+impl ExternalArtStore for FakeStore {
+    fn has(&self, id: &ExternalArtId) -> bool {
+        self.kept.lock().expect("test setup").contains_key(id)
+    }
+    fn put(&self, id: &ExternalArtId, bytes: &[u8]) -> Result<(), String> {
+        if !bytes.starts_with(b"\x89PNG") {
+            return Err(String::from("not an image"));
+        }
+        self.kept
+            .lock()
+            .expect("test setup")
+            .insert(id.clone(), bytes.to_vec());
+        Ok(())
+    }
 }
 
 fn fixture(name: &str) -> String {
@@ -51,6 +104,9 @@ fn fixture(name: &str) -> String {
 
 fn answer(call: &Call) -> (u16, String) {
     let name = match call.method() {
+        "track.getInfo" if call.artist() == "Blur" => "track.getInfo-placeholder.json",
+        "track.getInfo" => "track.getInfo.json",
+        "album.getInfo" => "album.getInfo-placeholder.json",
         "artist.getSimilar" => "artist.getSimilar.json",
         "artist.getTopTracks" => "artist.getTopTracks.json",
         "artist.getInfo" => "artist.getInfo.json",
@@ -80,6 +136,10 @@ async fn handle(
         calls.len() - 1
     };
     let (status, body) = (fake.reply)(&call, index);
+    let body = body.replace(
+        "IMAGE_BASE",
+        &fake.image_base.lock().expect("test setup").clone(),
+    );
     fake.count.send_replace(index + 1);
     (
         axum::http::StatusCode::from_u16(status).expect("test setup"),
@@ -124,6 +184,7 @@ impl Setup {
 fn options(port: u16) -> EnrichOptions {
     EnrichOptions {
         endpoint: format!("http://127.0.0.1:{port}/2.0/"),
+        image_hosts: vec![format!("http://127.0.0.1:{port}")],
         min_interval: Duration::from_millis(30),
         backoff_initial: Duration::from_millis(120),
         backoff_max: Duration::from_secs(1),
@@ -161,14 +222,19 @@ async fn setup(key: Option<&str>, reply: Box<Reply>) -> Setup {
         calls: Mutex::new(Vec::new()),
         count: tokio::sync::watch::channel(0).0,
         reply,
+        image_base: Mutex::new(String::new()),
+        images: Mutex::new(Vec::new()),
+        image: Mutex::new((200, "image/png", PNG.to_vec())),
     });
     let app = axum::Router::new()
         .route("/2.0/", axum::routing::get(handle))
+        .route("/i/u/{size}/{name}", axum::routing::get(image))
         .with_state(Arc::clone(&fake));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("test setup");
     let port = listener.local_addr().expect("test setup").port();
+    *fake.image_base.lock().expect("test setup") = format!("http://127.0.0.1:{port}");
     tokio::spawn(async move { axum::serve(listener, app).await });
     let shutdown = CancellationToken::new();
     let options = options(port);
@@ -247,7 +313,7 @@ async fn played_artists_go_first_and_fill_the_similar_tables() {
 fn tracks_model_key(title: &str, artist: &str) -> String {
     match Target::song(title, artist) {
         Target::Song { key, .. } => key,
-        Target::Artist { .. } => unreachable!(),
+        _ => unreachable!(),
     }
 }
 
@@ -485,4 +551,181 @@ async fn status_counts_what_last_fm_knew() {
     let status = setup.enricher.status().await;
     assert_eq!((status.artists, status.songs), (2, 1));
     assert!(status.last_fetch.is_some_and(|at| at >= Millis(0)));
+}
+
+/// What the worker stored about a suggested song's cover.
+#[derive(Debug, PartialEq, Eq)]
+enum Stored {
+    Nothing,
+    NoCover,
+    Cover(String),
+}
+
+fn stored_art(setup: &Setup, title: &str, artist: &str) -> Stored {
+    let Target::Art { key, .. } = Target::art(title, artist) else {
+        unreachable!()
+    };
+    let found = setup
+        .test
+        .db
+        .read_blocking(move |c| {
+            Ok(c.query_row(
+                "SELECT art_id FROM external_art WHERE song_key = ?1",
+                [key],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .ok())
+        })
+        .expect("test setup");
+    match found {
+        None => Stored::Nothing,
+        Some(None) => Stored::NoCover,
+        Some(Some(id)) => Stored::Cover(id),
+    }
+}
+
+async fn art_setup() -> (Setup, Arc<FakeStore>) {
+    let setup = setup(Some("key-1"), normal()).await;
+    // Let the background pass (Radiohead, Creep, Zed) finish first.
+    setup.wait_for_calls(7).await;
+    let store = Arc::new(FakeStore::default());
+    setup.enricher.set_art_store(store.clone());
+    (setup, store)
+}
+
+#[tokio::test]
+async fn a_suggested_songs_cover_is_fetched_once_and_kept() {
+    let (setup, store) = art_setup().await;
+    let started = Instant::now();
+    setup
+        .enricher
+        .queue(vec![Target::art("Glory Box", "Portishead")]);
+    assert!(
+        started.elapsed() < Duration::from_millis(50),
+        "queue never waits"
+    );
+    setup
+        .enricher
+        .ensure(
+            vec![Target::art("Glory Box", "Portishead")],
+            Duration::from_secs(5),
+        )
+        .await;
+    let id = ExternalArtId::derive("4128a6eb29f94943c9d206c08e625904");
+    assert_eq!(
+        stored_art(&setup, "Glory Box", "Portishead"),
+        Stored::Cover(id.to_string())
+    );
+    assert!(store.has(&id));
+    let images = setup.fake.images.lock().expect("test setup").clone();
+    assert_eq!(
+        images,
+        ["/i/u/300x300/4128a6eb29f94943c9d206c08e625904.png"],
+        "the largest"
+    );
+    let info = setup
+        .calls()
+        .into_iter()
+        .filter(|c| c.method() == "track.getInfo")
+        .count();
+    assert_eq!(info, 1);
+    // The same album's cover for another song is not downloaded again.
+    setup
+        .enricher
+        .ensure(
+            vec![Target::art("Roads", "Portishead")],
+            Duration::from_secs(5),
+        )
+        .await;
+    assert_eq!(
+        stored_art(&setup, "Roads", "Portishead"),
+        Stored::Cover(id.to_string())
+    );
+    assert_eq!(setup.fake.images.lock().expect("test setup").len(), 1);
+}
+
+#[tokio::test]
+async fn last_fms_placeholder_star_is_no_cover() {
+    let (setup, _store) = art_setup().await;
+    setup
+        .enricher
+        .ensure(vec![Target::art("Song 2", "Blur")], Duration::from_secs(5))
+        .await;
+    assert_eq!(stored_art(&setup, "Song 2", "Blur"), Stored::NoCover);
+    let methods: Vec<String> = setup
+        .calls()
+        .into_iter()
+        .skip(7)
+        .map(|c| c.method().to_owned())
+        .collect();
+    assert_eq!(methods, ["track.getInfo", "album.getInfo"]);
+    assert!(setup.fake.images.lock().expect("test setup").is_empty());
+}
+
+#[tokio::test]
+async fn images_on_other_hosts_are_never_fetched() {
+    let (setup, store) = art_setup().await;
+    for base in [
+        "https://evil.example",
+        "http://169.254.169.254",
+        "https://lastfm.freetls.fastly.net.evil.example",
+    ] {
+        *setup.fake.image_base.lock().expect("test setup") = base.to_owned();
+        let title = format!("Glory Box {base}");
+        setup
+            .enricher
+            .ensure(
+                vec![Target::art(&title, "Portishead")],
+                Duration::from_secs(5),
+            )
+            .await;
+        assert_eq!(
+            stored_art(&setup, &title, "Portishead"),
+            Stored::NoCover,
+            "{base}"
+        );
+    }
+    assert!(setup.fake.images.lock().expect("test setup").is_empty());
+    assert!(store.kept.lock().expect("test setup").is_empty());
+}
+
+#[tokio::test]
+async fn bytes_that_are_not_an_image_are_refused() {
+    let (setup, store) = art_setup().await;
+    *setup.fake.image.lock().expect("test setup") =
+        (200, "image/png", b"<html>not a picture</html>".to_vec());
+    setup
+        .enricher
+        .ensure(
+            vec![Target::art("Glory Box", "Portishead")],
+            Duration::from_secs(5),
+        )
+        .await;
+    assert_eq!(
+        stored_art(&setup, "Glory Box", "Portishead"),
+        Stored::NoCover
+    );
+    *setup.fake.image.lock().expect("test setup") = (200, "text/html", PNG.to_vec());
+    setup
+        .enricher
+        .ensure(
+            vec![Target::art("Teardrop", "Portishead")],
+            Duration::from_secs(5),
+        )
+        .await;
+    assert_eq!(
+        stored_art(&setup, "Teardrop", "Portishead"),
+        Stored::NoCover
+    );
+    *setup.fake.image.lock().expect("test setup") =
+        (200, "image/png", [PNG, &vec![0; 3 * 1024 * 1024]].concat());
+    setup
+        .enricher
+        .ensure(
+            vec![Target::art("Numb", "Portishead")],
+            Duration::from_secs(5),
+        )
+        .await;
+    assert_eq!(stored_art(&setup, "Numb", "Portishead"), Stored::NoCover);
+    assert!(store.kept.lock().expect("test setup").is_empty());
 }

@@ -10,6 +10,7 @@
 //! [`TOP_MIN_LISTENERS`] other people played, so no answer shows one person's listening.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use rusqlite::{Connection, params};
 pub use tracks_jiff::tz::TimeZone;
@@ -19,6 +20,7 @@ use tracks_mixes::{Mix, MixOutput, MixPlay};
 use crate::access::Access;
 use crate::db::DbError;
 use crate::ids::{ArtistId, PublicId, SongId};
+use crate::memo;
 use crate::records::Song;
 use crate::repo::artists;
 use crate::repo::enrichment as stored;
@@ -52,32 +54,99 @@ pub fn zone(name: Option<&str>) -> Option<TimeZone> {
     }
 }
 
-/// One of the caller's listens.
-struct Listened {
-    key: String,
-    pid: Option<String>,
-    title: String,
-    artist: String,
-    album: Option<String>,
-    at: i64,
+/// The caller's newest [`MIX_LISTENS`] listens as the engine's plays, newest first
+/// (`started_at`, then listen id), with each listen's id.
+#[derive(Debug, Default)]
+struct Recent {
+    ids: Vec<i64>,
+    plays: Vec<MixPlay>,
 }
 
-fn own_listens(c: &Connection, a: &Access, limit: i64) -> Result<Vec<Listened>, DbError> {
+impl Recent {
+    /// The newest `limit` listens, as `ORDER BY started_at DESC, id DESC LIMIT limit` gives.
+    fn newest(&self, limit: usize) -> &[MixPlay] {
+        &self.plays[..limit.min(self.plays.len())]
+    }
+
+    /// Whether every listen at or after `since` is here.
+    fn covers(&self, since: i64) -> bool {
+        self.plays.len() < MIX_LISTENS as usize
+            || self.plays.last().is_some_and(|p| p.played_at_ms < since)
+    }
+}
+
+/// The listen's library song id, when it named one.
+fn song_id(play: &MixPlay) -> Option<&str> {
+    Some(play.catalog_id.as_str()).filter(|id| !id.is_empty())
+}
+
+fn read_listens(
+    c: &Connection,
+    a: &Access,
+    after_id: i64,
+    limit: i64,
+) -> Result<Vec<(i64, MixPlay)>, DbError> {
     let mut statement = c.prepare_cached(
-        "SELECT song_key, song_pid, title, artist, album, started_at FROM listens
-         WHERE user_id = ?1 ORDER BY started_at DESC, id DESC LIMIT ?2",
+        "SELECT id, song_key, song_pid, title, artist, album, started_at FROM listens
+         WHERE user_id = ?1 AND id > ?2 ORDER BY started_at DESC, id DESC LIMIT ?3",
     )?;
-    let rows = statement.query_map(params![a.user, limit], |row| {
-        Ok(Listened {
-            key: row.get(0)?,
-            pid: row.get(1)?,
-            title: row.get(2)?,
-            artist: row.get(3)?,
-            album: row.get(4)?,
-            at: row.get(5)?,
-        })
+    let rows = statement.query_map(params![a.user, after_id, limit], |row| {
+        Ok((
+            row.get(0)?,
+            MixPlay {
+                identity: row.get(1)?,
+                catalog_id: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                title: row.get(3)?,
+                artist_name: row.get(4)?,
+                album_title: row.get(5)?,
+                artwork_url: None,
+                played_at_ms: row.get(6)?,
+                is_radio: false,
+            },
+        ))
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// The caller's recent listens, kept per user until they listen again; then only the new
+/// listens are read and merged in. Listens are never deleted while their user exists, so the
+/// highest listen id tells whether anything was added.
+fn recent(c: &Connection, a: &Access) -> Result<Arc<Recent>, DbError> {
+    let marker: i64 = c
+        .prepare_cached("SELECT coalesce(max(id), 0) FROM listens WHERE user_id = ?1")?
+        .query_row([a.user], |row| row.get(0))?;
+    memo::per_user(
+        "recent_listens",
+        a.user,
+        marker,
+        |older: Option<(i64, Arc<Recent>)>| {
+            let Some((after, held)) = older else {
+                let (ids, plays) = read_listens(c, a, 0, MIX_LISTENS)?.into_iter().unzip();
+                return Ok(Recent { ids, plays });
+            };
+            let mut recent = Arc::try_unwrap(held).unwrap_or_else(|shared| Recent {
+                ids: shared.ids.clone(),
+                plays: shared.plays.clone(),
+            });
+            // Usually a few new listens near the front: put each where the order wants it.
+            for (id, play) in read_listens(c, a, after, MIX_LISTENS)? {
+                let at = recent
+                    .plays
+                    .iter()
+                    .zip(&recent.ids)
+                    .take_while(|(p, i)| (p.played_at_ms, **i) > (play.played_at_ms, id))
+                    .count();
+                if at >= MIX_LISTENS as usize {
+                    continue;
+                }
+                recent.ids.insert(at, id);
+                recent.plays.insert(at, play);
+            }
+            recent.ids.truncate(MIX_LISTENS as usize);
+            recent.plays.truncate(MIX_LISTENS as usize);
+            Ok(recent)
+        },
+    )
 }
 
 /// The visible, present library song for each `(song key, song id)`, in order: the song the
@@ -127,25 +196,34 @@ pub fn mixes(
     now: Millis,
     zone: &TimeZone,
 ) -> Result<MixOutput, DbError> {
-    let plays: Vec<MixPlay> = own_listens(c, a, MIX_LISTENS)?
-        .into_iter()
-        .map(|l| MixPlay {
-            identity: l.key,
-            catalog_id: l.pid.unwrap_or_default(),
-            title: l.title,
-            artist_name: l.artist,
-            album_title: l.album,
-            artwork_url: None,
-            played_at_ms: l.at,
-            is_radio: false,
-        })
-        .collect();
-    Ok(tracks_mixes::build_mixes(
-        &plays,
-        &HashSet::<String>::new(),
-        now.0,
-        zone,
-    ))
+    memo::cached(
+        "mixes",
+        || format!("{}/{}", a.user.0, shelf_time(now, zone)),
+        |m: &Arc<MixOutput>| m.mixes.iter().map(|m| m.songs.len()).sum(),
+        || {
+            let recent = recent(c, a)?;
+            Ok(Arc::new(tracks_mixes::build_mixes(
+                &recent.plays,
+                &HashSet::<String>::new(),
+                now.0,
+                zone,
+            )))
+        },
+    )
+    .map(|m| (*m).clone())
+}
+
+/// How long a shelf that depends on the time of day is reused while nothing it reads has
+/// changed: the engine's answer for a moment in this minute.
+const SHELF_REUSE_MS: i64 = 60_000;
+
+/// The minute `now` falls in, and the zone: what a time-of-day shelf is kept for.
+fn shelf_time(now: Millis, zone: &TimeZone) -> String {
+    format!(
+        "{}/{}",
+        now.0.div_euclid(SHELF_REUSE_MS),
+        zone.iana_name().unwrap_or("fixed")
+    )
 }
 
 /// The engine's mix with this id (`onRepeat`, `rediscover`, `newFinds`, `allTimeFavorites`,
@@ -191,6 +269,15 @@ fn mix_songs(c: &Connection, a: &Access, found: Option<&Mix>) -> Result<Vec<Song
 /// per song key. Empty while nobody has played anything. The engine has no server-wide rule.
 pub fn top_songs(c: &Connection, a: &Access, count: u32) -> Result<Vec<Song>, DbError> {
     let count = count.clamp(1, 200);
+    memo::cached(
+        "top_songs",
+        || format!("{}/{count}", memo::access_key(a)),
+        Vec::len,
+        || compute_top_songs(c, a, count),
+    )
+}
+
+fn compute_top_songs(c: &Connection, a: &Access, count: u32) -> Result<Vec<Song>, DbError> {
     let vis = visible(a, "s.library_id", None);
     let ranked: Vec<String> = c
         .prepare_cached(&format!(
@@ -266,7 +353,22 @@ pub fn picks(
     zone: &TimeZone,
     count: u32,
 ) -> Result<Picks, DbError> {
-    let count = count.clamp(1, 200) as usize;
+    let count = count.clamp(1, 200);
+    memo::cached(
+        "picks",
+        || format!("{}/{count}/{}", memo::access_key(a), shelf_time(now, zone)),
+        |p: &Picks| p.songs.len() + p.seeds.len(),
+        || compute_picks(c, a, now, zone, count as usize),
+    )
+}
+
+fn compute_picks(
+    c: &Connection,
+    a: &Access,
+    now: Millis,
+    zone: &TimeZone,
+    count: usize,
+) -> Result<Picks, DbError> {
     let mut seeds = Vec::new();
     let mut artists = HashSet::new();
     let output = mixes(c, a, now, zone)?;
@@ -274,11 +376,12 @@ pub fn picks(
         let found = output.mixes.iter().find(|m| m.kind.id() == id);
         add_seeds(&mut seeds, &mut artists, mix_songs(c, a, found)?);
     }
+    let recent = recent(c, a)?;
     if seeds.len() < PICKS_SEEDS {
-        let recent = own_listens(c, a, 200)?;
         let wanted: Vec<(&str, Option<&str>)> = recent
+            .newest(200)
             .iter()
-            .map(|l| (l.key.as_str(), l.pid.as_deref()))
+            .map(|p| (p.identity.as_str(), song_id(p)))
             .collect();
         add_seeds(&mut seeds, &mut artists, resolve(c, a, &wanted)?);
     }
@@ -307,12 +410,20 @@ pub fn picks(
         return Ok(Picks::default());
     }
     let since = now.0 - PICKS_FRESH_DAYS * DAY_MS;
-    let mut taken: HashSet<String> = c
-        .prepare_cached(
+    let mut taken: HashSet<String> = if recent.covers(since) {
+        recent
+            .plays
+            .iter()
+            .take_while(|p| p.played_at_ms >= since)
+            .map(|p| p.identity.clone())
+            .collect()
+    } else {
+        c.prepare_cached(
             "SELECT DISTINCT song_key FROM listens WHERE user_id = ?1 AND started_at >= ?2",
         )?
         .query_map(params![a.user, since], |row| row.get(0))?
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<_, _>>()?
+    };
     taken.extend(seeds.iter().map(|s| s.song_key.clone()));
     let per = u32::try_from((count / seeds.len() + 10).min(100)).unwrap_or(100);
     let mut lists = Vec::with_capacity(seeds.len());
@@ -358,30 +469,110 @@ pub fn get_more(
     count: u32,
     external: bool,
 ) -> Result<GetMore, DbError> {
-    let count = count.clamp(1, 100) as usize;
-    let listened = own_listens(c, a, TASTE_LISTENS)?;
-    let heard: HashSet<&str> = listened.iter().map(|l| l.key.as_str()).collect();
+    let count = count.clamp(1, 100);
+    memo::cached(
+        "get_more_shelf",
+        || {
+            format!(
+                "{}/{count}/{external}/{}",
+                memo::access_key(a),
+                now.0.div_euclid(SHELF_REUSE_MS)
+            )
+        },
+        |g: &GetMore| g.songs.len() + g.external.len(),
+        || compute_get_more(c, a, now, count as usize, external),
+    )
+}
+
+fn compute_get_more(
+    c: &Connection,
+    a: &Access,
+    now: Millis,
+    count: usize,
+    external: bool,
+) -> Result<GetMore, DbError> {
+    let inputs = memo::cached(
+        "get_more",
+        || format!("{}/{external}", memo::access_key(a)),
+        |i: &Arc<MoreInputs>| i.library.len() + i.outside.len(),
+        || more_inputs(c, a, external).map(Arc::new),
+    )?;
+    if inputs.taste.is_empty() {
+        return Ok(GetMore::default());
+    }
+    let rules = Rules {
+        limit: count * 2,
+        now_ms: now.0,
+        ..Rules::default()
+    };
+    let mut out = GetMore::default();
+    let mut chosen: Vec<SongId> = Vec::new();
+    let picks = tracks_library::rank(&inputs.candidates, &inputs.taste, &inputs.links, &rules);
+    let mut used: HashSet<&str> = HashSet::new();
+    for pick in &picks {
+        if !used.insert(pick.id.as_str()) {
+            continue;
+        }
+        if let Some(song) = inputs.library.get(&pick.id) {
+            if chosen.len() < count {
+                chosen.push(song.id.clone());
+            }
+        } else if let Some(pair) = inputs.outside.get(&pick.id)
+            && out.external.len() < count
+        {
+            out.external.push(pair.clone());
+        }
+    }
+    out.songs = songs::get_many(c, a, &chosen)?;
+    Ok(out)
+}
+
+/// What Get More ranks: everything but the time, which the engine takes per call.
+#[derive(Debug, Default)]
+struct MoreInputs {
+    taste: Vec<ArtistTaste>,
+    links: Vec<tracks_library::SimilarArtist>,
+    candidates: Vec<Candidate>,
+    library: HashMap<String, songs::TopSong>,
+    outside: HashMap<String, (String, String)>,
+}
+
+/// The engine's taste: the listens' artists by plays, with when each was last heard.
+fn taste_of(listened: &[MixPlay]) -> Vec<ArtistTaste> {
     let mut by_artist: HashMap<String, ArtistTaste> = HashMap::new();
-    for l in &listened {
+    for l in listened {
         let entry = by_artist
-            .entry(tracks_model::folded(&l.artist))
+            .entry(tracks_model::folded(&l.artist_name))
             .or_insert_with(|| ArtistTaste {
-                name: l.artist.clone(),
+                name: l.artist_name.clone(),
                 plays: 0,
-                last_played_ms: Some(l.at),
+                last_played_ms: Some(l.played_at_ms),
             });
         entry.plays += 1;
     }
     let mut taste: Vec<ArtistTaste> = by_artist.into_values().collect();
     taste.sort_by(|x, y| y.plays.cmp(&x.plays).then_with(|| x.name.cmp(&y.name)));
+    taste
+}
+
+fn more_inputs(c: &Connection, a: &Access, external: bool) -> Result<MoreInputs, DbError> {
+    let recent = recent(c, a)?;
+    let listened = recent.newest(TASTE_LISTENS as usize);
+    let heard: HashSet<&str> = listened.iter().map(|l| l.identity.as_str()).collect();
+    let taste = taste_of(listened);
     if taste.is_empty() {
-        return Ok(GetMore::default());
+        return Ok(MoreInputs::default());
     }
-    let mut names: Vec<(String, Option<ArtistId>)> = Vec::new();
-    for artist in &taste {
-        let found = artists::by_name(c, a, &artist.name)?;
-        names.push((artist.name.clone(), found.map(|f| f.id)));
-    }
+    let found = artists::by_names(c, a, taste.iter().map(|t| t.name.as_str()))?;
+    let mut names: Vec<(String, Option<ArtistId>)> = taste
+        .iter()
+        .map(|t| {
+            let id = found
+                .get(&tracks_model::folded(&t.name))
+                .map(|f| f.id.clone());
+            (t.name.clone(), id)
+        })
+        .collect();
     let mut links = Vec::new();
     let leading: Vec<(String, ArtistId)> = names
         .iter()
@@ -402,12 +593,27 @@ pub fn get_more(
             }
         }
     }
+    let ids: Vec<ArtistId> = names.iter().filter_map(|(_, id)| id.clone()).collect();
+    let mut tops = songs::top_for_artists(c, a, &ids, 20)?;
+    let missing = if external {
+        stored::missing_top_many(
+            c,
+            a,
+            &names
+                .iter()
+                .map(|(name, _)| tracks_model::folded(name))
+                .collect::<Vec<_>>(),
+            10,
+        )?
+    } else {
+        HashMap::new()
+    };
     let mut candidates = Vec::new();
-    let mut library: HashMap<String, Song> = HashMap::new();
+    let mut library: HashMap<String, songs::TopSong> = HashMap::new();
     let mut outside: HashMap<String, (String, String)> = HashMap::new();
     for (name, id) in &names {
         if let Some(id) = id {
-            for song in songs::top_for_artist(c, a, id, 20)? {
+            for song in tops.remove(id).unwrap_or_default() {
                 let key = song.id.as_str().to_owned();
                 if heard.contains(song.song_key.as_str()) || library.contains_key(&key) {
                     continue;
@@ -423,8 +629,12 @@ pub fn get_more(
             }
         }
         if external {
-            for title in stored::missing_top(c, a, &tracks_model::folded(name), 10)? {
-                let key = format!("x\u{1f}{}", tracks_model::song_key(&title, name));
+            for title in missing
+                .get(&tracks_model::folded(name))
+                .into_iter()
+                .flatten()
+            {
+                let key = format!("x\u{1f}{}", tracks_model::song_key(title, name));
                 if outside.contains_key(&key) {
                     continue;
                 }
@@ -435,26 +645,15 @@ pub fn get_more(
                     owned_share: 0.0,
                     is_requested: false,
                 });
-                outside.insert(key, (title, name.clone()));
+                outside.insert(key, (title.clone(), name.clone()));
             }
         }
     }
-    let rules = Rules {
-        limit: count * 2,
-        now_ms: now.0,
-        ..Rules::default()
-    };
-    let mut out = GetMore::default();
-    for pick in tracks_library::rank(&candidates, &taste, &links, &rules) {
-        if let Some(song) = library.remove(&pick.id) {
-            if out.songs.len() < count {
-                out.songs.push(song);
-            }
-        } else if let Some(pair) = outside.remove(&pick.id)
-            && out.external.len() < count
-        {
-            out.external.push(pair);
-        }
-    }
-    Ok(out)
+    Ok(MoreInputs {
+        taste,
+        links,
+        candidates,
+        library,
+        outside,
+    })
 }

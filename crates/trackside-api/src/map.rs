@@ -400,7 +400,11 @@ fn lrc_stamp(tag: &str) -> Option<u64> {
         .checked_add(whole * 1000 + fraction_ms)
 }
 
-pub fn candidate(candidate: &CandidateView) -> wire::acquisition::Candidate {
+/// A candidate, with the cover looked up for a suggested song of the same `song_key`.
+pub fn candidate(
+    candidate: &CandidateView,
+    artwork: Option<&trackside_core::ExternalArtId>,
+) -> wire::acquisition::Candidate {
     wire::acquisition::Candidate {
         token: candidate.token.to_string(),
         title: candidate.title.clone(),
@@ -412,6 +416,7 @@ pub fn candidate(candidate: &CandidateView) -> wire::acquisition::Candidate {
         size: candidate.size,
         instant: candidate.instant,
         r#match: if candidate.exact { "exact" } else { "close" }.to_owned(),
+        artwork_id: artwork.map(ToString::to_string),
     }
 }
 

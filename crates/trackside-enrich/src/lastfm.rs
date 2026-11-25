@@ -1,5 +1,5 @@
-//! A read-only Last.fm client: four unsigned methods that take only the API key and artist or
-//! track names. Nothing here signs a request, holds a session or writes to Last.fm.
+//! A read-only Last.fm client: six unsigned methods that take only the API key and artist,
+//! track or album names. Nothing here signs a request, holds a session or writes to Last.fm.
 
 use std::fmt::Write as _;
 use std::time::Duration;
@@ -62,6 +62,8 @@ pub enum Method {
     ArtistTopTracks,
     ArtistInfo,
     TrackSimilar,
+    TrackInfo,
+    AlbumInfo,
 }
 
 impl Method {
@@ -71,6 +73,8 @@ impl Method {
             Self::ArtistTopTracks => "artist.getTopTracks",
             Self::ArtistInfo => "artist.getInfo",
             Self::TrackSimilar => "track.getSimilar",
+            Self::TrackInfo => "track.getInfo",
+            Self::AlbumInfo => "album.getInfo",
         }
     }
 }
@@ -223,6 +227,56 @@ pub fn top_tracks(json: &Map<String, Value>) -> Vec<String> {
         .map(|(_, _, title)| title)
         .filter(|title| seen.insert(title.to_lowercase()))
         .collect()
+}
+
+/// The image Last.fm shows when it has none: a grey star, by this file name.
+pub const PLACEHOLDER_IMAGE: &str = "2a96cbd8b46e442fc41c2b86b821562f";
+
+/// The image sizes Last.fm names, largest first.
+const IMAGE_SIZES: [&str; 5] = ["mega", "extralarge", "large", "medium", "small"];
+
+/// The largest real image in an `image` list: no blank URL, no placeholder star.
+fn best_image(object: &Map<String, Value>) -> Option<String> {
+    let images = list(object.get("image"));
+    IMAGE_SIZES.iter().find_map(|size| {
+        images
+            .iter()
+            .filter(|i| i.get("size").and_then(Value::as_str) == Some(size))
+            .find_map(|i| usable_image(i.get("#text")?.as_str()?))
+    })
+}
+
+/// `url` when it names a real image.
+pub fn usable_image(url: &str) -> Option<String> {
+    let url = url.trim();
+    (!url.is_empty() && !url.to_ascii_lowercase().contains(PLACEHOLDER_IMAGE))
+        .then(|| url.to_owned())
+}
+
+/// What `track.getInfo` says about a song's cover: its album's image, and the album's title
+/// and artist to ask `album.getInfo` with when the image is missing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TrackCover {
+    pub image: Option<String>,
+    pub album: Option<String>,
+    pub album_artist: Option<String>,
+}
+
+/// `track.getInfo`: the song's album cover.
+pub fn track_cover(json: &Map<String, Value>) -> TrackCover {
+    let Some(album) = section(json, "track").and_then(|t| section(t, "album")) else {
+        return TrackCover::default();
+    };
+    TrackCover {
+        image: best_image(album),
+        album: text(album, "title").map(str::to_owned),
+        album_artist: text(album, "artist").map(str::to_owned),
+    }
+}
+
+/// `album.getInfo`: the album's cover.
+pub fn album_cover(json: &Map<String, Value>) -> Option<String> {
+    best_image(section(json, "album")?)
 }
 
 /// `artist.getInfo`: the biography summary as short plain text.

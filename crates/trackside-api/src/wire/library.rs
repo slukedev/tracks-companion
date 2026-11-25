@@ -26,6 +26,9 @@ pub struct SuggestedSongs {
 pub struct Suggestion {
     pub title: String,
     pub artist: String,
+    /// Its cover, served by `GET /art/{artwork_id}` like library art, once it was looked up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artwork_id: Option<String>,
 }
 
 /// `GET /albums/{id}`.

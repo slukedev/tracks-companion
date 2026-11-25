@@ -203,6 +203,13 @@ public_id!(
     'c'
 );
 public_id!(
+    /// Cover art for a song the server does not have, looked up for a suggestion. Derived
+    /// from the image's own name at its source, so it is the same for every user and every
+    /// song on the same album.
+    ExternalArtId,
+    'e'
+);
+public_id!(
     /// A playlist (random).
     PlaylistId,
     'p'
@@ -308,6 +315,14 @@ impl ArtworkId {
     /// `BLAKE3(image bytes)`: the same image always has the same id.
     pub fn of_bytes(bytes: &[u8]) -> Self {
         Self::from_hash(blake3::hash(bytes).as_bytes())
+    }
+}
+
+impl ExternalArtId {
+    /// `BLAKE3("external-art" ‖ image)`, where `image` names the image at its source (the
+    /// file name Last.fm gives it).
+    pub fn derive(image: &str) -> Self {
+        Self::from_hash(&hash_parts(&[b"external-art", image.as_bytes()]))
     }
 }
 

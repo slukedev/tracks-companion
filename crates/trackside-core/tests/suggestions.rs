@@ -526,3 +526,192 @@ fn picks_are_like_what_you_play_and_leave_it_out() -> TestResult {
     assert_ne!(w.hidden, w.id("Teardrop"));
     Ok(())
 }
+
+/// Every shelf for `who`, as the endpoints read them.
+#[derive(Debug, PartialEq)]
+struct Shelves {
+    on_repeat: Vec<String>,
+    top: Vec<String>,
+    similar: Vec<String>,
+    artists: Vec<String>,
+    picks: Vec<String>,
+    more: Vec<String>,
+}
+
+fn shelves(w: &World, who: &Access) -> Result<Shelves, Box<dyn std::error::Error>> {
+    let (who, now, roads) = (who.clone(), w.now(), w.id("Roads"));
+    let portishead = w.artist("Portishead")?;
+    Ok(w.test.db.read_blocking(move |c| {
+        let names = |songs: Vec<Song>| songs.into_iter().map(|s| s.title).collect::<Vec<_>>();
+        Ok(Shelves {
+            on_repeat: names(recommend::mix(c, &who, now, &TimeZone::UTC, "onRepeat")?),
+            top: names(recommend::top_songs(c, &who, 40)?),
+            similar: names(similar::similar_songs(c, &who, &roads, 20)?),
+            artists: similar::similar_artists(c, &who, &portishead, 15)?
+                .into_iter()
+                .map(|s| s.name)
+                .collect(),
+            picks: names(recommend::picks(c, &who, now, &TimeZone::UTC, 40)?.songs),
+            more: names(recommend::get_more(c, &who, now, 24, true)?.songs),
+        })
+    })?)
+}
+
+/// What the shelves would be with nothing kept between reads.
+fn fresh_shelves(w: &World, who: &Access) -> Result<Shelves, Box<dyn std::error::Error>> {
+    w.test.db.memo().clear();
+    shelves(w, who)
+}
+
+#[test]
+fn kept_shelves_are_dropped_by_a_new_listen_or_a_library_change() -> TestResult {
+    let w = world(true)?;
+    let mut plays = Vec::new();
+    for (i, title) in (0_i64..).zip(ON_REPEAT.iter().take(6)) {
+        for day in 0..3 {
+            plays.push((*title, (i + day * 5) * 24 * 60 + 30));
+        }
+    }
+    w.listen(&w.ana, &plays, false)?;
+    w.listen(&w.bob, &[("Roads", 50), ("Numb Not Here", 49)], true)?;
+
+    let first = shelves(&w, &w.ana)?;
+    assert!(!w.test.db.memo().is_empty(), "shelves are kept");
+    assert_eq!(
+        shelves(&w, &w.ana)?,
+        first,
+        "a kept answer is the same answer"
+    );
+    assert_eq!(fresh_shelves(&w, &w.ana)?, first);
+    assert!(first.more.contains(&String::from("Exchange")), "{first:?}");
+
+    // A listen by name only records no change for sync, and still counts.
+    let generation = w.test.db.generation();
+    w.listen(
+        &w.ana,
+        &[("Exchange", 3), ("Exchange", 2), ("Exchange", 1)],
+        true,
+    )?;
+    assert!(w.test.db.generation() > generation);
+    let listened = shelves(&w, &w.ana)?;
+    assert_ne!(listened, first);
+    assert!(
+        !listened.more.contains(&String::from("Exchange")),
+        "heard now"
+    );
+    assert_eq!(listened, fresh_shelves(&w, &w.ana)?);
+
+    // A new song in the library: similar to Roads at once, and in Portishead's top songs.
+    let library = w.test.db.read_blocking(|c| {
+        Ok(trackside_core::repo::libraries::all(c)?
+            .into_iter()
+            .find(|l| l.name == "A")
+            .map(|l| l.key))
+    })?;
+    let mut numb = scanned("Portishead/Numb.flac", "Numb", "Portishead", Some("Dummy"));
+    numb.tags.year = Some(1994);
+    numb.tags.genres = vec![String::from("Trip Hop")];
+    let library_generation = w.test.db.library_generation();
+    w.test.ingest(library.ok_or("no library")?, &[numb])?;
+    assert!(w.test.db.library_generation() > library_generation);
+    let grown = shelves(&w, &w.ana)?;
+    assert!(grown.similar.contains(&String::from("Numb")), "{grown:?}");
+    assert!(grown.more.contains(&String::from("Numb")), "{grown:?}");
+    assert_eq!(grown, fresh_shelves(&w, &w.ana)?);
+
+    // Last.fm data stored in the background counts at once too.
+    w.test.db.write_blocking(|tx| {
+        store::store_artist(
+            tx,
+            "portishead",
+            "Portishead",
+            &ArtistFacts {
+                similar: vec![Related {
+                    title: String::new(),
+                    artist: String::from("Blur"),
+                    score: 1.0,
+                }],
+                top: Vec::new(),
+                bio: None,
+            },
+            30 * DAY,
+        )
+    })?;
+    let enriched = shelves(&w, &w.ana)?;
+    assert!(
+        enriched.artists.contains(&String::from("Blur")),
+        "{enriched:?}"
+    );
+    assert_eq!(enriched, fresh_shelves(&w, &w.ana)?);
+    Ok(())
+}
+
+#[test]
+fn many_artists_top_songs_are_each_artists_top_songs() -> TestResult {
+    let w = world(true)?;
+    w.listen(
+        &w.bob,
+        &[
+            ("Airbag", 5),
+            ("Karma Police", 6),
+            ("Karma Police", 7),
+            ("Teardrop", 8),
+        ],
+        false,
+    )?;
+    w.listen(&w.ana, &[("Angel", 5), ("Song 2", 9)], false)?;
+    let (ana, angel, beetlebum) = (w.ana.user, w.id("Exchange"), w.id("Beetlebum"));
+    w.test.db.write_blocking(move |tx| {
+        let song = |id: &SongId| trackside_core::records::ItemRef::Song(id.clone());
+        trackside_core::repo::stars::set(tx, ana, &song(&angel), Millis(1))?;
+        trackside_core::repo::ratings::set(tx, ana, &song(&beetlebum), 4)?;
+        store::store_artist(
+            tx,
+            "blur",
+            "Blur",
+            &ArtistFacts {
+                similar: Vec::new(),
+                top: vec![String::from("M.O.R."), String::from("Song 2")],
+                bio: None,
+            },
+            30 * DAY,
+        )
+    })?;
+    let mut ids = Vec::new();
+    for (name, ..) in CATALOG {
+        ids.push(w.artist(name)?);
+    }
+    same_top_songs(&w, &ids)?;
+    // Kept play counts brought up to date by the new listens give the same order too.
+    w.listen(
+        &w.carl,
+        &[("Teardrop", 2), ("Roads", 3), ("Roads", 4)],
+        false,
+    )?;
+    w.listen(&w.ana, &[("Glory Box", 2), ("Glory Box", 3)], false)?;
+    same_top_songs(&w, &ids)
+}
+
+fn same_top_songs(w: &World, ids: &[ArtistId]) -> TestResult {
+    for who in [&w.ana, &w.bob, &w.admin] {
+        let (who, ids) = (who.clone(), ids.to_vec());
+        w.test.db.read_blocking(move |c| {
+            let many = songs::top_for_artists(c, &who, &ids, 2)?;
+            for id in &ids {
+                let one: Vec<SongId> = songs::top_for_artist(c, &who, id, 2)?
+                    .into_iter()
+                    .map(|s| s.id)
+                    .collect();
+                let batch: Vec<SongId> = many
+                    .get(id)
+                    .into_iter()
+                    .flatten()
+                    .map(|s| s.id.clone())
+                    .collect();
+                assert_eq!(batch, one, "{id}");
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
+}

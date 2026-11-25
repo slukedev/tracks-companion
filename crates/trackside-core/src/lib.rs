@@ -13,6 +13,7 @@ pub mod enrich;
 pub mod events;
 pub mod ids;
 pub mod ingest;
+pub mod memo;
 pub mod now_playing;
 pub mod recommend;
 pub mod records;
@@ -33,8 +34,8 @@ pub use enrich::{EnrichControl, NoEnrich};
 pub use events::{Audience, EventBus, ServerEvent};
 pub use ids::{
     AcquisitionId, AlbumId, ArtistId, ArtworkId, AudioDigest, CandidateToken, DeviceId, DeviceKey,
-    FolderId, IdError, ImportId, InviteId, KeyId, LibraryId, LibraryKey, PairingId, PlaylistId,
-    PublicId, ScanRunId, Seq, SongId, UserId, UserKey, random_id,
+    ExternalArtId, FolderId, IdError, ImportId, InviteId, KeyId, LibraryId, LibraryKey, PairingId,
+    PlaylistId, PublicId, ScanRunId, Seq, SongId, UserId, UserKey, random_id,
 };
 pub use records::Page;
 pub use time::{Clock, Millis, SystemClock, TestClock};

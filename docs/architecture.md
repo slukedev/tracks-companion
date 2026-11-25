@@ -1085,6 +1085,14 @@ Notes on the schema:
   user gains or loses a library, when a library is deleted, and after a migration that rewrites
   ids or keys.
 
+### Suggestions
+
+Migration 5 adds `listens_user_id ON listens(user_id, id)` (a user's newest listen, to tell
+whether their kept recent listens are current), `similar_songs_target ON
+similar_songs(similar_song_key)`, and `external_art (song_key PRIMARY KEY, art_id, fetched_at,
+expires_at)`, the cover looked up for a suggested song (section 5, Suggestions and
+enrichment).
+
 ### Trackside Cloud
 
 Migration 4 adds `cloud_state` (each user's own change seq), `cloud_items` (every synced record
@@ -1104,9 +1112,10 @@ ran, and the highest count of cloud changes it saw, so a rolled-back file is cau
 Similar songs, similar artists, top songs and artist biographies come from local signals and,
 when the admin sets a Last.fm API key, from Last.fm. The key is one for the whole server, set in
 the dashboard (sealed at rest with the secret key, like app passwords) or by
-`enrichment.lastfm_api_key`; nobody needs a Last.fm account. `trackside-enrich` calls only four
-unauthenticated read methods, `artist.getSimilar`, `artist.getTopTracks`, `artist.getInfo` and
-`track.getSimilar`, with the key, artist and track names, `autocorrect=1` and a
+`enrichment.lastfm_api_key`; nobody needs a Last.fm account. `trackside-enrich` calls only six
+unauthenticated read methods, `artist.getSimilar`, `artist.getTopTracks`, `artist.getInfo`,
+`track.getSimilar`, `track.getInfo` and `album.getInfo`, with the key, artist, track and album
+names, `autocorrect=1` and a
 `Trackside/<version>` User-Agent. It never signs a request, holds a session, or writes to
 Last.fm, and sends nothing about users.
 
@@ -1123,10 +1132,41 @@ Last.fm, and sends nothing about users.
   at the front and wait 30 s, doubling to an hour, before the next call. Errors 4, 10 and 26
   (the key) stop all calls until the key changes. Anything else is stored as not found. The
   latest error is shown in the dashboard until the next success.
-- **On demand.** Similar songs, top songs, similar artists and the Subsonic equivalents ask for
-  their seed song and artist first in line and wait at most 1.5 s (`ON_DEMAND_WAIT`), then
-  answer from what is stored. The artist page and picks never wait; picks start lookups for
-  their starting songs in the background.
+- **On demand.** No request waits for Last.fm. Similar songs, top songs, similar artists, the
+  artist page, picks, Get More and the Subsonic equivalents answer from what is stored and put
+  their seed song and artist first in line (`EnrichControl::queue`), so the next request has
+  them. Requests can have at most 2000 lookups waiting; more are dropped until the worker
+  catches up, and asked for again by a later request.
+- **Covers for suggestions.** A song in an `external` list whose cover was never looked up (or
+  whose lookup expired) is queued too, behind the similarity lookups: `track.getInfo` gives the
+  album's largest image; when it has none, `album.getInfo` for that album. Blank URLs and
+  Last.fm's grey star placeholder (file name `2a96cbd8b46e442fc41c2b86b821562f`) count as no
+  image. The image is downloaded only from Last.fm's image hosts (`lastfm.freetls.fastly.net`,
+  `lastfm-img2.akamaized.net`, `lastfm.akamaized.net`, HTTPS, exact origin, no redirects), paced
+  with the API calls, with the same timeout, refusing anything but a `200` `image/*` of at most
+  2 MB. The media crate then checks the bytes themselves (JPEG, PNG, WebP or GIF by magic bytes,
+  each side 16 to 4096 px, read from the header before anything is decoded) and keeps it in the
+  artwork cache as `<cache>/art/<id[1..3]>/<id>.img`, where it counts toward
+  `media.art_cache_max` and is evicted least recently used, like resized copies. The id is
+  `e` + `BLAKE3("external-art" ‖ Last.fm's file name)`, so every song on an album and every
+  user share one image and one id; no URL from Last.fm ever reaches a client. `external_art`
+  (migration 5) maps each song key to its image id, or to none, kept 30 days (7 when Last.fm had
+  no image or the image was refused, an hour when its host could not be reached). A cover the
+  cache has dropped answers `404` and is looked up again the next time it is suggested.
+- **Kept answers.** Suggestions are computed from the database, never stored in it, and kept in
+  memory (`core::memo`) only as long as they are exactly what a new computation would give:
+  every entry is tagged with the database generation, which moves after each commit that
+  changes anything suggestions read (every recorded change but play queues and acquisitions,
+  plus writes that record none: a listen by name, Last.fm data, a cover looked up). The
+  generation is read before a read's snapshot starts, so nothing is stored under a generation
+  newer than its data. What depends on the library alone (each artist's songs and their order
+  keys) is tagged with a library generation that only song, album, artist and library changes
+  move. Each user's newest 50,000 listens, which the mixes, picks and Get More read, are kept
+  per user and brought up to date by reading only listens added since. Mixes, picks and Get More
+  depend on the time too and are reused within the minute (api.md section 8, Shelves). Entries
+  are weighed by the songs they hold and the least recently used go past about 200,000. Similar
+  songs, similar artists and top songs also answer `304` to an `ETag` built from the
+  generation.
 - **Ranking.** `core::similar` adds Last.fm rows to the local signals: a similar song is worth
   4 times its match, a song by a similar artist 2 times. The caller's own star (1.5) and plays
   (0.3 each, up to 5) raise a candidate, so the same seed gives each user their own order.
@@ -1517,7 +1557,10 @@ folder or one level up. The original bytes are hashed into an artwork id and cop
 Lanczos3) for requested sizes are made on first request, single-flight, and cached next to the
 original; sizes are snapped to 64, 128, 256, 300, 600, 1200 or the original to bound the cache.
 Responses carry `Cache-Control: private, max-age=31536000, immutable` because ids are
-content-addressed. Missing artwork is a `404`, never a placeholder image.
+content-addressed. Missing artwork is a `404`, never a placeholder image. Covers fetched for
+suggestions (`e...` ids, section 5, Suggestions and enrichment) are served by the same route and
+resized the same way; unlike scanned originals they count toward the cache limit and can be
+evicted.
 
 ---
 

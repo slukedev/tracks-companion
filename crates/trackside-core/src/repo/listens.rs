@@ -138,6 +138,7 @@ pub fn submit(
                 if inserted == 0 {
                     ListenStatus::Duplicate
                 } else {
+                    tx.touch();
                     if let Some(song) = &item.song {
                         tx.prepare_cached(
                             "INSERT INTO play_stats (user_id, song_pid, play_count, last_played_at)

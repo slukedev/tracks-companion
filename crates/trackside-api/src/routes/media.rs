@@ -13,7 +13,7 @@ use trackside_auth::{Principal, Scopes};
 use trackside_core::control::{ScanKind, ScanTrigger};
 use trackside_core::records::{AudioFormat, Codec, Container, Song, SongFile};
 use trackside_core::repo::{albums, artists, folders, songs};
-use trackside_core::{Access, AlbumId, ArtistId, ArtworkId, PublicId, SongId};
+use trackside_core::{Access, AlbumId, ArtistId, ArtworkId, ExternalArtId, PublicId, SongId};
 use trackside_media::{
     ClientProfile, Decision, DecisionReason, DirectPlay, Disposition, HlsInput, HlsJobId, HlsOwner,
     HlsPart, MediaError, Priority, Profile,
@@ -619,9 +619,57 @@ async fn artwork(
     Query(query): Query<ArtQuery>,
     request: Request,
 ) -> ApiResult<Response> {
+    if id.starts_with(['e', 'E']) {
+        return external_artwork(&state, &principal, &id, query.size, request).await;
+    }
     let artwork = resolve_artwork(&state, &principal, &id).await?;
     let (parts, _) = request.into_parts();
     Ok(state.media.artwork(&artwork, query.size, &parts).await?)
+}
+
+/// The cover of a song suggested to request (an `e...` id): for users who may request, and
+/// only for an image some suggestion shows. One no longer in the cache is a
+/// `404` and is looked up again the next time it is suggested.
+async fn external_artwork(
+    state: &ApiState,
+    principal: &Principal,
+    raw: &str,
+    size: Option<u32>,
+    request: Request,
+) -> ApiResult<Response> {
+    let id: ExternalArtId = path_id(raw)?;
+    // A media token carries only stream and download, so this asks whether the user may
+    // request at all, as `/me` would with a `request` credential.
+    let sees = state
+        .acquire
+        .feature_for(&principal.access, &principal.permissions, true)
+        .is_some();
+    if !sees {
+        return Err(ApiError::not_found());
+    }
+    let shown = id.clone();
+    let known = read(state, move |c| {
+        trackside_core::repo::enrichment::art_in_use(c, &shown)
+    })
+    .await?;
+    if !known {
+        return Err(ApiError::not_found());
+    }
+    let (parts, _) = request.into_parts();
+    match state.media.external_artwork(&id, size, &parts).await {
+        Err(MediaError::NotFound) => {
+            let lost = id.clone();
+            if let Err(e) = state
+                .db
+                .write(move |tx| trackside_core::repo::enrichment::art_lost(tx, &lost))
+                .await
+            {
+                tracing::debug!(error = %e, "lost cover not recorded");
+            }
+            Err(ApiError::not_found())
+        }
+        other => Ok(other?),
+    }
 }
 
 #[cfg(test)]

@@ -3587,6 +3587,7 @@ dependencies = [
  "trackside-cloud",
  "trackside-core",
  "trackside-media",
+ "trackside-subsonic",
  "uuid",
  "zeroize",
 ]

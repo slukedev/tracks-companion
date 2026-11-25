@@ -37,9 +37,9 @@ use trackside_core::sync::{
 };
 use trackside_core::testing::TEST_START;
 use trackside_core::{
-    Access, AlbumId, ArtistId, ArtworkId, AudioDigest, CandidateToken, DeviceKey, FolderId, KeyId,
-    LibraryId, LibraryKey, LibrarySet, Millis, Permissions, PlaylistId, PublicId, Role, Seq,
-    SongId, UserKey,
+    Access, AlbumId, ArtistId, ArtworkId, AudioDigest, CandidateToken, DeviceKey, ExternalArtId,
+    FolderId, KeyId, LibraryId, LibraryKey, LibrarySet, Millis, Permissions, PlaylistId, PublicId,
+    Role, Seq, SongId, UserKey,
 };
 use trackside_media::{
     CachedTranscode, Decision, DecisionReason, HlsJobId, MediaCapabilities, Profile,
@@ -394,6 +394,11 @@ fn view(seed: &Seed, state: AcquisitionState) -> AcquisitionView {
         created_at: at(0),
         updated_at: at(7),
     }
+}
+
+/// The cover looked up for a suggested song, by Last.fm's file name for it.
+fn external_art() -> ExternalArtId {
+    ExternalArtId::derive("4128a6eb29f94943c9d206c08e625904")
 }
 
 fn candidate() -> CandidateView {
@@ -844,6 +849,7 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             external: Some(vec![wire::library::Suggestion {
                 title: String::from("Irreplaceable"),
                 artist: String::from("Beyoncé"),
+                artwork_id: Some(external_art().to_string()),
             }]),
         },
     )?;
@@ -866,6 +872,7 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             external: Some(vec![wire::library::Suggestion {
                 title: String::from("Irreplaceable"),
                 artist: String::from("Beyoncé"),
+                artwork_id: Some(external_art().to_string()),
             }]),
         },
     )?;
@@ -873,10 +880,18 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
         "picks.json",
         &wire::library::SuggestedSongs {
             songs: map::songs_with_me(&[s.ladies.clone(), s.dont_stop.clone()], &me_halo),
-            external: Some(vec![wire::library::Suggestion {
-                title: String::from("Irreplaceable"),
-                artist: String::from("Beyoncé"),
-            }]),
+            external: Some(vec![
+                wire::library::Suggestion {
+                    title: String::from("Irreplaceable"),
+                    artist: String::from("Beyoncé"),
+                    artwork_id: Some(external_art().to_string()),
+                },
+                wire::library::Suggestion {
+                    title: String::from("Run the World (Girls)"),
+                    artist: String::from("Beyoncé"),
+                    artwork_id: None,
+                },
+            ]),
         },
     )?;
     put(
@@ -949,7 +964,7 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             external: Some(wire::library::ExternalSection {
                 search_id: String::from("v2b5n8m1q4w7e0r3t6y9"),
                 complete: true,
-                candidates: vec![map::candidate(&candidate())],
+                candidates: vec![map::candidate(&candidate(), None)],
             }),
         },
     )?;
@@ -1255,7 +1270,12 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
         in_library: vec![s.halo.clone()],
         candidates: vec![candidate()],
     };
-    put("acquisition-search.json", &build::search_body(&search))?;
+    let art: HashMap<String, ExternalArtId> =
+        [(tracks_model::song_key("Halo", "Beyoncé"), external_art())].into();
+    put(
+        "acquisition-search.json",
+        &build::search_body(&search, &art),
+    )?;
     put(
         "external-play.json",
         &build::external_play_body(

@@ -8,6 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 use crate::access::Access;
 use crate::db::DbError;
 use crate::ids::{ArtistId, SongId};
+use crate::memo;
 use crate::records::{Artist, Song};
 use crate::repo;
 use crate::repo::sql::{json_ints, visible};
@@ -236,6 +237,20 @@ pub fn similar_songs(
     count: u32,
 ) -> Result<Vec<Song>, DbError> {
     let count = count.clamp(1, 200);
+    memo::cached(
+        "similar_songs",
+        || format!("{}/{seed}/{count}", memo::access_key(a)),
+        Vec::len,
+        || compute_similar_songs(c, a, seed, count),
+    )
+}
+
+fn compute_similar_songs(
+    c: &Connection,
+    a: &Access,
+    seed: &SongId,
+    count: u32,
+) -> Result<Vec<Song>, DbError> {
     let vis = visible(a, "s.library_id", None);
     let seed = load_seed(c, &vis, seed)?;
     let mut scores = song_signals(c, &seed)?;
@@ -455,6 +470,19 @@ pub fn similar_artists_in_library(
 
 /// Every similar artist, best first.
 fn ranked_artists(
+    c: &Connection,
+    a: &Access,
+    seed: &ArtistId,
+) -> Result<Vec<SimilarArtist>, DbError> {
+    memo::cached(
+        "similar_artists",
+        || format!("{}/{seed}", memo::access_key(a)),
+        Vec::len,
+        || compute_ranked_artists(c, a, seed),
+    )
+}
+
+fn compute_ranked_artists(
     c: &Connection,
     a: &Access,
     seed: &ArtistId,

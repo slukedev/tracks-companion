@@ -189,6 +189,11 @@ until the next full listing. Cursors are valid for 24 hours; an expired cursor g
 - Library reads (`/albums/{id}`, `/artists/{id}`, `/songs/{id}`, list endpoints) return a weak
   `ETag` built from the highest change seq visible to the caller and the caller's sync epoch.
   `If-None-Match` gives `304`. `Cache-Control: private, no-cache`.
+- Suggestion lists that do not depend on the time (`/songs/{id}/similar`,
+  `/artists/{id}/similar`, `/artists/{id}/top-songs`, `/songs/top`) return a weak `ETag` that
+  changes with anything they read: the library, anyone's listens, stars, ratings and
+  playlists, and data looked up in the background (section 8). `If-None-Match` gives `304`.
+  `Cache-Control: private, no-cache`.
 - Media (`/songs/{id}/stream`, `/download`) uses strong ETags, `If-Range`, `If-None-Match`
   (architecture section 8).
 - Artwork uses `Cache-Control: private, max-age=31536000, immutable`.
@@ -798,9 +803,10 @@ from Last.fm. Similar artists use shared credits, co-listening and shared genres
 without genre tags still gets them once people listen. Everything but `bio` answers without the
 key; Last.fm data, once stored, is merged into the same ranking. The
 key is one for the whole server: nobody needs a Last.fm account, and the server only calls Last.fm's
-public read methods with artist and track names. Last.fm data is fetched in the background,
-most played artists and songs first, and kept for 30 days. A request for something not looked up
-yet starts the lookup and waits at most 1.5 s for it before answering from what is stored.
+public read methods with artist, track and album names. Last.fm data is fetched in the background,
+most played artists and songs first, and kept for 30 days. A suggestion request never waits for
+Last.fm: it answers from what is stored and puts what it lacks first in line, so a later
+request has it. The artist's `bio` works the same way.
 
 Ranking is per user: the caller's own stars and plays raise a song or artist. Top songs are
 ordered by a score of plays on this server, the caller's own plays counted twice, the caller's
@@ -809,9 +815,19 @@ ever holds songs the caller can see. `bio` is a short plain-text summary, left o
 none.
 
 `external` lists songs Last.fm suggests that the caller cannot play here, as `Suggestion`
-objects `{"title", "artist"}`, best first, at most 20. It is present only when `/me` has
-`features.acquisition` and the credential has the `request` scope, and then may be empty. A
-client offers to request one with `POST /acquisitions` (section 15.3). Nothing names the source.
+objects, best first, at most 20. It is present only when `/me` has `features.acquisition` and
+the credential has the `request` scope, and then may be empty. A client offers to request one
+with `POST /acquisitions` (section 15.3). Nothing names the source.
+
+```json
+{"title": "Glory Box", "artist": "Portishead", "artwork_id": "etz1d2ggyk95rs0cjhnde"}
+```
+
+`artwork_id`, when present, is the song's cover: load it with `GET /art/{artwork_id}` (section
+11) like library art, with the same media token, sizes and caching. It is left out until the
+cover has been looked up in the background, and when there is none; the same request later
+carries it. The id is opaque and the same for every user (songs on one album share it); it
+never contains a third-party URL, and clients never fetch covers from anywhere but this server.
 
 #### Shelves
 
@@ -843,6 +859,10 @@ with the same `song_key`. Only the caller's own listens are read, except for top
   the engine's daily artist-spread shuffle (`tz` as for mixes). `external` is as above, from
   Last.fm's similar songs for the starting songs; lookups for them start in the background and
   the answer never waits for Last.fm.
+- **Answers are reused for the minute.** Mixes, picks and Get More depend on the time of day.
+  Each is computed for the minute it is asked in and reused for the rest of that minute, unless
+  something it reads changes first (a listen, a star, the library, data looked up in the
+  background), which always gives a fresh answer.
 - **Get More**, `GET /me/get-more`: the engine's Get More ranking (`tracks_library::rank`). The
   taste is the caller's listens by artist (plays, last heard); the similar artists are this
   server's (above) for their top 5 artists. `songs` are library songs by those artists the caller
@@ -854,7 +874,8 @@ Most Played shelf from `/songs/top`, server picks from `/me/picks`, Get More fro
 `/me/get-more`, songs like one song from `/songs/{id}/similar`, and artists to explore from
 `/artists/{id}/similar` (with `in_library=true` when it can show only artists the server has).
 Fixtures: `mix.json`, `top-songs.json`, `picks.json`, `get-more.json`, `similar-songs.json`,
-`similar-artists.json`.
+`similar-artists.json` (`picks.json`, `get-more.json` and `similar-songs.json` show
+`artwork_id` on a Suggestion, `acquisition-search.json` on a Candidate).
 
 ---
 
@@ -1055,6 +1076,12 @@ are also accepted in place of an artwork id and resolve to their artwork (`404` 
 artwork id (`c...`) is served only when it belongs to a song, album or artist the caller can see;
 otherwise `404`.
 
+A cover id from a suggestion or a candidate (`e...`, sections 8 and 15.1) is served the same
+way, with the same media token, sizes and headers, to users who may request (as `/me`'s
+`features.acquisition`), and only while some suggestion shows it. The server fetched it once
+from Last.fm's image hosts, checked it and keeps it in its artwork cache; a cover the cache has
+since dropped is `404` until it is fetched again, which the next suggestion showing it starts.
+
 ### `GET /api/v1/songs/{id}/lyrics` (scope: library)
 
 ```json
@@ -1228,7 +1255,9 @@ responses.
 ```
 
 `quality` is `lossless`, `high` (lossy ≥ 256 kbps) or `standard`. `instant` says whether
-instant play is possible for this candidate. `match` is `exact` or `close`. Tokens are stable for
+instant play is possible for this candidate. `match` is `exact` or `close`. `artwork_id`, when
+present, is the cover already looked up for a suggested song with the same `song_key`, served
+by `GET /art/{artwork_id}` (section 11); a search never starts a cover lookup. Tokens are stable for
 the same source item across searches and valid for at least 24 hours.
 
 **Acquisition**

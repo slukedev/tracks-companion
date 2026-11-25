@@ -5,6 +5,7 @@
 //! Only unauthenticated read methods are called, with artist and track names. No session,
 //! shared secret or user data is ever sent, and nothing is written to Last.fm.
 
+pub mod art;
 pub mod lastfm;
 mod worker;
 

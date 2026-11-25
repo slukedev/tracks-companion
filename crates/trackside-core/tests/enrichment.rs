@@ -179,6 +179,8 @@ fn top_songs_follow_last_fm_until_people_play_them() -> TestResult {
              SELECT ?1, pid, 30, 0 FROM songs WHERE title = 'Karma Police'",
             [user],
         )?;
+        // Written by hand, so say what changed, as the repositories do.
+        tx.touch();
         Ok(())
     })?;
     let (member, artist) = (w.member.clone(), id);
@@ -212,6 +214,7 @@ fn a_starred_song_rises_for_the_one_who_starred_it() -> TestResult {
             "INSERT INTO stars (user_id, item_kind, item_pid, starred_at) VALUES (?1, 'song', ?2, 0)",
             rusqlite::params![user, pid],
         )?;
+        tx.touch();
         Ok(())
     })?;
     let (member, creep) = (w.member.clone(), w.creep.clone());

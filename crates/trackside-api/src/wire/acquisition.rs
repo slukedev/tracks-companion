@@ -34,6 +34,10 @@ pub struct Candidate {
     pub size: Option<u64>,
     pub instant: bool,
     pub r#match: String,
+    /// The song's cover when it was looked up for a suggestion, served by
+    /// `GET /art/{artwork_id}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artwork_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

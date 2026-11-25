@@ -134,13 +134,23 @@ impl AcquireControl for OpenAcquisition {
 struct FakeEnrich {
     keys: Mutex<Vec<Option<String>>>,
     lookups: Mutex<Vec<Target>>,
+    /// Lookups something waited for. A request must never.
+    waited: Mutex<Vec<Target>>,
     tested: Mutex<Vec<Option<String>>>,
 }
 
 impl EnrichControl for FakeEnrich {
-    fn ensure(&self, targets: Vec<Target>, _wait: Duration) -> BoxFuture<'_, ()> {
+    fn ensure(&self, targets: Vec<Target>, wait: Duration) -> BoxFuture<'_, ()> {
+        self.waited
+            .lock()
+            .expect("lock")
+            .extend(targets.iter().cloned());
         self.lookups.lock().expect("lock").extend(targets);
-        Box::pin(async {})
+        // As a slow Last.fm would: a request that waited would show it.
+        Box::pin(tokio::time::sleep(wait))
+    }
+    fn queue(&self, targets: Vec<Target>) {
+        self.lookups.lock().expect("lock").extend(targets);
     }
     fn set_key(&self, key: Option<Secret>) {
         self.keys
@@ -185,6 +195,7 @@ struct Server {
     auth: Arc<Auth>,
     test: TestDb,
     enrich: Arc<FakeEnrich>,
+    media: Arc<Media>,
     data: tempfile::TempDir,
     stop: CancellationToken,
 }
@@ -245,10 +256,19 @@ async fn start(
     let stop = CancellationToken::new();
     let mut server = ServerInfo::new(uuid::Uuid::new_v4(), "Home", Clock::now(&*test.clock));
     server.report = Arc::new(report);
+    let subsonic = trackside_subsonic::SubsonicState {
+        db: test.db.clone(),
+        auth: Arc::clone(&auth),
+        media: Arc::clone(&media),
+        scan: Arc::new(FakeScanControl::new()),
+        enrich: enrich.clone(),
+        config: Arc::new(config.clone()),
+        server_id: uuid::Uuid::nil(),
+    };
     let state = ApiState {
         db: test.db.clone(),
         auth: Arc::clone(&auth),
-        media,
+        media: Arc::clone(&media),
         scan: Arc::new(FakeScanControl::new()),
         acquire,
         enrich: enrich.clone(),
@@ -259,7 +279,7 @@ async fn start(
         ops: Arc::new(NoOps),
         local: Arc::new(LocalState::new(stop.clone())),
     };
-    let app = trackside_api::router(state);
+    let app = trackside_api::router(state).merge(trackside_subsonic::router(subsonic));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let address: SocketAddr = listener.local_addr()?;
     let shutdown = stop.clone();
@@ -278,6 +298,7 @@ async fn start(
         auth,
         test,
         enrich,
+        media,
         data,
         stop,
     })
@@ -825,5 +846,251 @@ async fn picks_merge_last_fm_and_in_library_artists_come_first_when_asked() -> T
     .await?;
     assert_eq!(ours["artists"].as_array().map(Vec::len), Some(1), "{ours}");
     assert_eq!(ours["artists"][0]["name"], "Portishead");
+    Ok(())
+}
+
+/// A 16 by 16 grey PNG, small enough to write by hand: stored (uncompressed) deflate.
+fn tiny_png() -> Vec<u8> {
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = 0xFFFF_FFFFu32;
+        for byte in bytes {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+    fn chunk(out: &mut Vec<u8>, kind: &[u8], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        let mut body = kind.to_vec();
+        body.extend_from_slice(data);
+        out.extend_from_slice(&body);
+        out.extend_from_slice(&crc32(&body).to_be_bytes());
+    }
+    let mut raw = Vec::new();
+    for _ in 0..16 {
+        raw.push(0);
+        raw.extend_from_slice(&[0x80; 16]);
+    }
+    let (mut a, mut b) = (1u32, 0u32);
+    for byte in &raw {
+        a = (a + u32::from(*byte)) % 65_521;
+        b = (b + a) % 65_521;
+    }
+    let len = raw.len() as u16;
+    let mut zlib = vec![0x78, 0x01, 0x01];
+    zlib.extend_from_slice(&len.to_le_bytes());
+    zlib.extend_from_slice(&(!len).to_le_bytes());
+    zlib.extend_from_slice(&raw);
+    zlib.extend_from_slice(&((b << 16) | a).to_be_bytes());
+    let mut out = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    let mut header = Vec::new();
+    header.extend_from_slice(&16u32.to_be_bytes());
+    header.extend_from_slice(&16u32.to_be_bytes());
+    header.extend_from_slice(&[8, 0, 0, 0, 0]);
+    chunk(&mut out, b"IHDR", &header);
+    chunk(&mut out, b"IDAT", &zlib);
+    chunk(&mut out, b"IEND", &[]);
+    out
+}
+
+/// Glory Box's cover, as the worker would have kept it.
+fn keep_cover(
+    server: &Server,
+) -> Result<trackside_core::ExternalArtId, Box<dyn std::error::Error>> {
+    let id = trackside_core::ExternalArtId::derive("4128a6eb29f94943c9d206c08e625904");
+    server
+        .media
+        .artwork_store()
+        .put_external(&id, &tiny_png())?;
+    let (stored, key) = (
+        id.clone(),
+        tracks_model::song_key("Glory Box", "Portishead"),
+    );
+    server
+        .test
+        .db
+        .write_blocking(move |tx| store::store_art(tx, &key, Some(&stored), 86_400_000))?;
+    Ok(id)
+}
+
+#[tokio::test]
+async fn suggestions_carry_their_cover_once_it_was_looked_up() -> TestResult {
+    let server = start(Arc::new(OpenAcquisition), false).await?;
+    server.setup_admin().await?;
+    let key = server.device_key().await?;
+    let creep = seed(&server.test)?;
+    let path = format!("/songs/{creep}/similar");
+    let before = get_json(&server, &key, &path).await?;
+    assert_eq!(
+        before["external"],
+        json!([{"title": "Glory Box", "artist": "Portishead"}]),
+        "no cover until it is looked up"
+    );
+    assert!(
+        server
+            .enrich
+            .lookups
+            .lock()
+            .unwrap()
+            .contains(&Target::art("Glory Box", "Portishead")),
+        "the cover is looked up in the background"
+    );
+    let id = keep_cover(&server)?;
+    let after = get_json(&server, &key, &path).await?;
+    assert_eq!(
+        after["external"],
+        json!([{"title": "Glory Box", "artist": "Portishead", "artwork_id": id.to_string()}])
+    );
+    assert!(
+        !after.to_string().contains("http"),
+        "no third-party URL: {after}"
+    );
+
+    // Served like library art: with a media token, resized on request, cacheable.
+    let token: Value = server
+        .http
+        .post(server.url("/media-token"))
+        .bearer_auth(&key)
+        .send()
+        .await?
+        .json()
+        .await?;
+    let mt = token["token"].as_str().ok_or("no media token")?;
+    let art = server
+        .http
+        .get(server.url(&format!("/art/{id}?size=600&mt={mt}")))
+        .send()
+        .await?;
+    assert_eq!(art.status(), 200);
+    assert_eq!(art.headers()["content-type"], "image/png");
+    assert_eq!(
+        art.headers()["cache-control"],
+        "private, max-age=31536000, immutable"
+    );
+    assert_eq!(art.bytes().await?.as_ref(), tiny_png().as_slice());
+    let anonymous = server
+        .http
+        .get(server.url(&format!("/art/{id}")))
+        .send()
+        .await?;
+    assert_eq!(anonymous.status(), 401);
+    let unknown = trackside_core::ExternalArtId::derive("not shown anywhere");
+    let missing = server
+        .http
+        .get(server.url(&format!("/art/{unknown}?mt={mt}")))
+        .send()
+        .await?;
+    assert_eq!(missing.status(), 404, "only covers some suggestion shows");
+    Ok(())
+}
+
+#[tokio::test]
+async fn covers_are_only_for_callers_who_see_suggestions_to_request() -> TestResult {
+    let server = start(Arc::new(FakeAcquireControl::new()), false).await?;
+    server.setup_admin().await?;
+    let key = server.device_key().await?;
+    seed(&server.test)?;
+    let id = keep_cover(&server)?;
+    let art = server
+        .http
+        .get(server.url(&format!("/art/{id}")))
+        .bearer_auth(&key)
+        .send()
+        .await?;
+    assert_eq!(art.status(), 404);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_suggestion_request_never_waits_for_last_fm() -> TestResult {
+    let server = start(Arc::new(OpenAcquisition), false).await?;
+    server.setup_admin().await?;
+    let key = server.device_key().await?;
+    let creep = seed(&server.test)?;
+    listen(&server, &key, &[(&creep, "2026-11-14T08:00:00.000Z")]).await?;
+    let song: Value = get_json(&server, &key, &format!("/songs/{creep}")).await?;
+    let artist = song["artist_id"].as_str().ok_or("no artist id")?.to_owned();
+    let started = std::time::Instant::now();
+    for path in [
+        String::from("/me/picks"),
+        String::from("/me/get-more"),
+        String::from("/me/mixes/onRepeat"),
+        String::from("/songs/top"),
+        format!("/songs/{creep}/similar"),
+        format!("/artists/{artist}/similar"),
+        format!("/artists/{artist}/top-songs"),
+        format!("/artists/{artist}"),
+    ] {
+        get_json(&server, &key, &path).await?;
+    }
+    for endpoint in [
+        format!("getSimilarSongs2?id={creep}"),
+        format!("getSimilarSongs2?id={artist}"),
+        format!("getTopSongs?id={artist}"),
+        format!("getArtistInfo2?id={artist}"),
+    ] {
+        let response = server
+            .http
+            .get(format!(
+                "{}/rest/{endpoint}&apiKey={key}&f=json&v=1.16.1&c=test",
+                server.host
+            ))
+            .send()
+            .await?;
+        assert_eq!(response.status(), 200, "{endpoint}");
+        let body: Value = response.json().await?;
+        assert_eq!(
+            body["subsonic-response"]["status"], "ok",
+            "{endpoint}: {body}"
+        );
+    }
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "took {:?}",
+        started.elapsed()
+    );
+    assert!(server.enrich.waited.lock().unwrap().is_empty());
+    let lookups = server.enrich.lookups.lock().unwrap().clone();
+    assert!(
+        lookups.contains(&Target::song("Creep", "Radiohead")),
+        "{lookups:?}"
+    );
+    assert!(lookups.contains(&Target::artist("Radiohead")));
+    Ok(())
+}
+
+#[tokio::test]
+async fn unchanged_suggestions_answer_304() -> TestResult {
+    let server = start(Arc::new(OpenAcquisition), false).await?;
+    server.setup_admin().await?;
+    let key = server.device_key().await?;
+    let creep = seed(&server.test)?;
+    let path = server.url(&format!("/songs/{creep}/similar"));
+    let first = server.http.get(&path).bearer_auth(&key).send().await?;
+    assert_eq!(first.status(), 200);
+    let etag = first.headers()["etag"].to_str()?.to_owned();
+    let again = server
+        .http
+        .get(&path)
+        .bearer_auth(&key)
+        .header("if-none-match", &etag)
+        .send()
+        .await?;
+    assert_eq!(again.status(), 304);
+    keep_cover(&server)?;
+    let changed = server
+        .http
+        .get(&path)
+        .bearer_auth(&key)
+        .header("if-none-match", &etag)
+        .send()
+        .await?;
+    assert_eq!(changed.status(), 200, "a cover looked up is a change");
     Ok(())
 }

@@ -6,6 +6,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::access::Access;
 use crate::db::{DbError, WriteTx};
+use crate::ids::ExternalArtId;
 use crate::repo::sql::visible;
 use crate::time::Millis;
 
@@ -98,6 +99,7 @@ pub fn is_fresh(c: &Connection, kind: Kind, key: &str, now: Millis) -> Result<bo
 }
 
 fn mark(tx: &WriteTx<'_>, kind: Kind, key: &str, found: bool, ttl_ms: i64) -> Result<(), DbError> {
+    tx.touch();
     let now = tx.now();
     tx.prepare_cached(
         "INSERT INTO enrichment_fetches (kind, key, found, fetched_at, expires_at)
@@ -309,4 +311,108 @@ pub fn missing_top(
     ))?;
     let rows = statement.query_map(rusqlite::params![identity, count], |row| row.get(0))?;
     Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// [`missing_top`] for many artist identities at once.
+pub fn missing_top_many(
+    c: &Connection,
+    a: &Access,
+    identities: &[String],
+    count: u32,
+) -> Result<std::collections::HashMap<String, Vec<String>>, DbError> {
+    let vis = visible(a, "s.library_id", None);
+    let list = crate::repo::sql::json_strings(identities.iter().map(String::as_str));
+    let mut statement = c.prepare_cached(&format!(
+        "SELECT artist_identity, title FROM (
+             SELECT t.artist_identity, t.title, t.rank, row_number() OVER (
+                 PARTITION BY t.artist_identity ORDER BY t.rank) AS n
+             FROM enrichment_top_songs t
+             WHERE t.artist_identity IN (SELECT value FROM json_each(?1))
+               AND NOT EXISTS (SELECT 1 FROM songs s WHERE s.song_key = t.song_key
+                               AND s.missing_since IS NULL AND {vis}))
+         WHERE n <= ?2 ORDER BY artist_identity, rank"
+    ))?;
+    let mut out: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut rows = statement.query(rusqlite::params![list, count])?;
+    while let Some(row) = rows.next()? {
+        out.entry(row.get(0)?).or_default().push(row.get(1)?);
+    }
+    Ok(out)
+}
+
+/// Cover art stored for each of these song keys: `Some(id)` with an image, `None` when Last.fm
+/// had none. Keys never looked up are left out.
+pub fn external_art(
+    c: &Connection,
+    keys: &[String],
+) -> Result<std::collections::HashMap<String, Option<ExternalArtId>>, DbError> {
+    let list = crate::repo::sql::json_strings(keys.iter().map(String::as_str));
+    let mut statement = c.prepare_cached(
+        "SELECT song_key, art_id FROM external_art
+         WHERE song_key IN (SELECT value FROM json_each(?1))",
+    )?;
+    let rows = statement.query_map([list], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Song keys among `keys` whose art was never looked up or has expired.
+pub fn art_due(c: &Connection, keys: &[String], now: Millis) -> Result<Vec<String>, DbError> {
+    let list = crate::repo::sql::json_strings(keys.iter().map(String::as_str));
+    let mut statement = c.prepare_cached(
+        "SELECT k.value FROM json_each(?1) k
+         WHERE NOT EXISTS (SELECT 1 FROM external_art a WHERE a.song_key = k.value
+                           AND a.expires_at > ?2)",
+    )?;
+    let rows = statement.query_map(rusqlite::params![list, now], |row| row.get(0))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Whether the art for `key` is stored and has not expired.
+pub fn art_is_fresh(c: &Connection, key: &str, now: Millis) -> Result<bool, DbError> {
+    Ok(
+        c.prepare_cached("SELECT 1 FROM external_art WHERE song_key = ?1 AND expires_at > ?2")?
+            .query_row(rusqlite::params![key, now], |_| Ok(()))
+            .optional()?
+            .is_some(),
+    )
+}
+
+/// Records the art found for `key`, or that there is none.
+pub fn store_art(
+    tx: &WriteTx<'_>,
+    key: &str,
+    art: Option<&ExternalArtId>,
+    ttl_ms: i64,
+) -> Result<(), DbError> {
+    tx.touch();
+    let now = tx.now();
+    tx.prepare_cached(
+        "INSERT INTO external_art (song_key, art_id, fetched_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (song_key) DO UPDATE SET art_id = excluded.art_id,
+             fetched_at = excluded.fetched_at, expires_at = excluded.expires_at",
+    )?
+    .execute(rusqlite::params![
+        key,
+        art,
+        now,
+        Millis(now.0.saturating_add(ttl_ms))
+    ])?;
+    Ok(())
+}
+
+/// Whether some suggestion shows this image.
+pub fn art_in_use(c: &Connection, id: &ExternalArtId) -> Result<bool, DbError> {
+    Ok(
+        c.prepare_cached("SELECT EXISTS (SELECT 1 FROM external_art WHERE art_id = ?1)")?
+            .query_row([id], |row| row.get(0))?,
+    )
+}
+
+/// The image is no longer in the cache: look it up again the next time it is suggested.
+pub fn art_lost(tx: &WriteTx<'_>, id: &ExternalArtId) -> Result<(), DbError> {
+    tx.touch();
+    tx.prepare_cached("UPDATE external_art SET expires_at = 0 WHERE art_id = ?1")?
+        .execute([id])?;
+    Ok(())
 }

@@ -91,3 +91,43 @@ fn an_empty_answer_has_nothing_in_it() {
     assert_eq!(lastfm::top_tracks(&empty).len(), 0);
     assert_eq!(lastfm::artist_bio(&empty), None);
 }
+
+fn json_with_images(name: &str) -> serde_json::Map<String, serde_json::Value> {
+    let text = String::from_utf8(fixture(name))
+        .expect("text")
+        .replace("IMAGE_BASE", "https://lastfm.freetls.fastly.net");
+    lastfm::object(200, text.as_bytes()).expect("a Last.fm object")
+}
+
+#[test]
+fn a_tracks_cover_is_its_albums_largest_image() {
+    let cover = lastfm::track_cover(&json_with_images("track.getInfo.json"));
+    assert_eq!(
+        cover.image.as_deref(),
+        Some("https://lastfm.freetls.fastly.net/i/u/300x300/4128a6eb29f94943c9d206c08e625904.png")
+    );
+    assert_eq!(cover.album.as_deref(), Some("Dummy"));
+    assert_eq!(cover.album_artist.as_deref(), Some("Portishead"));
+}
+
+#[test]
+fn the_placeholder_star_and_blank_urls_are_no_image() {
+    let cover = lastfm::track_cover(&json_with_images("track.getInfo-placeholder.json"));
+    assert_eq!(cover.image, None);
+    assert_eq!(cover.album.as_deref(), Some("Blur"));
+    assert_eq!(
+        lastfm::album_cover(&json_with_images("album.getInfo-placeholder.json")),
+        None
+    );
+    assert_eq!(lastfm::usable_image("  "), None);
+    assert_eq!(
+        lastfm::usable_image(
+            "https://lastfm.freetls.fastly.net/i/u/34s/2A96CBD8B46E442FC41C2B86B821562F.png"
+        ),
+        None
+    );
+    assert_eq!(
+        lastfm::track_cover(&serde_json::Map::new()),
+        lastfm::TrackCover::default()
+    );
+}
