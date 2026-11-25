@@ -566,6 +566,35 @@ pub struct Setting {
 /// `GET /admin/settings`: every key marked D in architecture section 11.
 pub type Settings = BTreeMap<String, Setting>;
 
+/// `GET /admin/apple-music`: whether a `MusicKit` key is saved. The key itself is never sent.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppleMusicKey {
+    pub configured: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_at: Option<Time>,
+}
+
+/// `PUT /admin/apple-music`: the `.p8` file's text and the two ids Apple shows beside it.
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+pub struct AppleMusicKeyUpload {
+    pub private_key: String,
+    pub key_id: String,
+    pub team_id: String,
+}
+
+impl std::fmt::Debug for AppleMusicKeyUpload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppleMusicKeyUpload")
+            .field("key_id", &self.key_id)
+            .field("team_id", &self.team_id)
+            .finish_non_exhaustive()
+    }
+}
+
 /// A candidate URL with a reachability check from the server's side.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerUrlStatus {

@@ -23,6 +23,8 @@ const SENTENCES = {
   'backup.create': ['backups', 'teal', (a) => `${a} made a backup`],
   'backup.delete': ['backups', 'teal', (a, e) => `${a} deleted the backup ${e.target}`],
   'settings.update': ['settings', 'muted', (a) => `${a} changed settings`],
+  'apple_music.update': ['key', 'muted', (a) => `${a} saved an Apple Music key`],
+  'apple_music.remove': ['key', 'muted', (a) => `${a} removed the Apple Music key`],
   'server.upgrade': ['overview', 'muted', (a, e) => `Trackside updated to ${e.target}`],
   'acquisition.request': ['requests', 'accent', (a, e) => `${a} requested ${e.target}${e.detail ? ` by ${e.detail}` : ''}`],
 };

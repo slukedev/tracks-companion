@@ -4,6 +4,7 @@ pub(crate) mod account;
 pub(crate) mod acquisition;
 pub(crate) mod addresses;
 pub(crate) mod admin;
+pub(crate) mod apple_music;
 pub(crate) mod cloud;
 pub(crate) mod enrichment;
 mod events;
@@ -52,11 +53,13 @@ pub(crate) fn router(state: ApiState) -> Router {
         .merge(uploads::routes(&state))
         .merge(acquisition::routes())
         .merge(cloud::routes())
+        .merge(apple_music::routes())
         .nest(
             "/admin",
             admin::routes()
                 .merge(stats::routes())
-                .merge(enrichment::routes()),
+                .merge(enrichment::routes())
+                .merge(apple_music::admin_routes()),
         )
         .fallback(|| async { ApiError::not_found() })
         .layer(DefaultBodyLimit::max(BODY_LIMIT))

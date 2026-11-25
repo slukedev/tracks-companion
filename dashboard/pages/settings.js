@@ -1,5 +1,5 @@
 import { call, describe } from '../api.js';
-import { h, icon, pageHead, section, list, row, button, busy, input, select, toggle, nextId, toast, formError, num, copyButton } from '../ui.js';
+import { h, icon, pageHead, section, list, row, button, busy, input, select, toggle, nextId, toast, formError, num, copyButton, field, setFieldError, confirm, date, failed } from '../ui.js';
 
 const DURATIONS = [['off', 'Never'], ['15m', 'Every 15 minutes'], ['30m', 'Every 30 minutes'], ['1h', 'Every hour'], ['6h', 'Every 6 hours'], ['1d', 'Every day'], ['7d', 'Every week']];
 const PROFILES = [['aac-256', 'AAC 256 kbps'], ['aac-128', 'AAC 128 kbps'], ['mp3-320', 'MP3 320 kbps'], ['mp3-128', 'MP3 128 kbps'], ['opus-128', 'Opus 128 kbps'], ['flac', 'Original quality (FLAC)']];
@@ -46,10 +46,11 @@ const GROUPS = [
 ];
 
 export async function render(ctx) {
-  const [settings, urls, enrichment] = await Promise.all([
+  const [settings, urls, enrichment, appleMusic] = await Promise.all([
     call('GET /admin/settings'),
     call('GET /admin/server/urls').catch(() => ({ urls: [] })),
     call('GET /admin/enrichment').catch(() => null),
+    call('GET /admin/apple-music').catch(() => null),
   ]);
   const controls = new Map();
   const error = formError();
@@ -154,7 +155,113 @@ export async function render(ctx) {
   return h('div.page.narrow',
     pageHead('Settings'),
     urls.urls.length ? addresses(urls.urls) : null,
-    form);
+    form,
+    appleMusic ? appleMusicSection(appleMusic, ctx) : null);
+}
+
+const APPLE_ID = /^[A-Z0-9]{10}$/;
+
+/**
+ * The MusicKit key Tracks on Android asks this server to sign with. Write-only: once saved,
+ * only its ids and when it was saved come back.
+ */
+function appleMusicSection(state, ctx) {
+  const foot = 'Lets Tracks on Android play from Apple Music. The key stays on this server and is never shown again.';
+  const body = h('div');
+  const showSaved = () => {
+    const replace = button('Replace', { onClick: () => { body.replaceChildren(appleMusicForm(ctx, showSaved)); } });
+    const remove = button('Remove', {
+      kind: 'danger',
+      onClick: async () => {
+        if (!await confirm({ title: 'Remove the Apple Music key?', text: 'Tracks on Android stops playing from Apple Music until you add a key again.', action: 'Remove' })) return;
+        await busy(remove, async () => {
+          try {
+            await call('DELETE /admin/apple-music');
+            toast('Removed');
+            ctx.rerender();
+          } catch (err) {
+            failed(err);
+          }
+        });
+      },
+    });
+    body.replaceChildren(list([row({
+      icon: 'check',
+      tint: 'good',
+      title: 'Saved',
+      sub: `Key ${state.key_id}, team ${state.team_id}. Saved ${date(state.set_at)}.`,
+      trail: h('div.btn-row', replace, remove),
+      wrapTrail: true,
+    })], { iconInset: true }));
+  };
+  if (state.configured) showSaved();
+  else body.replaceChildren(appleMusicForm(ctx, null));
+  return section('Apple Music', body, { foot });
+}
+
+function appleMusicForm(ctx, cancel) {
+  const pasted = h('textarea.input.mono', { rows: '4', spellcheck: 'false', autocomplete: 'off', autocapitalize: 'off', placeholder: '-----BEGIN PRIVATE KEY-----' });
+  const keyId = input({ mono: true, maxlength: '10', autocapitalize: 'characters', spellcheck: 'false', placeholder: 'ABC123DEFG' });
+  const teamId = input({ mono: true, maxlength: '10', autocapitalize: 'characters', spellcheck: 'false', placeholder: 'TEAM456XYZ' });
+  keyId.classList.add('short');
+  teamId.classList.add('short');
+  let fromFile = null;
+  const chosen = h('span.small.muted', { role: 'status' });
+  const file = h('input', { type: 'file', accept: '.p8', hidden: true });
+  const choose = button('Choose .p8 file', { onClick: () => file.click() });
+  file.addEventListener('change', async () => {
+    const picked = file.files?.[0];
+    if (!picked) return;
+    fromFile = await picked.text();
+    pasted.value = '';
+    chosen.textContent = `${picked.name} chosen`;
+    const id = /AuthKey_([A-Z0-9]{10})\.p8$/i.exec(picked.name)?.[1];
+    if (id && !keyId.value) keyId.value = id.toUpperCase();
+    setFieldError(pasted, '');
+  });
+  pasted.addEventListener('input', () => { fromFile = null; chosen.textContent = ''; });
+
+  const error = formError();
+  const save = button('Save key', { kind: 'primary', type: 'submit' });
+  const controls = { private_key: pasted, key_id: keyId, team_id: teamId };
+  const form = h('form.panel.form', {
+    novalidate: true,
+    on: {
+      submit: async (event) => {
+        event.preventDefault();
+        error.hide();
+        Object.values(controls).forEach((c) => setFieldError(c, ''));
+        const body = {
+          private_key: (fromFile ?? pasted.value).trim(),
+          key_id: keyId.value.trim().toUpperCase(),
+          team_id: teamId.value.trim().toUpperCase(),
+        };
+        if (!body.private_key) { setFieldError(pasted, 'Choose the .p8 file or paste its text.'); choose.focus(); return; }
+        if (!APPLE_ID.test(body.key_id)) { setFieldError(keyId, 'The key ID is 10 letters and digits.'); keyId.focus(); return; }
+        if (!APPLE_ID.test(body.team_id)) { setFieldError(teamId, 'The team ID is 10 letters and digits.'); teamId.focus(); return; }
+        await busy(save, async () => {
+          try {
+            await call('PUT /admin/apple-music', { body });
+            fromFile = null;
+            pasted.value = '';
+            toast('Saved');
+            ctx.rerender();
+          } catch (err) {
+            const control = controls[err.details?.field];
+            if (control) { setFieldError(control, describe(err)); control.focus(); } else error.show(describe(err));
+          }
+        });
+      },
+    },
+  },
+  field('Private key', pasted, { hint: 'The AuthKey .p8 file Apple let you download once. Choose it, or paste its text.' }),
+  h('div.btn-row', choose, chosen, file),
+  h('div.fields-2',
+    field('Key ID', keyId, { hint: 'Shown beside the key in your Apple developer account' }),
+    field('Team ID', teamId, { hint: 'Shown under Membership in your Apple developer account' })),
+  error.el,
+  h('div.btn-row.end', cancel ? button('Cancel', { onClick: cancel }) : null, save));
+  return form;
 }
 
 function lockedText(value, kind) {

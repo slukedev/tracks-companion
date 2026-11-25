@@ -7,6 +7,9 @@
     "acquisition": {
       "external_play": true,
       "instant_play": true
+    },
+    "apple_music": {
+      "developer_token": true
     }
   },
   "libraries": [

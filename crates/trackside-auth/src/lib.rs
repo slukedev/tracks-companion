@@ -585,6 +585,7 @@ pub struct Auth {
     backoff: limit::Backoff,
     approvals: limit::FailureLimiter<UserKey>,
     key_requests: limit::RequestLimiter<KeyId>,
+    developer_tokens: limit::RequestLimiter<UserKey>,
     cache: Arc<cache::CredentialCache>,
     /// Media epochs of devices seen authenticating, so a media token can be minted without
     /// a database read. The epoch is checked against the database when the token is used.
@@ -608,6 +609,10 @@ impl std::fmt::Debug for Auth {
             .finish_non_exhaustive()
     }
 }
+
+/// Apple Music developer tokens a user may ask for in a minute. The server hands out the
+/// same cached token, so a client needs one only when it starts or the token is due.
+pub const DEVELOPER_TOKENS_PER_MINUTE: u32 = 10;
 
 /// Wrong pairing-request codes a signed-in user may enter in 10 minutes.
 const APPROVAL_ATTEMPTS: u32 = 5;
@@ -645,6 +650,11 @@ impl Auth {
                 Arc::clone(&clock),
             ),
             key_requests: limit::RequestLimiter::new(50, 200, Arc::clone(&clock)),
+            developer_tokens: limit::RequestLimiter::per_minute(
+                DEVELOPER_TOKENS_PER_MINUTE,
+                DEVELOPER_TOKENS_PER_MINUTE,
+                Arc::clone(&clock),
+            ),
             cache,
             epochs: Mutex::new(HashMap::new()),
             touched: Mutex::new(HashMap::new()),
@@ -854,6 +864,14 @@ impl Auth {
         self.event_streams
             .try_take(principal.access.user)
             .ok_or(AuthError::rate_limited(Duration::from_secs(5)))
+    }
+
+    /// Counts one Apple Music developer token request against the user's
+    /// [`DEVELOPER_TOKENS_PER_MINUTE`].
+    pub fn developer_token_request(&self, principal: &Principal) -> Result<(), AuthError> {
+        self.developer_tokens
+            .check(&principal.access.user, &self.clock)
+            .map_err(AuthError::rate_limited)
     }
 
     /// Takes one of the user's 3 transcode slots.

@@ -56,6 +56,9 @@
   "features": {
     "acquisition": {
       "instant_play": true
+    },
+    "apple_music": {
+      "developer_token": true
     }
   }
 }

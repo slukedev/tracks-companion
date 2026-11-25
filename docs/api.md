@@ -638,7 +638,8 @@ Five wrong codes per session per 10 minutes, then `429`.
   "device": {"id": "d2c4...", "name": "Luke's iPhone"},
   "server": {"server_id": "5f0c...", "name": "Home", "version": "1.0.0",
              "urls": [{"url": "http://192.168.1.20:4747", "kind": "lan", "tls": false}]},
-  "features": {"acquisition": {"instant_play": true, "external_play": true}}
+  "features": {"acquisition": {"instant_play": true, "external_play": true},
+               "apple_music": {"developer_token": true}}
 }
 ```
 
@@ -647,7 +648,9 @@ provider is healthy or configured, the user has `can_request` (admins always), t
 credential has the `request` scope, and the user can see the acquired library. When any of these
 is false the key is absent, not `false`. `instant_play` says a Get can play while it downloads
 (section 15.5); `external_play` says a song the server does not have can be played without
-keeping it (section 15.6). `max_bitrate_kbps` is left out when unlimited. `device`
+keeping it (section 15.6). `features.apple_music` is present, with `developer_token: true`, only
+when an admin has saved a MusicKit key that this server can use (section 16, Apple Music); it is
+absent otherwise, never `false`. `max_bitrate_kbps` is left out when unlimited. `device`
 is left out for a session or an API key.
 
 `PATCH /api/v1/me` (scope: write) `{"display_name"}` returns the user. `POST /api/v1/me/password`
@@ -700,6 +703,36 @@ How a client treats the list:
 `POST /api/v1/media-token` (device key, scope: stream), with no request body:
 `{"token": "mt1....", "expires_at": "..."}`. Append as `mt=<token>` to media URLs. Minting a new
 one does not invalidate older unexpired ones.
+
+### `GET /api/v1/me/apple-music/developer-token` (scope: library)
+
+A MusicKit developer token for Apple Music, signed by this server with the owner's own key, so
+the private key never ships in an app. Any credential with the `library` scope may ask: device
+keys, API keys and sessions, members as well as admins. Fixture:
+`apple-music-developer-token.json`.
+
+```json
+{
+  "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6IkFCQzEyM0RFRkcifQ.eyJleHAiOjE3OTQ3MzUwMDAsImlhdCI6MTc5NDY0ODYwMCwiaXNzIjoiVEVBTTQ1NlhZWiJ9.<signature>",
+  "expires_at": "2026-11-15T09:30:00.000Z",
+  "refresh_after": "2026-11-15T08:30:00.000Z"
+}
+```
+
+- `token` is a compact JWS. Header: `alg` `ES256` and `kid` (the key id). Claims: `iss` (the team
+  id), `iat` and `exp`, in seconds. There is never an `origin` claim. The signature is the raw
+  64-byte `r || s`, base64url, as JWS requires.
+- A token lasts 24 hours (`exp - iat`); the server never signs one for longer than 7 days.
+  `refresh_after` is an hour before `expires_at`: ask again after it, not before. Clients keep
+  the token in memory and use it until then.
+- The server signs one token and hands the same one to every caller until `refresh_after`, then
+  signs the next. Saving or removing the key in the dashboard replaces or drops it at once, so a
+  client that gets `401` or `403` from Apple asks again.
+- `Cache-Control: no-store`. The token is not logged.
+- `404 not_found` when no key is saved, or the saved key cannot be opened (the server's secret key
+  was replaced). `401` without a credential, `403 https_required` over plain HTTP from an address
+  that isn't nearby (section 1), `429 rate_limited` with `Retry-After` past 10 requests a minute per
+  user.
 
 ### Devices
 
@@ -1535,6 +1568,28 @@ files were left for later because they were still being written (`scanner.settle
   result from the server's side: `{"urls": [{"url", "kind", "tls", "source": "detected" |
   "configured", "reachable", "checked_at"}]}`.
 - `POST /admin/pairing/approve` is the same as `/pair/requests/approve`.
+
+### Apple Music
+
+The MusicKit key `GET /me/apple-music/developer-token` signs with (section 7). It is not one of
+the settings in `GET /admin/settings`: it has its own write-only endpoints.
+
+- `GET /admin/apple-music`: `{"configured": true, "key_id": "ABC123DEFG", "team_id":
+  "TEAM456XYZ", "set_at": "2026-11-11T09:30:00.000Z"}`, or `{"configured": false}`. The key itself
+  is never returned by this or any other endpoint. Fixtures: `admin/apple-music.json`,
+  `admin/apple-music-unset.json`.
+- `PUT /admin/apple-music` (needs a recent password): `{"private_key": "-----BEGIN PRIVATE
+  KEY-----\n...", "key_id": "ABC123DEFG", "team_id": "TEAM456XYZ"}`. `private_key` is the text of
+  the `.p8` file Apple gives (PEM, or its base64 body alone); it must be an unencrypted P-256
+  key in PKCS#8 form. `key_id` and `team_id` are Apple's 10 letters and digits, upper-cased on
+  input. `400 bad_request` with `details.field` (`private_key`, `key_id` or `team_id`) and a
+  message saying what is wrong. `200` returns the `GET` shape. Saving a key replaces any earlier
+  one, and the next token is signed with the new key.
+- `DELETE /admin/apple-music` (needs a recent password): `204`. Tokens stop at once and `/me`
+  drops `features.apple_music`.
+- The key is sealed with the server's secret key, like the other secret settings, in the
+  `settings` table, so backups carry it sealed and it opens only with the same `secret.key`.
+  Audit actions: `apple_music.update` (target: the key id) and `apple_music.remove`.
 
 ### Suggestions
 

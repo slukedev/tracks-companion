@@ -77,6 +77,8 @@ base64 = "0.23"
 subtle = "2.6"
 zeroize = "1.9"
 governor = "0.10"
+# Signs Apple Music developer tokens (ES256); already here through rustls.
+ring = "0.17"
 ipnet = { version = "2.12", features = ["serde"] }
 
 # Media, files and discovery

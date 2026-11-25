@@ -31,6 +31,7 @@ percent-encoding.workspace = true
 jiff.workspace = true
 thiserror.workspace = true
 zeroize.workspace = true
+ring.workspace = true
 
 [dev-dependencies]
 trackside-core = { workspace = true, features = ["testing"] }

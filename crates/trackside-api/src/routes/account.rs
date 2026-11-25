@@ -346,6 +346,7 @@ pub fn me_body(
     device: Option<&Device>,
     server: ServerSummary,
     feature: Option<AcquireFeature>,
+    apple_music: bool,
 ) -> MeResponse {
     MeResponse {
         user: map::user(user),
@@ -362,6 +363,9 @@ pub fn me_body(
             acquisition: feature.map(|f| crate::wire::auth::AcquisitionFeature {
                 instant_play: f.instant_play,
                 external_play: f.external_play,
+            }),
+            apple_music: apple_music.then_some(crate::wire::auth::AppleMusicFeature {
+                developer_token: true,
             }),
         },
     }
@@ -404,9 +408,17 @@ async fn me(
         .collect();
     let server = server_summary(&state, true).await;
     let feature = acquisition_feature(&state, &principal);
+    let apple_music = super::apple_music::configured(&state).await;
     Ok(json_with(
         StatusCode::OK,
-        &me_body(&user, &libraries, device.as_ref(), server, feature),
+        &me_body(
+            &user,
+            &libraries,
+            device.as_ref(),
+            server,
+            feature,
+            apple_music,
+        ),
     ))
 }
 

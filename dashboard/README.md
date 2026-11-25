@@ -217,6 +217,9 @@ one pass.
 - [ ] Backups: Back up now, download it, delete an old one.
 - [ ] Settings: change the server name and save; a setting set by config is read-only.
       Leaving with unsaved changes asks first.
+- [ ] Settings, Apple Music: choose an `AuthKey_<id>.p8` file (the key ID fills itself in), add
+      the team ID and save. Only Saved, the two ids and the date show; Replace and Remove work.
+      A pasted text that is not a key says so under the field.
 - [ ] People: change a member's libraries; make a reset link and use it; try to delete the last
       admin and read the refusal. Old `#/users` and `#/devices` links land on People.
 - [ ] Requests: on Sources and limits enable a source and run Test search; on Requests view a

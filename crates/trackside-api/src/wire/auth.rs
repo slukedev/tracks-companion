@@ -288,6 +288,34 @@ pub struct AcquisitionFeature {
 pub struct MeFeatures {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acquisition: Option<AcquisitionFeature>,
+    /// Present only when the server holds a `MusicKit` key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apple_music: Option<AppleMusicFeature>,
+}
+
+/// `features.apple_music` in `/me`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppleMusicFeature {
+    /// `GET /me/apple-music/developer-token` answers.
+    pub developer_token: bool,
+}
+
+/// `GET /me/apple-music/developer-token`: a `MusicKit` developer token (an `ES256` JWT).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeveloperToken {
+    pub token: String,
+    pub expires_at: Time,
+    /// When to ask for a new one; about an hour before `expires_at`.
+    pub refresh_after: Time,
+}
+
+impl std::fmt::Debug for DeveloperToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeveloperToken")
+            .field("expires_at", &self.expires_at)
+            .field("refresh_after", &self.refresh_after)
+            .finish_non_exhaustive()
+    }
 }
 
 /// `GET /me`.

@@ -295,6 +295,26 @@ secret key and never shown again; a key from this file or the environment shows 
 This page follows the key table in `crates/trackside-core/src/config/loader.rs`. If
 `trackside config show` and this page disagree, the server is right; please open an issue.
 
+## Apple Music (dashboard only)
+
+Tracks on Android can play from Apple Music. Apple only lets an app do that with a developer
+token signed by a MusicKit key, and that key must stay private, so your server keeps it and signs
+short-lived tokens for your apps. You need a paid Apple Developer Program membership.
+
+1. Sign in at developer.apple.com, open Certificates, Identifiers and Profiles, then
+   Identifiers, and register a Media ID (for example `media.com.example.trackside`).
+2. Under Keys, add a key, tick Media Services (MusicKit), choose that Media ID, and register it.
+3. Download the key. Apple names it `AuthKey_<KEY ID>.p8` and lets you download it only once,
+   so keep a copy somewhere safe. Note the 10-character key ID shown beside the key.
+4. Note your 10-character Team ID, shown under Membership details.
+5. In the dashboard, open Settings, Apple Music, choose the `.p8` file (or paste its text), fill
+   in the key ID and team ID, and save. It asks for your password again.
+
+The key is stored sealed with the server's secret key and never shown again; the dashboard shows
+only the key ID, team ID and when it was saved. Replace it to rotate it, or Remove it to stop
+Apple Music in Tracks. Backups carry it sealed, so a restore needs the same `secret.key`
+(`backup.include_secret_key`). If that file is lost, save the key again.
+
 ## Trackside Cloud (dashboard only)
 
 The Tracks apps can sync their own data (listening history, sessions, stations, app settings,

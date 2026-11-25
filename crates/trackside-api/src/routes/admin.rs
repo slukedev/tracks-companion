@@ -243,6 +243,8 @@ pub fn audit_summary(action: &str, target: Option<&str>) -> Option<String> {
         ("library.create", Some(t)) => format!("Added library {t}"),
         ("acquisition.request", Some(t)) => format!("Requested {t}"),
         ("settings.update", _) => String::from("Changed settings"),
+        ("apple_music.update", _) => String::from("Saved an Apple Music key"),
+        ("apple_music.remove", _) => String::from("Removed the Apple Music key"),
         _ => return None,
     };
     Some(text)

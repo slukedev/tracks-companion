@@ -175,6 +175,19 @@ impl<K: Hash + Eq + Clone> RequestLimiter<K> {
         }
     }
 
+    /// `per_minute` requests a minute per key, `burst` at once.
+    pub(crate) fn per_minute(per_minute: u32, burst: u32, clock: Arc<dyn Clock>) -> Self {
+        let rate = NonZeroU32::new(per_minute).unwrap_or(NonZeroU32::MIN);
+        let burst = NonZeroU32::new(burst).unwrap_or(rate);
+        Self {
+            bucket: RateLimiter::new(
+                Quota::per_minute(rate).allow_burst(burst),
+                DefaultKeyedStateStore::default(),
+                ServerClock(clock),
+            ),
+        }
+    }
+
     pub(crate) fn check(&self, key: &K, clock: &Arc<dyn Clock>) -> Result<(), Duration> {
         if self.bucket.len() >= MAX_TRACKED {
             self.bucket.retain_recent();

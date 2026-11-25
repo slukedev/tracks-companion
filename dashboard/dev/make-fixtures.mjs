@@ -100,7 +100,7 @@ w('me', {
   user: sessionUser,
   libraries: [LIB.music, LIB.nas, LIB.acquired],
   server: { server_id: SERVER_ID, name: 'Home', version: '1.0.0', urls },
-  features: { acquisition: { instant_play: true } },
+  features: { acquisition: { instant_play: true }, apple_music: { developer_token: true } },
 });
 
 w('admin-users', { users });
@@ -250,6 +250,9 @@ w('admin-acquire-providers', { providers });
 w('admin-provider-test', { ok: true, elapsed_ms: 1840, candidates: 12, detail: 'Found 12 results for "beyonce halo".' });
 w('admin-enrichment', { configured: true, artists: 1840, songs: 5210, last_fetch_at: '2026-11-14T09:28:00.000Z', last_error: { at: '2026-11-14T08:30:00.000Z', message: 'Last.fm error 29: Rate Limit Exceeded' } });
 w('admin-enrichment-test', { ok: false, elapsed_ms: 212, detail: 'Last.fm error 10: Invalid API key' });
+// GET /admin/apple-music: the key itself is never sent back.
+w('admin-apple-music', { configured: true, key_id: 'ABC123DEFG', team_id: 'TEAM456XYZ', set_at: '2026-11-11T09:30:00.000Z' });
+w('admin-apple-music-unset', { configured: false });
 
 w('me-devices', { devices: devices.filter((d) => d.user.id === luke.id).map(({ user, ...d }) => ({ ...d, current: false })) });
 // The member preview signs in as Mum, so her own devices and keys.

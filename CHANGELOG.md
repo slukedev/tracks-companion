@@ -57,6 +57,9 @@ starts at schema 4; there is nothing to upgrade from.
   needed. Only public read calls with artist and track names are made, at most a few a second,
   and answers are kept for 30 days. Users who can request songs also see suggestions the
   server doesn't have yet.
+- Apple Music for Tracks on Android: save your MusicKit key in the dashboard under Settings,
+  Apple Music, and your server signs short-lived developer tokens for your apps, so the key never
+  leaves it. See [configuration](docs/ops/configuration.md) for getting a key from Apple.
 - Trackside Cloud: each person's Tracks data (listening history, sessions, stations, playlists
   and settings) syncs through your own server, kept apart per account and included in the
   nightly backups. The secret nearby devices share is stored encrypted by the apps, so neither

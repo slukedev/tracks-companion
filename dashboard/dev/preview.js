@@ -1,5 +1,6 @@
 // Answers api.js calls from dev/fixtures when the page is opened with ?preview.
 // Variants: ?preview=member, noacq, nostats, fresh, setup, signedout, ratelimit, slow, error, reauth.
+// A pasted Apple Music key without BEGIN PRIVATE KEY answers 400, to see the field error.
 
 import { ApiError } from '../api.js';
 
@@ -19,7 +20,9 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 let signedIn = sessionStorage.getItem('preview-signed-in') === '1';
 let reauthed = false;
-const SENSITIVE = ['PATCH /admin/users/{id}', 'DELETE /admin/users/{id}', 'POST /me/api-keys', 'POST /admin/users/{id}/password-reset'];
+const SENSITIVE = ['PATCH /admin/users/{id}', 'DELETE /admin/users/{id}', 'POST /me/api-keys', 'POST /admin/users/{id}/password-reset', 'PUT /admin/apple-music', 'DELETE /admin/apple-music'];
+// The Apple Music key: saved in the normal preview, absent on a fresh server, and changed by the page.
+let appleMusicSet = null;
 
 const reads = {
   'GET /setup/status': (v) => (v === 'setup' ? 'setup-status-required' : 'setup-status'),
@@ -41,6 +44,7 @@ const reads = {
   'GET /admin/sessions': () => 'admin-sessions',
   'GET /admin/settings': () => 'admin-settings',
   'GET /admin/enrichment': () => 'admin-enrichment',
+  'GET /admin/apple-music': (v) => ((appleMusicSet ?? v !== 'fresh') ? 'admin-apple-music' : 'admin-apple-music-unset'),
   'GET /admin/server/urls': () => 'admin-server-urls',
   'GET /admin/backups': () => 'admin-backups',
   'GET /admin/audit': () => 'admin-audit',
@@ -74,6 +78,12 @@ const writes = {
   'POST /admin/acquire/providers/{name}/test': () => 'admin-provider-test',
   'POST /admin/enrichment/test': () => 'admin-enrichment-test',
   'POST /me/pairing-codes': () => 'me-pairing-code',
+  'PUT /admin/apple-music': (_, __, body) => {
+    if (!/BEGIN PRIVATE KEY/.test(body?.private_key || '')) fail(400, 'bad_request', 'private_key is not a P-256 private key in PKCS#8 form. Use the .p8 file from Apple.', { field: 'private_key' });
+    appleMusicSet = true;
+    return 'admin-apple-music';
+  },
+  'DELETE /admin/apple-music': () => { appleMusicSet = false; return null; },
   'PATCH /admin/settings': (_, __, body) => {
     if (body?.['acquire.fetched_keep'] < 0) fail(400, 'bad_request', 'Use 0 or more.', { field: 'acquire.fetched_keep' });
     if (typeof body?.['acquire.fetched_max_bytes'] === 'string' && !/^\d+(\.\d+)?\s*[KMGT]i?B$/i.test(body['acquire.fetched_max_bytes'])) fail(400, 'bad_request', 'Write a size like 20GiB.', { field: 'acquire.fetched_max_bytes' });

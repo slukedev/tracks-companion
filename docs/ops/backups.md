@@ -7,7 +7,7 @@ Everything Trackside knows is in its data folder (`/data` in Docker):
 | Path | What | Back up? |
 |---|---|---|
 | `trackside.db` (with `-wal` and `-shm` while running) | accounts, libraries, song ids, listens, favourites, playlists, settings, and what the Tracks apps sync to Trackside Cloud (history, app settings, app playlists) | yes, through a backup file, never by copying the live file |
-| `secret.key` | the key that seals app passwords and signs media tokens | yes, and keep it private |
+| `secret.key` | the key that seals app passwords and keys saved in the dashboard (Last.fm, Apple Music) and signs media tokens | yes, and keep it private |
 | `backups/` | the server's own backups | copy it somewhere else |
 | `config.toml` | your settings, if you made one | yes |
 | `cache/` | artwork and converted songs | no, it rebuilds itself |

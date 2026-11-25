@@ -473,6 +473,28 @@ fn not_set_up() -> ProviderStatus {
     }
 }
 
+/// A developer token in the real shape: a JWT whose header and claims are what the server
+/// signs. ECDSA signatures differ every time, so the signature part is a fixed example.
+fn developer_token_example() -> wire::auth::DeveloperToken {
+    use base64::Engine;
+    let b64 = |v: serde_json::Value| {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v.to_string())
+    };
+    let iat = TEST_START.0 / 1000;
+    let exp = iat + 86_400;
+    let token = format!(
+        "{}.{}.{}",
+        b64(serde_json::json!({"alg": "ES256", "kid": "ABC123DEFG"})),
+        b64(serde_json::json!({"iss": "TEAM456XYZ", "iat": iat, "exp": exp})),
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([7_u8; 64]),
+    );
+    wire::auth::DeveloperToken {
+        token,
+        expires_at: Time(Millis(exp * 1000)),
+        refresh_after: Time(Millis((exp - 3600) * 1000)),
+    }
+}
+
 /// Every fixture: path under `tests/fixtures` and its JSON.
 #[expect(clippy::too_many_lines, reason = "one list of every response shape")]
 fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::Error> {
@@ -589,6 +611,7 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             Some(&s.device),
             server_summary(true),
             feature,
+            true,
         ),
     )?;
     put(
@@ -599,6 +622,7 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             Some(&s.device),
             server_summary(true),
             None,
+            false,
         ),
     )?;
 
@@ -661,6 +685,18 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             token: token().token,
             expires_at: token().expires_at.into(),
         },
+    )?;
+    put(
+        "apple-music-developer-token.json",
+        &developer_token_example(),
+    )?;
+    put(
+        "admin/apple-music.json",
+        &build::apple_music_admin_body("ABC123DEFG", "TEAM456XYZ", at(-86_400 * 3)),
+    )?;
+    put(
+        "admin/apple-music-unset.json",
+        &wire::admin::AppleMusicKey::default(),
     )?;
     put(
         "approved.json",
@@ -1932,6 +1968,19 @@ fn fixtures_deserialize_into_their_wire_types() -> TestResult {
     let checks: &[(&str, Check)] = &[
         ("song.json", back::<wire::Song>),
         ("me.json", back::<wire::auth::MeResponse>),
+        (
+            "me-without-acquisition.json",
+            back::<wire::auth::MeResponse>,
+        ),
+        (
+            "apple-music-developer-token.json",
+            back::<wire::auth::DeveloperToken>,
+        ),
+        ("admin/apple-music.json", back::<wire::admin::AppleMusicKey>),
+        (
+            "admin/apple-music-unset.json",
+            back::<wire::admin::AppleMusicKey>,
+        ),
         ("pair-result.json", back::<wire::auth::PairResult>),
         ("sync-delta.json", back::<wire::sync::SyncPage>),
         ("sync-snapshot-songs.json", back::<wire::sync::SyncPage>),
@@ -2157,6 +2206,12 @@ fn dashboard_fixtures_match_server_shapes() -> TestResult {
         (
             "admin/enrichment-test.json",
             "admin-enrichment-test.json",
+            &[],
+        ),
+        ("admin/apple-music.json", "admin-apple-music.json", &[]),
+        (
+            "admin/apple-music-unset.json",
+            "admin-apple-music-unset.json",
             &[],
         ),
         ("approved.json", "admin-pairing-approved.json", &[]),

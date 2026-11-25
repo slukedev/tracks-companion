@@ -37,6 +37,11 @@ pub mod build {
         admin_library, admin_user, audit_summary, invite_state, library_problems_for,
         overview_library, scan_detail_body,
     };
+    pub use crate::routes::apple_music::{
+        MAX_LIFETIME as APPLE_MUSIC_MAX_LIFETIME, TOKEN_LIFETIME as APPLE_MUSIC_TOKEN_LIFETIME,
+        admin_key_body as apple_music_admin_body, parse_private_key as parse_apple_music_key,
+        sign_with as sign_developer_token,
+    };
     pub use crate::routes::cloud::{
         cloud_info, device_body, devices_body, page_body as cloud_page_body, push_body,
         record_body, setting_results_body, settings_body, usage_body,
@@ -276,6 +281,8 @@ pub struct LocalState {
     playback: Arc<PlaybackLoad>,
     /// Trackside Cloud pushes per user.
     cloud_limiter: trackside_cloud::PushLimiter,
+    /// The opened Apple Music key and the token it signed last.
+    developer_tokens: routes::apple_music::DeveloperTokens,
     shutdown: CancellationToken,
 }
 
@@ -306,6 +313,10 @@ impl LocalState {
     /// The per-user budget of Trackside Cloud pushes.
     pub fn cloud_limiter(&self) -> &trackside_cloud::PushLimiter {
         &self.cloud_limiter
+    }
+
+    pub(crate) fn developer_tokens(&self) -> &routes::apple_music::DeveloperTokens {
+        &self.developer_tokens
     }
 
     /// The registry `POST /now-playing` reports to.

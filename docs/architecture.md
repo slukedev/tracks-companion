@@ -1235,6 +1235,28 @@ These ids are derived and therefore stable across rebuilds; they change only whe
 define the identity change, which is the correct behaviour (the album really is a different
 album). When an album loses its last song it is deleted and tombstoned.
 
+
+### Apple Music developer tokens
+
+Tracks on Android plays Apple Music through MusicKit, which needs a developer token: an ES256 JWT
+signed with a MusicKit private key. The key must not ship in an app, so each server signs tokens
+with its owner's own key (api.md sections 7 and 16).
+
+- **Storage.** The admin pastes or uploads the `.p8` in the dashboard with its key id and team
+  id. The server checks it parses as an unencrypted P-256 PKCS#8 key (`ring`'s `EcdsaKeyPair`),
+  then stores the DER in the `settings` row `apple_music.developer_key`, sealed with the secret
+  key like the Last.fm key, beside the two ids and when it was saved. No endpoint returns it;
+  backups carry the row sealed. It is a dashboard setting only, not a configuration key.
+- **Signing.** Header `alg` ES256 and `kid`; claims `iss`, `iat`, `exp`, never `origin`.
+  `ECDSA_P256_SHA256_FIXED_SIGNING` gives the raw `r || s` signature JWS uses. Tokens last 24
+  hours, capped at 7 days in code; `refresh_after` is an hour before `exp`.
+- **Cache.** `LocalState` holds the opened key and the last token. Each request reads the row,
+  and the SHA-256 of its sealed text names the key: a new save always changes it (the seal has a
+  random nonce), so a changed or removed key drops the cached key and token at once. Otherwise the
+  same token is returned until `refresh_after`, or until the clock goes back past its `iat`.
+- **Access.** Any `library` credential may fetch a token; only an admin's session with a recent
+  password can save or remove the key. Neither the key nor tokens are logged.
+
 ---
 
 ## 7. Auth design
@@ -1269,8 +1291,9 @@ them, which keeps a stolen phone key from becoming a server takeover.
 
 **Secret key.** `<data>/secret.key` holds 32 random bytes (0600), created at first start, or read
 from `auth.secret_key_file`. Subkeys are derived with `blake3::derive_key` for: sealing app
-passwords and pending pairing keys, media token MACs, and invite and reset link MACs. Losing the
-file invalidates app passwords and media tokens only; device keys, sessions and passwords keep
+passwords, pending pairing keys and secret dashboard settings (the Last.fm key, the Apple Music
+key), media token MACs, and invite and reset link MACs. Losing the file invalidates app
+passwords, media tokens and the sealed settings only; device keys, sessions and passwords keep
 working because they are hashes. Backups include it when `backup.include_secret_key` is true
 (default) and say so.
 
@@ -1373,6 +1396,8 @@ after 7 days. Revoking a device bumps its epoch. The server redacts `mt`, `apiKe
 - Per key: 50 requests a second, burst 200, excluding media bytes.
 - Per user: 8 concurrent streams and 3 concurrent transcodes; over that, `429` with
   `Retry-After: 1`. 16 open event streams; over that, `429` with `Retry-After: 5`.
+- Per user: 10 Apple Music developer token requests a minute (`DEVELOPER_TOKENS_PER_MINUTE`);
+  over that, `429` with `Retry-After`.
 - Limiter state is pruned every minute, or sooner once it tracks 50,000 addresses or names, so
   addresses that failed once are not kept forever.
 - Auth failures log `auth_failure user=<name> ip=<ip> via=<method>` at warn, in a fixed format
