@@ -1363,11 +1363,15 @@ others from a fresh search follow if it fails.
 response includes `stream` as soon as bytes are flowing (usually within 2 s); until then the
 object has no `stream` and an SSE event delivers it.
 
-- `GET /api/v1/acquisitions/{id}/stream.m3u8` and its segments: HLS as in section 11.
+- `GET /api/v1/acquisitions/{id}/stream.m3u8` and its segments: HLS as in section 11. A
+  playlist already handed out keeps working after import while its job lives.
 - `GET /api/v1/acquisitions/{id}/stream`: before the download completes, `200` with no
   `Content-Length`, `Accept-Ranges: none`; `Range` is ignored and the body starts at byte 0.
-  After completion, ranges and a strong ETag. After import, `308` to
-  `/api/v1/songs/{song_id}/stream`.
+  After completion, ranges and a strong ETag until the song is imported. After import, `308`
+  to `/api/v1/songs/{song_id}/stream` with the query string (`mt` included). A request that
+  arrives while the file is moving into the library waits up to 15 s for the import, then
+  redirects, or answers `404` if the request did not end `done`.
+- A request that joined another request for the same song plays that request's download.
 
 Media token rules apply (scope: stream).
 

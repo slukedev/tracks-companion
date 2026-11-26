@@ -218,6 +218,10 @@ struct FakeScanState {
     imports: Vec<RequestedImport>,
     uploads: Vec<ImportId>,
     import_outcomes: Vec<ImportOutcome>,
+    import_hold: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
     status: Vec<LibraryScanStatus>,
     unavailable: Vec<LibraryId>,
 }
@@ -241,6 +245,20 @@ impl FakeScanControl {
     /// `Rejected`.
     pub fn push_import_outcome(&self, outcome: ImportOutcome) {
         self.state().import_outcomes.push(outcome);
+    }
+
+    /// Makes the next `import_file` call, once recorded, wait until the returned sender fires
+    /// or drops. The returned receiver fires when the call starts waiting.
+    pub fn hold_next_import(
+        &self,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (entered_tx, entered) = tokio::sync::oneshot::channel();
+        let (release, hold) = tokio::sync::oneshot::channel();
+        self.state().import_hold = Some((entered_tx, hold));
+        (entered, release)
     }
 
     pub fn set_status(&self, status: Vec<LibraryScanStatus>) {
@@ -292,18 +310,27 @@ impl ScanControl for FakeScanControl {
         origin: SongOrigin,
     ) -> BoxFuture<'a, Result<ImportOutcome, ScanControlError>> {
         Box::pin(async move {
-            let mut state = self.state();
-            state.imports.push(RequestedImport {
-                library: library.clone(),
-                rel_path: rel_path.to_path_buf(),
-                origin,
-            });
-            if state.import_outcomes.is_empty() {
-                return Err(ScanControlError::Rejected(String::from(
-                    "no outcome queued in FakeScanControl",
-                )));
+            let (outcome, hold) = {
+                let mut state = self.state();
+                state.imports.push(RequestedImport {
+                    library: library.clone(),
+                    rel_path: rel_path.to_path_buf(),
+                    origin,
+                });
+                let outcome = if state.import_outcomes.is_empty() {
+                    Err(ScanControlError::Rejected(String::from(
+                        "no outcome queued in FakeScanControl",
+                    )))
+                } else {
+                    Ok(state.import_outcomes.remove(0))
+                };
+                (outcome, state.import_hold.take())
+            };
+            if let Some((entered, hold)) = hold {
+                let _ = entered.send(());
+                let _ = hold.await;
             }
-            Ok(state.import_outcomes.remove(0))
+            outcome
         })
     }
 
@@ -399,12 +426,12 @@ impl AcquireControl for FakeAcquireControl {
         absent()
     }
 
-    fn instant_stream(
-        &self,
-        _caller: &Access,
-        _id: &AcquisitionId,
-    ) -> Result<InstantStream, AcquireError> {
-        Err(AcquireError::NotFound)
+    fn instant_stream<'a>(
+        &'a self,
+        _caller: &'a Access,
+        _id: &'a AcquisitionId,
+    ) -> BoxFuture<'a, Result<InstantStream, AcquireError>> {
+        Box::pin(async { Err(AcquireError::NotFound) })
     }
 
     fn providers(&self) -> BoxFuture<'_, Vec<ProviderStatus>> {

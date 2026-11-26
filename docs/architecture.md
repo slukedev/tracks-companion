@@ -1764,7 +1764,9 @@ For a ytdlp candidate the client may ask to play before the download finishes
 - `progressive`: `/api/v1/acquisitions/{id}/stream` serves the staging file as it grows. Until
   the download completes: `200`, no `Content-Length`, `Accept-Ranges: none`, and range requests
   are answered with `200` from the start. After completion: the complete staged file with ranges
-  and a strong ETag. After import it redirects (`308`) to the song's normal stream URL.
+  and a strong ETag. After import it redirects (`308`) to the song's normal stream URL. The
+  staged file is removed only once the request is `done`; a request that finds it gone while
+  importing waits for that and redirects.
 
 When the import finishes, the SSE event carries the song id. Tracks keeps playing the instant
 stream to the end and uses the song id from then on. Instant play counts toward quotas like any

@@ -546,11 +546,12 @@ pub trait AcquireControl: Send + Sync + 'static {
         id: &'a AcquisitionId,
     ) -> BoxFuture<'a, Result<(), AcquireError>>;
 
-    fn instant_stream(
-        &self,
-        caller: &Access,
-        id: &AcquisitionId,
-    ) -> Result<InstantStream, AcquireError>;
+    /// The stream of an instant play; a joined request answers with its primary's.
+    fn instant_stream<'a>(
+        &'a self,
+        caller: &'a Access,
+        id: &'a AcquisitionId,
+    ) -> BoxFuture<'a, Result<InstantStream, AcquireError>>;
 
     /// Streams a song the library does not have without keeping it: no acquisition, no
     /// library song, no change log.

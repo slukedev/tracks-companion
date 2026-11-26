@@ -51,6 +51,10 @@ starts at schema 5; there is nothing to upgrade from.
 - Optional acquisition through yt-dlp and slskd, off unless an admin turns it on. Playing a
   song the server doesn't have streams it through yt-dlp without keeping it; only Get adds a
   song to the library.
+- Instant play keeps playing as the song lands in the library: a stream opened during the import
+  waits for it and moves on to the library song instead of failing, a request for a song that
+  is already downloading plays that download, and media tokens (`mt`) work on instant play
+  streams and on songs played without being kept.
 - Suggestions from Last.fm with one server-wide API key, set in the dashboard under Settings,
   Last.fm (with a Test button) or in the config: similar songs and artists, top songs and artist
   bios for every user, ranked by each user's own listens and stars, with no Last.fm account

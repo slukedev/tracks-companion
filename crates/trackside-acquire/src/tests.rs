@@ -955,6 +955,18 @@ fn staging_of(world: &World, id: &AcquisitionId) -> PathBuf {
     world.config.staging_dir.join(id.as_str())
 }
 
+/// Whether `path` is gone, or goes soon: a done request's staging goes right after the event.
+async fn removed(path: &Path) -> bool {
+    let started = std::time::Instant::now();
+    while path.exists() {
+        if started.elapsed() > Duration::from_secs(5) {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    true
+}
+
 #[tokio::test(start_paused = true)]
 async fn staging_is_removed_on_done_failed_and_cancelled() {
     let world = World::new().await;
@@ -975,7 +987,7 @@ async fn staging_is_removed_on_done_failed_and_cancelled() {
 
     let done = acquirer.request(&world.member, halo()).await.unwrap();
     wait_for(&mut events, &done.id, is(AcquisitionState::Done)).await;
-    assert!(!staging_of(&world, &done.id).exists());
+    assert!(removed(&staging_of(&world, &done.id)).await);
     let imported = world.scan.requested_imports();
     assert_eq!(
         imported[0].rel_path,
@@ -1167,12 +1179,20 @@ async fn instant_play_serves_hls_before_download_completes() {
         urls.hls,
         format!("/api/v1/acquisitions/{}/stream.m3u8", view.id)
     );
-    let stream = acquirer.instant_stream(&world.member, &view.id).unwrap();
+    let stream = acquirer
+        .instant_stream(&world.member, &view.id)
+        .await
+        .unwrap();
     assert!(matches!(
-        acquirer.instant_stream(&world.other, &view.id),
+        acquirer.instant_stream(&world.other, &view.id).await,
         Err(AcquireError::NotFound)
     ));
-    assert!(acquirer.instant_stream(&world.admin, &view.id).is_ok());
+    assert!(
+        acquirer
+            .instant_stream(&world.admin, &view.id)
+            .await
+            .is_ok()
+    );
     assert_eq!(stream.hls_job, Some(HlsJobId(Box::from("hls-1"))));
     assert_eq!(
         *stream.progressive.state.borrow(),
@@ -1184,6 +1204,105 @@ async fn instant_play_serves_hls_before_download_completes() {
     let done = wait_for(&mut events, &view.id, is(AcquisitionState::Done)).await;
     assert_eq!(done.song, Some(song));
     assert!(done.stream.is_none());
+}
+
+/// Requests an instant play of the first candidate and waits for its stream.
+async fn start_instant(
+    world: &World,
+    acquirer: &Acquirer,
+    events: &mut broadcast::Receiver<Arc<ServerEvent>>,
+) -> AcquisitionView {
+    let search = acquirer
+        .search(
+            &world.member,
+            ExternalQuery::Text(String::from("beyonce halo")),
+        )
+        .await
+        .unwrap();
+    let mut request = halo();
+    request.candidate = Some(search.candidates[0].token.clone());
+    request.instant = true;
+    let view = acquirer.request(&world.member, request).await.unwrap();
+    wait_for(events, &view.id, |v| v.stream.is_some()).await
+}
+
+fn instant_provider() -> (Arc<FakeProvider>, tokio::sync::oneshot::Sender<()>) {
+    let mut video = FakeProvider::new(
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "bnVUHWCynig", false)],
+    );
+    Arc::get_mut(&mut video).unwrap().streams = true;
+    let (release, gate) = tokio::sync::oneshot::channel();
+    *video.release.lock().unwrap() = Some(gate);
+    (video, release)
+}
+
+#[tokio::test(start_paused = true)]
+async fn instant_play_serves_the_finished_file_until_the_request_is_done() {
+    let mut world = World::new().await;
+    world.config.instant_play = true;
+    let (video, release) = instant_provider();
+    let song = world.song_added();
+    let (importing, import) = world.scan.hold_next_import();
+    let acquirer = world.start(vec![video]);
+    let mut events = world.events.subscribe();
+    let view = start_instant(&world, &acquirer, &mut events).await;
+
+    release.send(()).unwrap();
+    importing.await.unwrap();
+    // The song is in the library and the request is not done yet: the download still plays.
+    let stream = acquirer
+        .instant_stream(&world.member, &view.id)
+        .await
+        .unwrap();
+    assert!(matches!(
+        *stream.progressive.state.borrow(),
+        GrowState::Complete { .. }
+    ));
+    assert!(
+        std::fs::metadata(&stream.progressive.path).is_ok_and(|m| m.len() > 0),
+        "the finished download is still in place"
+    );
+
+    import.send(()).unwrap();
+    let done = wait_for(&mut events, &view.id, is(AcquisitionState::Done)).await;
+    assert_eq!(done.song, Some(song));
+    assert!(removed(&staging_of(&world, &view.id)).await);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_joined_instant_request_plays_the_stream_it_joined() {
+    let mut world = World::new().await;
+    world.config.instant_play = true;
+    let (video, release) = instant_provider();
+    let song = world.song_added();
+    let acquirer = world.start(vec![video]);
+    let mut events = world.events.subscribe();
+    let view = start_instant(&world, &acquirer, &mut events).await;
+    let primary = acquirer
+        .instant_stream(&world.member, &view.id)
+        .await
+        .unwrap();
+
+    let mut again = halo();
+    again.instant = true;
+    let joined = acquirer.request(&world.other, again).await.unwrap();
+    assert_ne!(joined.id, view.id);
+    assert!(joined.stream.is_some());
+    let stream = acquirer
+        .instant_stream(&world.other, &joined.id)
+        .await
+        .unwrap();
+    assert_eq!(stream.progressive.path, primary.progressive.path);
+    assert_eq!(stream.hls_job, primary.hls_job);
+    assert!(matches!(
+        acquirer.instant_stream(&world.member, &joined.id).await,
+        Err(AcquireError::NotFound)
+    ));
+
+    release.send(()).unwrap();
+    let done = wait_for(&mut events, &joined.id, is(AcquisitionState::Done)).await;
+    assert_eq!(done.song, Some(song));
 }
 
 #[tokio::test(start_paused = true)]
@@ -1596,7 +1715,10 @@ async fn instant_play_serves_hls_before_download_completes_with_real_media() {
     let view = acquirer.request(&world.member, request).await.unwrap();
     let streaming = wait_for(&mut events, &view.id, |v| v.stream.is_some()).await;
     assert_eq!(streaming.state, AcquisitionState::Downloading);
-    let stream = acquirer.instant_stream(&world.member, &view.id).unwrap();
+    let stream = acquirer
+        .instant_stream(&world.member, &view.id)
+        .await
+        .unwrap();
     assert!(matches!(
         *stream.progressive.state.borrow(),
         GrowState::Growing { .. }

@@ -2,6 +2,7 @@
 //! `features.acquisition` for this caller, as if it did not exist.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::Bytes;
@@ -10,13 +11,14 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use http::{HeaderMap, Method, StatusCode};
 use serde::Deserialize;
+use tokio::sync::broadcast::error::RecvError;
 use trackside_auth::extract::{Authed, MediaAuthed};
 use trackside_auth::{Principal, Scopes};
 use trackside_core::control::{
     AcquireRequest, AcquisitionFilter, AcquisitionState, AcquisitionStateFilter, CandidateView,
     ExternalPlay, ExternalPlayRequest, ExternalQuery, ExternalSearch, GrowState, InstantStream,
 };
-use trackside_core::{AcquisitionId, CandidateToken, ExternalArtId};
+use trackside_core::{AcquisitionId, CandidateToken, ExternalArtId, ServerEvent, SongId};
 use trackside_media::{HlsPart, Priority};
 
 use super::account::acquisition_feature;
@@ -28,6 +30,8 @@ use crate::wire::acquisition::{Acquisitions, Search, SearchRequest};
 use crate::{ApiState, map};
 
 const REQUEST: u8 = Scopes::REQUEST.bits();
+/// How long a stream asked while the finished download is imported waits for the song.
+const IMPORT_WAIT: Duration = Duration::from_secs(15);
 
 pub(super) fn routes() -> Router<ApiState> {
     Router::new()
@@ -278,12 +282,16 @@ async fn cancel(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+/// Media routes need the stream scope only: an `mt` carries no request scope.
 fn media_available(state: &ApiState, principal: &Principal) -> ApiResult<()> {
-    if principal.scopes.contains(Scopes::STREAM) {
-        available(state, principal)
-    } else {
-        Err(ApiError::forbidden())
+    if !principal.scopes.contains(Scopes::STREAM) {
+        return Err(ApiError::forbidden());
     }
+    state
+        .acquire
+        .feature_for(&principal.access, &principal.permissions, true)
+        .map(|_| ())
+        .ok_or_else(ApiError::not_found)
 }
 
 async fn progressive(
@@ -294,29 +302,86 @@ async fn progressive(
 ) -> ApiResult<Response> {
     media_available(&state, &principal)?;
     let id: AcquisitionId = path_id(&id)?;
+    let (parts, _) = request.into_parts();
     let view = state.acquire.get(&principal.access, &id).await?;
     if let (AcquisitionState::Done, Some(song)) = (view.state, view.song.as_ref()) {
-        let (parts, _) = request.into_parts();
-        let query = parts
-            .uri
-            .query()
-            .map(|q| format!("?{q}"))
-            .unwrap_or_default();
-        let target = api_url(&state, &format!("/songs/{song}/stream{query}"));
-        return Ok(Redirect::permanent(&target).into_response());
+        return Ok(to_song_stream(&state, song, &parts));
     }
-    let instant = state.acquire.instant_stream(&principal.access, &id)?;
-    let (parts, _) = request.into_parts();
+    match serve_instant(&state, &principal, &id, &parts).await {
+        Err(e) if e.status == StatusCode::NOT_FOUND => {
+            match imported_song(&state, &principal, &id).await? {
+                Some(song) => Ok(to_song_stream(&state, &song, &parts)),
+                None => Err(e),
+            }
+        }
+        served => served,
+    }
+}
+
+fn to_song_stream(state: &ApiState, song: &SongId, parts: &http::request::Parts) -> Response {
+    let query = parts
+        .uri
+        .query()
+        .map(|q| format!("?{q}"))
+        .unwrap_or_default();
+    let target = api_url(state, &format!("/songs/{song}/stream{query}"));
+    Redirect::permanent(&target).into_response()
+}
+
+async fn serve_instant(
+    state: &ApiState,
+    principal: &Principal,
+    id: &AcquisitionId,
+    parts: &http::request::Parts,
+) -> ApiResult<Response> {
+    let instant = state.acquire.instant_stream(&principal.access, id).await?;
     let growing = &instant.progressive;
     if matches!(*growing.state.borrow(), GrowState::Failed) {
         return Err(ApiError::not_found());
     }
-    let slot = state.auth.stream_slot(&principal)?;
+    let slot = state.auth.stream_slot(principal)?;
     let response = state
         .media
-        .serve_growing(growing, &parts, instant.content_type)
+        .serve_growing(growing, parts, instant.content_type)
         .await?;
     Ok(trackside_media::hold(response, slot))
+}
+
+/// The song a request being verified or imported becomes, waiting up to [`IMPORT_WAIT`] for
+/// it; `None` once the request is in any other state.
+async fn imported_song(
+    state: &ApiState,
+    principal: &Principal,
+    id: &AcquisitionId,
+) -> ApiResult<Option<SongId>> {
+    let mut events = state.events.subscribe();
+    let deadline = tokio::time::Instant::now() + IMPORT_WAIT;
+    loop {
+        let view = state.acquire.get(&principal.access, id).await?;
+        match view.state {
+            AcquisitionState::Done => return Ok(view.song),
+            AcquisitionState::Verifying | AcquisitionState::Importing => {}
+            _ => return Ok(None),
+        }
+        let changed = async {
+            loop {
+                match events.recv().await {
+                    Ok(event) => {
+                        if let ServerEvent::Acquisition { view, .. } = &*event
+                            && view.id == *id
+                        {
+                            return true;
+                        }
+                    }
+                    Err(RecvError::Lagged(_)) => return true,
+                    Err(RecvError::Closed) => return false,
+                }
+            }
+        };
+        if !matches!(tokio::time::timeout_at(deadline, changed).await, Ok(true)) {
+            return Ok(None);
+        }
+    }
 }
 
 async fn hls_job(
@@ -324,13 +389,24 @@ async fn hls_job(
     principal: &Principal,
     id: &AcquisitionId,
 ) -> ApiResult<trackside_media::HlsJobId> {
-    let instant = state.acquire.instant_stream(&principal.access, id)?;
-    if let Some(job) = instant.hls_job {
-        return Ok(job);
-    }
+    let instant = match state.acquire.instant_stream(&principal.access, id).await {
+        Ok(instant) => instant,
+        Err(e) => {
+            // The acquirer lets go of the stream once the song is imported; a playlist
+            // already handed out keeps working while its job lives.
+            state.acquire.get(&principal.access, id).await?;
+            let mut started = state.local.instant_hls().lock().await;
+            started.retain(|_, job| state.media.hls_job(job).is_some());
+            return started.get(id).cloned().ok_or_else(|| e.into());
+        }
+    };
     // Held while a job starts, so a playlist and its parts asked at once start one.
     let mut started = state.local.instant_hls().lock().await;
     started.retain(|_, job| state.media.hls_job(job).is_some());
+    if let Some(job) = instant.hls_job {
+        started.insert(id.clone(), job.clone());
+        return Ok(job);
+    }
     if let Some(job) = started.get(id) {
         return Ok(job.clone());
     }

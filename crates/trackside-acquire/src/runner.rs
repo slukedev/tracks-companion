@@ -156,7 +156,6 @@ async fn lease_ready(inner: &Arc<Inner>) -> Result<Duration, DbError> {
         lock(&inner.jobs).insert(
             row.id.clone(),
             Running {
-                user: row.user,
                 cancel: cancel.clone(),
                 cancelled_by_user: Arc::clone(&cancelled_by_user),
                 stream: None,
@@ -848,7 +847,7 @@ impl Job<'_> {
         let moved = {
             let source = verified.path.clone();
             let root = target.root.clone();
-            tokio::task::spawn_blocking(move || move_into_library(&source, &root, &rel)).await
+            tokio::task::spawn_blocking(move || put_in_library(&source, &root, &rel)).await
         };
         let (dest, rel) = match moved {
             Ok(Ok(moved)) => moved,
@@ -880,7 +879,8 @@ impl Job<'_> {
                 return Ok(Imported::Rejected(format!("import failed: {e}")));
             }
         };
-        self.clean_staging().await;
+        // Staging goes only now: an instant play serves the staged file until it can follow
+        // the request to its song.
         self.update(AcquisitionUpdate {
             state: Some(AcquisitionState::Done),
             song: Some(song),
@@ -890,6 +890,7 @@ impl Job<'_> {
             ..AcquisitionUpdate::default()
         })
         .await?;
+        self.clean_staging().await;
         Ok(Imported::Done)
     }
 
@@ -1010,21 +1011,15 @@ fn rel_bytes(rel: &Path) -> Vec<u8> {
     }
 }
 
-/// Moves a verified file to `root/rel`, adding ` (2)` on collision. Returns the absolute and
-/// relative paths.
-fn move_into_library(
-    source: &Path,
-    root: &Path,
-    rel: &Path,
-) -> std::io::Result<(PathBuf, PathBuf)> {
+/// Puts a verified file at `root/rel`, adding ` (2)` on collision, and leaves the source for
+/// staging cleanup. Returns the absolute and relative paths.
+fn put_in_library(source: &Path, root: &Path, rel: &Path) -> std::io::Result<(PathBuf, PathBuf)> {
     let wanted = root.join(rel);
     if let Some(parent) = wanted.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let dest = unique_path(&wanted, |p| p.symlink_metadata().is_ok());
-    if std::fs::hard_link(source, &dest).is_ok() {
-        std::fs::remove_file(source)?;
-    } else {
+    if std::fs::hard_link(source, &dest).is_err() {
         // Across filesystems: copy to a hidden temporary name first, so a scan never sees a
         // partial file under the real name.
         let temp = dest.with_file_name(format!(
@@ -1037,7 +1032,6 @@ fn move_into_library(
             let _ = std::fs::remove_file(&temp);
             return Err(e);
         }
-        std::fs::remove_file(source)?;
     }
     let rel = dest
         .strip_prefix(root)

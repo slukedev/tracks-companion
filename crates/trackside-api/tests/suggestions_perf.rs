@@ -152,8 +152,12 @@ impl AcquireControl for OpenAcquisition {
     ) -> BoxFuture<'a, Result<(), AcquireError>> {
         absent()
     }
-    fn instant_stream(&self, _: &Access, _: &AcquisitionId) -> Result<InstantStream, AcquireError> {
-        Err(AcquireError::NotFound)
+    fn instant_stream<'a>(
+        &'a self,
+        _: &'a Access,
+        _: &'a AcquisitionId,
+    ) -> BoxFuture<'a, Result<InstantStream, AcquireError>> {
+        Box::pin(async { Err(AcquireError::NotFound) })
     }
     fn providers(&self) -> BoxFuture<'_, Vec<ProviderStatus>> {
         Box::pin(async { Vec::new() })

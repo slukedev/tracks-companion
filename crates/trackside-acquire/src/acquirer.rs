@@ -241,8 +241,6 @@ pub(crate) fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// A job that is running in this process.
 #[derive(Debug)]
 pub(crate) struct Running {
-    /// Who asked for it: only they and admins may play it while it downloads.
-    pub user: Option<UserKey>,
     pub cancel: CancellationToken,
     /// Set before `cancel` when a user or admin cancelled, as opposed to a shutdown.
     pub cancelled_by_user: Arc<AtomicBool>,
@@ -1381,16 +1379,26 @@ impl AcquireControl for Acquirer {
         })
     }
 
-    fn instant_stream(
-        &self,
-        caller: &Access,
-        id: &AcquisitionId,
-    ) -> Result<InstantStream, AcquireError> {
-        let jobs = lock(&self.inner.jobs);
-        jobs.get(id)
-            .filter(|r| caller.is_admin() || r.user == Some(caller.user))
-            .and_then(|r| r.stream.clone())
-            .ok_or(AcquireError::NotFound)
+    fn instant_stream<'a>(
+        &'a self,
+        caller: &'a Access,
+        id: &'a AcquisitionId,
+    ) -> BoxFuture<'a, Result<InstantStream, AcquireError>> {
+        Box::pin(async move {
+            let id = id.clone();
+            let row = self
+                .inner
+                .db
+                .read(move |c| acquisitions::get(c, &id))
+                .await?
+                .filter(|row| caller.is_admin() || row.user == Some(caller.user))
+                .ok_or(AcquireError::NotFound)?;
+            let job = row.joined_to.unwrap_or(row.id);
+            lock(&self.inner.jobs)
+                .get(&job)
+                .and_then(|r| r.stream.clone())
+                .ok_or(AcquireError::NotFound)
+        })
     }
 
     fn play_external<'a>(

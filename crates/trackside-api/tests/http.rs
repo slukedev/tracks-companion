@@ -15,10 +15,14 @@ use trackside_auth::{Auth, SecretKey};
 use trackside_core::control::{
     AcquireControl, AcquireError, AcquireFeature, AcquireRequest, AcquisitionFilter,
     AcquisitionState, AcquisitionView, AdminAcquisitionView, ExternalPlay, ExternalPlayRequest,
-    ExternalQuery, ExternalSearch, InstantStream, ProviderChange, ProviderStatus, ProviderTest,
+    ExternalQuery, ExternalSearch, GrowState, InstantStream, ProviderChange, ProviderStatus,
+    ProviderTest,
 };
 use trackside_core::testing::{FakeAcquireControl, FakeScanControl, TestDb};
-use trackside_core::{Access, AcquisitionId, BoxFuture, Config, Page, Permissions, random_id};
+use trackside_core::{
+    Access, AcquisitionId, BoxFuture, Config, EventBus, Page, Permissions, ServerEvent, SongId,
+    UserKey, random_id,
+};
 use trackside_media::{Media, MediaError, TranscodeProcess, TranscodeSpec, Transcoder};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -118,8 +122,12 @@ impl AcquireControl for OpenAcquisition {
     ) -> BoxFuture<'a, Result<(), AcquireError>> {
         Box::pin(async { Err(AcquireError::InvalidState) })
     }
-    fn instant_stream(&self, _: &Access, _: &AcquisitionId) -> Result<InstantStream, AcquireError> {
-        Err(AcquireError::NotFound)
+    fn instant_stream<'a>(
+        &'a self,
+        _: &'a Access,
+        _: &'a AcquisitionId,
+    ) -> BoxFuture<'a, Result<InstantStream, AcquireError>> {
+        Box::pin(async { Err(AcquireError::NotFound) })
     }
     fn play_external<'a>(
         &'a self,
@@ -193,6 +201,7 @@ struct Server {
     http: reqwest::Client,
     auth: Arc<Auth>,
     _test: TestDb,
+    events: EventBus,
     data: tempfile::TempDir,
     stop: CancellationToken,
 }
@@ -269,6 +278,7 @@ async fn start_with_transcoder(
         host: format!("http://{address}"),
         http: reqwest::Client::new(),
         auth,
+        events: test.events.clone(),
         _test: test,
         data,
         stop,
@@ -1400,7 +1410,39 @@ async fn ping_proves_the_server_made_a_qr_offer_and_stops_once_it_is_claimed() -
 struct InstantWithoutHls {
     open: OpenAcquisition,
     file: std::path::PathBuf,
-    growing: tokio::sync::watch::Receiver<trackside_core::control::GrowState>,
+    growing: tokio::sync::watch::Receiver<GrowState>,
+    /// The acquirer's job ended, as it does once the song is imported.
+    finished: std::sync::atomic::AtomicBool,
+    view: std::sync::Mutex<AcquisitionView>,
+}
+
+impl InstantWithoutHls {
+    fn new(file: std::path::PathBuf, growing: tokio::sync::watch::Receiver<GrowState>) -> Self {
+        Self {
+            open: OpenAcquisition,
+            file,
+            growing,
+            finished: std::sync::atomic::AtomicBool::new(false),
+            view: std::sync::Mutex::new(queued()),
+        }
+    }
+
+    fn view(&self) -> AcquisitionView {
+        self.view
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn set(&self, state: AcquisitionState, song: Option<SongId>) -> AcquisitionView {
+        let mut view = self
+            .view
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        view.state = state;
+        view.song = song;
+        view.clone()
+    }
 }
 
 impl AcquireControl for InstantWithoutHls {
@@ -1435,10 +1477,10 @@ impl AcquireControl for InstantWithoutHls {
     }
     fn get<'a>(
         &'a self,
-        a: &'a Access,
-        id: &'a AcquisitionId,
+        _: &'a Access,
+        _: &'a AcquisitionId,
     ) -> BoxFuture<'a, Result<AcquisitionView, AcquireError>> {
-        self.open.get(a, id)
+        Box::pin(async { Ok(self.view()) })
     }
     fn list<'a>(
         &'a self,
@@ -1454,15 +1496,24 @@ impl AcquireControl for InstantWithoutHls {
     ) -> BoxFuture<'a, Result<(), AcquireError>> {
         self.open.cancel(a, id)
     }
-    fn instant_stream(&self, _: &Access, _: &AcquisitionId) -> Result<InstantStream, AcquireError> {
-        Ok(InstantStream {
-            progressive: trackside_core::control::GrowingFile {
-                path: self.file.clone(),
-                state: self.growing.clone(),
-            },
-            hls_job: None,
-            content_type: "audio/mp4",
-            duration_ms: Some(12_000),
+    fn instant_stream<'a>(
+        &'a self,
+        _: &'a Access,
+        _: &'a AcquisitionId,
+    ) -> BoxFuture<'a, Result<InstantStream, AcquireError>> {
+        Box::pin(async {
+            if self.finished.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(AcquireError::NotFound);
+            }
+            Ok(InstantStream {
+                progressive: trackside_core::control::GrowingFile {
+                    path: self.file.clone(),
+                    state: self.growing.clone(),
+                },
+                hls_job: None,
+                content_type: "audio/mp4",
+                duration_ms: Some(12_000),
+            })
         })
     }
     fn providers(&self) -> BoxFuture<'_, Vec<ProviderStatus>> {
@@ -1497,16 +1548,11 @@ async fn instant_play_without_an_acquirer_job_starts_one_hls_job_per_acquisition
     let dir = tempfile::tempdir()?;
     let file = dir.path().join("growing.m4a");
     std::fs::write(&file, b"partial")?;
-    let (_grow, growing) =
-        tokio::sync::watch::channel(trackside_core::control::GrowState::Growing { bytes: 7 });
+    let (_grow, growing) = tokio::sync::watch::channel(GrowState::Growing { bytes: 7 });
     let fake = Arc::new(trackside_media::testing::FakeTranscoder::new());
     fake.set_hls(trackside_media::testing::FakeHls::Manual);
-    let acquire = Arc::new(InstantWithoutHls {
-        open: OpenAcquisition,
-        file,
-        growing,
-    });
-    let server = start_with_transcoder(acquire, fake.clone()).await?;
+    let acquire = Arc::new(InstantWithoutHls::new(file, growing));
+    let server = start_with_transcoder(acquire.clone(), fake.clone()).await?;
     server.setup_admin().await?;
     let key = server.device_key().await?;
     let id = random_id::<AcquisitionId>();
@@ -1525,6 +1571,88 @@ async fn instant_play_without_an_acquirer_job_starts_one_hls_job_per_acquisition
     assert_eq!(fake.spawned().len(), 1, "one job for one acquisition");
     assert_eq!(ask(&other).await?.status(), 200);
     assert_eq!(fake.spawned().len(), 2);
+
+    // Once the song is imported the acquirer lets go; the playlist it handed out still plays.
+    acquire
+        .finished
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(ask(&id).await?.status(), 200);
+    assert_eq!(ask(&random_id()).await?.status(), 404);
+    assert_eq!(fake.spawned().len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_instant_stream_asked_during_the_import_follows_the_song() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    // The finished download is no longer where the stream says, as during an import.
+    let (_grow, growing) = tokio::sync::watch::channel(GrowState::Complete { bytes: 7 });
+    let acquire = Arc::new(InstantWithoutHls::new(
+        dir.path().join("moved.m4a"),
+        growing,
+    ));
+    let server = start_with(acquire.clone()).await?;
+    server.setup_admin().await?;
+    let key = server.device_key().await?;
+    let token: Value = server
+        .http
+        .post(server.url("/media-token"))
+        .bearer_auth(&key)
+        .send()
+        .await?
+        .json()
+        .await?;
+    let mt = token["token"].as_str().ok_or("no media token")?.to_owned();
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    let id = acquire.view().id;
+    let url = server.url(&format!("/acquisitions/{id}/stream?mt={mt}"));
+    let finish_soon = |state: AcquisitionState, song: Option<SongId>| {
+        let acquire = Arc::clone(&acquire);
+        let events = server.events.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            let view = acquire.set(state, song);
+            events.publish(ServerEvent::Acquisition {
+                user: UserKey(1),
+                view,
+            });
+        })
+    };
+
+    acquire.set(AcquisitionState::Importing, None);
+    let song: SongId = random_id();
+    let done = finish_soon(AcquisitionState::Done, Some(song.clone()));
+    let response = http.get(&url).send().await?;
+    done.await?;
+    assert_eq!(response.status(), 308);
+    let location = response
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("no location")?;
+    assert!(
+        location.ends_with(&format!("/api/v1/songs/{song}/stream?mt={mt}")),
+        "{location}"
+    );
+
+    // The job ended without the song: the wait ends with the request, not after it.
+    acquire
+        .finished
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    acquire.set(AcquisitionState::Verifying, None);
+    let started = std::time::Instant::now();
+    let failed = finish_soon(AcquisitionState::Failed, None);
+    let response = http.get(&url).send().await?;
+    failed.await?;
+    assert_eq!(response.status(), 404);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+
+    // Done already: straight to the song.
+    acquire.set(AcquisitionState::Done, Some(song.clone()));
+    let response = http.get(&url).send().await?;
+    assert_eq!(response.status(), 308);
     Ok(())
 }
 

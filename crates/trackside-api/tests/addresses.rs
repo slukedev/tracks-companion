@@ -92,11 +92,11 @@ impl AcquireControl for Fetching {
     ) -> BoxFuture<'a, Result<(), AcquireError>> {
         self.inner.cancel(a, id)
     }
-    fn instant_stream(
-        &self,
-        a: &Access,
-        id: &AcquisitionId,
-    ) -> Result<InstantStream, AcquireError> {
+    fn instant_stream<'a>(
+        &'a self,
+        a: &'a Access,
+        id: &'a AcquisitionId,
+    ) -> BoxFuture<'a, Result<InstantStream, AcquireError>> {
         self.inner.instant_stream(a, id)
     }
     fn fetched_usage(&self) -> Option<FetchedUsage> {
