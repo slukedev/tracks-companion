@@ -270,6 +270,7 @@ async fn assistant(
 }
 
 #[cfg(not(feature = "assistant"))]
+#[expect(clippy::unused_async, reason = "the same signature as the real one")]
 async fn assistant(
     _deps: (&Db, &Arc<Auth>, &EventBus, &Arc<Config>, &Arc<ConfigReport>),
     _urls: UrlBook,

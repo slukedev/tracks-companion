@@ -3936,6 +3936,7 @@ dependencies = [
  "futures-util",
  "http",
  "log",
+ "rcgen 0.14.10",
  "rustls",
  "rustls-platform-verifier",
  "serde",

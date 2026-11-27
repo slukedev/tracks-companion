@@ -120,3 +120,28 @@ impl Options {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_self_signed_certificate_loads_as_its_own_authority() {
+        let cert =
+            rcgen::generate_simple_self_signed(vec![String::from("ma.local")]).expect("generates");
+        let pem = cert.cert.pem();
+        let ca = CustomCa::from_pem(pem.as_bytes()).expect("loads");
+        assert_eq!(ca.len(), 1);
+        let twice = format!("{pem}{pem}");
+        assert_eq!(CustomCa::from_pem(twice.as_bytes()).map(|c| c.len()), Ok(2));
+    }
+
+    #[test]
+    fn text_without_a_certificate_is_refused() {
+        assert_eq!(CustomCa::from_pem(b"hello"), Err(CaError::Empty));
+        assert!(
+            CustomCa::from_pem(b"-----BEGIN CERTIFICATE-----\n!!!\n-----END CERTIFICATE-----\n")
+                .is_err()
+        );
+    }
+}
