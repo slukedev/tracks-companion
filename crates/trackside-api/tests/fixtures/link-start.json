@@ -1,0 +1,8 @@
+{
+  "device_code": "Hx4tQ9vLm2Rk7pW3zN8cB5yF1dJ6gS0aTe4uVq2iKo8",
+  "expires_at": "2026-11-14T09:40:00.000Z",
+  "interval_s": 5,
+  "link_url": "tracks://link?server=5f0c2b9e-8a3d-4c1e-9b7a-2d6e4f8a1c3b&code=WDJB-MJHT",
+  "user_code": "WDJB-MJHT",
+  "verification_url": "https://music.example.com/link?code=WDJB-MJHT"
+}

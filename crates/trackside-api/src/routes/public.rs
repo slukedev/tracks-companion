@@ -94,6 +94,7 @@ pub fn capabilities_body(
             password_login: true,
             pairing: true,
             pair_requests: true,
+            device_link: true,
         },
         media: MediaFeatures {
             transcoding: media.ffmpeg.is_some(),

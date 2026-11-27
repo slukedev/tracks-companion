@@ -697,6 +697,95 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             },
         },
     )?;
+    let link_start = trackside_auth::DeviceLinkStart {
+        device_code: String::from("Hx4tQ9vLm2Rk7pW3zN8cB5yF1dJ6gS0aTe4uVq2iKo8"),
+        user_code: String::from("WDJB-MJHT"),
+        interval: trackside_auth::LINK_INTERVAL,
+        expires_at: at(600),
+    };
+    put(
+        "link-start.json",
+        &build::link_start_body(&link_start, SERVER_ID, &server_summary(false).urls, ""),
+    )?;
+    let link_request = trackside_auth::LinkRequest {
+        device_name: String::from("Living Room TV"),
+        platform: String::from("android_tv"),
+        model: Some(String::from("Chromecast with Google TV")),
+        app_name: Some(String::from("Tracks")),
+        nearby: true,
+        requested_at: at(-30),
+        expires_at: at(570),
+    };
+    put(
+        "link-lookup.json",
+        &build::link_info_body(&link_request, wire::auth::LinkState::Pending),
+    )?;
+    put(
+        "link-approved.json",
+        &build::link_info_body(&link_request, wire::auth::LinkState::Approved),
+    )?;
+    put(
+        "link-denied.json",
+        &build::link_info_body(&link_request, wire::auth::LinkState::Denied),
+    )?;
+    put("link-poll-result.json", &pair)?;
+    put(
+        "device-linked-event.json",
+        &wire::events::DeviceLinkedEvent {
+            id: s.device.id.to_string(),
+            name: String::from("Living Room TV"),
+            platform: String::from("android_tv"),
+        },
+    )?;
+    let link_errors: [(&'static str, trackside_auth::LinkError, &str); 7] = [
+        (
+            "error-authorization-pending.json",
+            trackside_auth::LinkError::Pending,
+            "1c2d3e4f5a6b4c7d8e9f0a1b2c3d4e5f",
+        ),
+        (
+            "error-slow-down.json",
+            trackside_auth::LinkError::SlowDown {
+                interval: Duration::from_secs(10),
+            },
+            "2d3e4f5a6b7c4d8e9f0a1b2c3d4e5f6a",
+        ),
+        (
+            "error-expired-token.json",
+            trackside_auth::LinkError::Expired,
+            "3e4f5a6b7c8d4e9f0a1b2c3d4e5f6a7b",
+        ),
+        (
+            "error-access-denied.json",
+            trackside_auth::LinkError::Denied,
+            "4f5a6b7c8d9e4f0a1b2c3d4e5f6a7b8c",
+        ),
+        (
+            "error-link-expired.json",
+            trackside_auth::LinkError::Expired,
+            "5a6b7c8d9e0f4a1b2c3d4e5f6a7b8c9d",
+        ),
+        (
+            "error-link-used.json",
+            trackside_auth::LinkError::Used,
+            "6b7c8d9e0f1a4b2c3d4e5f6a7b8c9d0e",
+        ),
+        (
+            "error-link-locked.json",
+            trackside_auth::LinkError::Locked,
+            "7c8d9e0f1a2b4c3d4e5f6a7b8c9d0e1f",
+        ),
+    ];
+    for (name, error, request_id) in link_errors {
+        let error = if name == "error-expired-token.json" {
+            trackside_api::device_link_error(error)
+        } else {
+            trackside_api::ApiError::from(error)
+        };
+        let mut envelope = error.envelope();
+        envelope.error.request_id = Some(request_id.to_owned());
+        put(name, &envelope)?;
+    }
     put(
         "invite-info.json",
         &wire::auth::InviteInfo {
@@ -2030,6 +2119,17 @@ fn fixtures_deserialize_into_their_wire_types() -> TestResult {
         ),
         ("cloud-usage.json", back::<wire::cloud::Usage>),
         ("cloud-event.json", back::<wire::cloud::CloudEvent>),
+        ("link-start.json", back::<wire::auth::LinkStart>),
+        ("link-lookup.json", back::<wire::auth::LinkInfo>),
+        ("link-approved.json", back::<wire::auth::LinkInfo>),
+        ("link-denied.json", back::<wire::auth::LinkInfo>),
+        ("link-poll-result.json", back::<wire::auth::PairResult>),
+        (
+            "device-linked-event.json",
+            back::<wire::events::DeviceLinkedEvent>,
+        ),
+        ("error-slow-down.json", back::<wire::ErrorEnvelope>),
+        ("error-link-used.json", back::<wire::ErrorEnvelope>),
     ];
     for (name, check) in checks {
         let value = built.get(name).ok_or(*name)?;
@@ -2219,6 +2319,9 @@ fn dashboard_fixtures_match_server_shapes() -> TestResult {
         ),
         ("approved.json", "admin-pairing-approved.json", &[]),
         ("approved.json", "pair-approved.json", &[]),
+        ("link-lookup.json", "link-lookup.json", &[]),
+        ("link-approved.json", "link-approved.json", &[]),
+        ("link-denied.json", "link-denied.json", &[]),
         (
             "me.json",
             "me.json",

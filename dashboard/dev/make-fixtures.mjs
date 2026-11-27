@@ -87,7 +87,7 @@ w('auth-session-member', { id: mum.id, username: mum.username, display_name: mum
 w('capabilities', {
   product: 'trackside', server_id: SERVER_ID, name: 'Home', version: '1.0.0',
   api: { versions: ['v1'], current: 'v1', deprecated: [] }, setup_required: false,
-  auth: { password_login: true, pairing: true, pair_requests: true },
+  auth: { password_login: true, pairing: true, pair_requests: true, device_link: true },
   media: { transcoding: true, profiles: ['aac-256', 'aac-128', 'mp3-320', 'mp3-128', 'opus-128', 'flac'], hls: true, suggested_cellular_profile: 'aac-256' },
   features: { lyrics: true, uploads: false, events: true, animated_art: false },
   subsonic: { enabled: true, path: '/rest' },
@@ -262,6 +262,16 @@ w('me-api-key-created', { id: 'k9x1z3c5v7b9n1m3q5w7', kind: 'api_key', name: 'Sy
 w('me-app-password-created', { id: 'k4v6b8n0m2q4w6e8r0t2', kind: 'app_password', name: 'Feishin', prefix: 'K7MQ', scopes: ['library', 'stream', 'write'], created_at: '2026-11-14T10:00:00.000Z', secret: 'K7MQ-4XD9-P2TA-HN8R-W3CF-6YJB', username: 'luke' });
 w('me-pairing-code', { id: 'g4f7h0j3k6l9z2x5c8v1', code: 'Q7RM-4X2K', qr_payload: 'trackside://pair?d=eyJ2IjoxfQ', qr_svg_url: '/api/v1/me/pairing-codes/g4f7h0j3k6l9z2x5c8v1/qr.svg', expires_at: '2026-11-14T10:10:00.000Z' });
 w('pair-approved', { device: { name: 'Living Room Mac', platform: 'macos' } });
+const tvLink = (state) => ({
+  state,
+  device: { name: 'Living Room TV', platform: 'android_tv', model: 'Chromecast with Google TV', app_name: 'Tracks' },
+  nearby: true,
+  requested_at: '2026-11-14T09:58:40.000Z',
+  expires_at: '2026-11-14T10:08:40.000Z',
+});
+w('link-lookup', tvLink('pending'));
+w('link-approved', tvLink('approved'));
+w('link-denied', tvLink('denied'));
 w('user-created', sessionUser);
 
 /* ---------- Stats (see the stats API spec): deterministic, ending 2026-11-14. ---------- */

@@ -1101,6 +1101,18 @@ similar_songs(similar_song_key)`, and `external_art (song_key PRIMARY KEY, art_i
 expires_at)`, the cover looked up for a suggested song (section 5, Suggestions and
 enrichment).
 
+### Device links
+
+Migration 6 adds `device_links`, one row per TV waiting to be linked (section 10, Pairing; api.md
+section 6, Linking a TV): hashes of the device code, of the user code's first half (unique, to
+find it) and of the whole user code (checked in constant time), what the TV said about itself,
+whether it started from a nearby address, `state` (`pending`, `approved`, `denied`, `locked`,
+`completed`), the approver and the scopes of the credential that approved it, wrong-code
+`failed_attempts`, the poll `interval_ms` and `last_polled_at`, and `expires_at`. No code or key
+is ever stored in the clear, and nothing secret waits in it: the device key is made when the TV
+collects it. Hourly maintenance deletes links an hour after they expire. The table is on its own,
+so other migrations can come before or after it.
+
 ### Trackside Cloud
 
 Migration 4 adds `cloud_state` (each user's own change seq), `cloud_items` (every synced record
@@ -1328,6 +1340,7 @@ resolved set of visible library ids (all for admins).
 | Password reset | locked-out members | 32 random bytes, in a link | SHA-256 | 24 hours, single use |
 | Pairing offer | QR and typed code | 128-bit QR secret, 8-character typed code | SHA-256 | 10 minutes, 5 attempts |
 | Pairing request | device-initiated | 6 digits shown on the device, plus a poll secret | SHA-256 | 10 minutes |
+| Device link | a TV, approved from a phone or the dashboard | 8-character user code, plus a 256-bit device code the TV polls with | SHA-256 (tagged) | 10 minutes, single use, 5 wrong codes |
 
 Login passwords are never accepted by the Subsonic layer and never stored reversibly.
 
@@ -1446,6 +1459,10 @@ after 7 days. Revoking a device bumps its epoch. The server redacts `mt`, `apiKe
   `Retry-After: 1`. 16 open event streams; over that, `429` with `Retry-After: 5`.
 - Per user: 10 Apple Music developer token requests a minute (`DEVELOPER_TOKENS_PER_MINUTE`);
   over that, `429` with `Retry-After`.
+- Device links: starts per address (5 at once, then one a minute) and server-wide (60, then 30
+  a minute), at most 100 links waiting; 120 polls a minute per address, and `slow_down` for a TV
+  that polls sooner than its interval; wrong codes per approver (5 in 10 minutes) and
+  server-wide (200 an hour); 5 wrong codes that reach one link lock it.
 - Limiter state is pruned every minute, or sooner once it tracks 50,000 addresses or names, so
   addresses that failed once are not kept forever.
 - Auth failures log `auth_failure user=<name> ip=<ip> via=<method>` at warn, in a fixed format
@@ -1914,6 +1931,16 @@ shows a 6-digit code, and polls; a signed-in user enters the code in the dashboa
 or Devices and Keys, Approve a Code) and approves. In Tracks this is **Approval** in the pairing
 form, offered when `capabilities.auth.pair_requests` is true. It needs no endpoint proof, because
 the app sends nothing secret.
+
+For a TV, which cannot scan a QR code and is slow to type on, there is a third way in the shape
+of RFC 8628: the TV calls `POST /api/v1/link/start` and shows an 8-character code and a QR code
+of `tracks://link?server=<server_id>&code=<code>` (or, for a phone without Tracks, the
+dashboard's `<server>/link?code=` page). Someone signed in in Tracks or the dashboard looks the
+code up, sees the TV's name, kind and whether it asked from the home network, and approves or
+denies it. The TV polls `POST /api/v1/link/poll` and receives the same PairResult as pairing,
+once. The new device belongs to the approver, and its key never carries more scopes than the
+credential that approved it; admin routes stay session-only. api.md section 6 (Linking a TV) has
+the contract and the numbers on guessing.
 
 Username and password sign-in from the app (`POST /api/v1/auth/login`) also returns a device key.
 

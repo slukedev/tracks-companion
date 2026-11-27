@@ -55,3 +55,11 @@ pub struct ServerUrlsEvent {
 pub struct SessionEvent {
     pub reason: String,
 }
+
+/// `device_linked`: a device the caller approved with a code collected its key.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceLinkedEvent {
+    pub id: String,
+    pub name: String,
+    pub platform: String,
+}

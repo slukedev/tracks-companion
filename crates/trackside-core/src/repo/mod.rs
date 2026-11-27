@@ -9,6 +9,7 @@ pub mod artists;
 pub mod artwork;
 pub mod audit;
 pub mod bookmarks;
+pub mod device_links;
 pub mod devices;
 pub mod enrichment;
 pub mod folders;

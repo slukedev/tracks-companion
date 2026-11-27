@@ -1,0 +1,12 @@
+{
+  "device": {
+    "app_name": "Tracks",
+    "model": "Chromecast with Google TV",
+    "name": "Living Room TV",
+    "platform": "android_tv"
+  },
+  "expires_at": "2026-11-14T09:39:30.000Z",
+  "nearby": true,
+  "requested_at": "2026-11-14T09:29:30.000Z",
+  "state": "denied"
+}

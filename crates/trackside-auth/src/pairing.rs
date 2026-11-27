@@ -208,7 +208,7 @@ impl Auth {
                     name: row.device_name.clone().unwrap_or(device.name),
                     ..device
                 };
-                let (key, device) = issue_in_tx(tx, user, &device, &hidden, Some(ip))?;
+                let (key, device) = issue_in_tx(tx, user, &device, &hidden, Some(ip), Scopes::ALL)?;
                 log(
                     tx,
                     Some(&owner),
@@ -319,7 +319,7 @@ impl Auth {
                     app_name: None,
                     app_version: None,
                 });
-                let (key, device) = issue_in_tx(tx, by, &device, &secret, None)?;
+                let (key, device) = issue_in_tx(tx, by, &device, &secret, None, Scopes::ALL)?;
                 let handout = Handout {
                     secret: secret.to_string(),
                     key: key.id.clone(),

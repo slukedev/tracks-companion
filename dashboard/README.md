@@ -16,6 +16,7 @@ do" before anything else; every other job is one or two clicks from the sidebar.
 |---|---|---|
 | First run, often on a laptop with the log open | `/setup`, then Overview | Token, name, password, done. The overview then shows Get started with progress: add music, connect your phone, invite someone, each one button. |
 | Invite family | Invites, Create an invite | Who it is for, how long it works, access. The whole link and a QR are shown once, with Share (the device's share sheet, where there is one) and Copy link. The invite page says who invited them and what happens next. |
+| Set up a TV, standing in front of it with a phone | The TV's link, or My account, Connect a TV | The code from the TV is filled in already when the phone followed the TV's link. The page shows which TV it is and whether it asked from home, with a countdown, then Approve or Deny; the TV signs itself in. |
 | Connect a new phone, often on the couch on a phone | My account, Connect a device | One button shows a QR and a typed code with a live countdown; on a phone, Open in Tracks on this device opens the pairing link directly. The page notices the new device by itself. A 6-digit code from the app can be approved in the same box. |
 | "Music stopped working, what's wrong?" | Overview | Needs attention names each problem in plain words with its fix inline: a button named after the action, or the command or setting to copy. Playback shows failed plays and when they started next to Recent activity, which explains them (a NAS went offline at 08:00). |
 | Approve or check requests | Requests | The list filtered to In progress, with Details, Try again and Cancel, and a chart of added, cancelled and failed. Source and limits is its own tab. |
@@ -140,6 +141,7 @@ across files.
 | `#/libraries`, `#/libraries/<id>`, `#/libraries/add` | Folders, where new songs go, recent uploads (filter and paging), duplicates; one library's scans, problems and settings |
 | `#/requests`, `#/requests/<filter>`, `#/requests/setup` | Requests in progress, failed, finished or all; Source and limits on its own tab, with the limits for songs played without keeping them |
 | `#/backups`, `#/settings`, `#/activity`, `#/account` | Backups; settings, with the addresses for Tracks first; the audit log; your own account |
+| `#/link`, `#/link/<code>` | Connect a TV: type the TV's 8-character code (or arrive with it from the TV's `/link?code=` address, which the server serves as this page), check the TV's name, kind and whether it asked from your network, then Approve or Deny. Reached from Connect a TV beside Your devices on My account. Expired, used, locked and wrong codes each say what to do next |
 
 A member sees only My account, with no tab bar or menu. On phones (860 px and narrower) an admin
 gets a tab bar with Overview, People, Libraries, Requests (Backups when there are no requests) and
@@ -210,6 +212,10 @@ one pass.
       On a phone, Open in Tracks on this device opens the app.
       Cancel a code; let one expire.
 - [ ] Device-initiated pairing: start it in Tracks, type the 6 digits under "Got a 6-digit code".
+- [ ] Connect a TV: start linking on the TV, open its link on a phone (signed out first: sign in,
+      then the page opens with the code), Approve; the TV signs in and shows under Your devices.
+      Deny another; type a wrong code; let one expire. In preview, codes starting 0, E, D, K, R
+      and N show the unknown, expired, used, locked, rate-limited and away-from-home states.
 - [ ] Remove that device from My account and from its owner's page under People. Tracks is signed out.
 - [ ] Libraries: add a library, watch the scan count up, open its scan errors.
 - [ ] Unmount a library's folder: it shows Offline on the overview and the library page, and

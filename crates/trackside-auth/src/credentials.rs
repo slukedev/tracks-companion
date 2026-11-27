@@ -14,7 +14,7 @@ use crate::{
 
 /// What sealed app passwords are sealed for.
 pub(crate) const APP_PASSWORD_PURPOSE: &str = "app password";
-const PLATFORMS: &[&str] = &["ios", "macos", "android", "web", "other"];
+const PLATFORMS: &[&str] = &["ios", "macos", "android", "android_tv", "web", "other"];
 const MAX_NAME_CHARS: usize = 100;
 const MAX_CLIENT_ID_CHARS: usize = 200;
 
@@ -32,7 +32,7 @@ impl Auth {
         let (row, device) = self
             .write(move |tx| {
                 let actor = active_user(tx.conn(), user)?;
-                let issued = issue_in_tx(tx, user, &device, &hidden, None)?;
+                let issued = issue_in_tx(tx, user, &device, &hidden, None, Scopes::ALL)?;
                 log(
                     tx,
                     Some(&actor),
@@ -177,13 +177,15 @@ impl Auth {
     }
 }
 
-/// Creates or refreshes the device and stores a new device key for it, inside `tx`.
+/// Creates or refreshes the device and stores a new device key for it with `scopes`, inside
+/// `tx`. Sign-in and pairing give every scope; a link gives what its approver had.
 pub(crate) fn issue_in_tx(
     tx: &mut WriteTx<'_>,
     user: UserKey,
     device: &NewDevice,
     secret: &str,
     ip: Option<IpAddr>,
+    scopes: Scopes,
 ) -> Result<(ApiKeyRow, Device), DbError> {
     let ip = ip.map(|ip| ip.to_string());
     let device = devices::upsert_for_login(tx, user, device, ip.as_deref())?;
@@ -198,7 +200,7 @@ pub(crate) fn issue_in_tx(
             prefix: shown_prefix(secret),
             secret_hash: sha256(secret.as_bytes()),
             secret_sealed: None,
-            scopes: Scopes::ALL.to_string(),
+            scopes: scopes.to_string(),
             expires_at: None,
         },
     )?;

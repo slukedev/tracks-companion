@@ -422,8 +422,8 @@ export function meter(value, total, label, kind = '') {
   return bar;
 }
 
-export const platformName = (p) => ({ ios: 'iPhone', ipados: 'iPad', macos: 'Mac', android: 'Android', web: 'Browser' }[p] || p || 'Device');
-export const platformIcon = (p) => ({ ios: 'phone', android: 'phone', ipados: 'tablet', macos: 'laptop', windows: 'laptop', linux: 'laptop' }[p] || 'devices');
+export const platformName = (p) => ({ ios: 'iPhone', ipados: 'iPad', macos: 'Mac', android: 'Android', android_tv: 'Android TV', web: 'Browser' }[p] || p || 'Device');
+export const platformIcon = (p) => ({ ios: 'phone', android: 'phone', android_tv: 'tv', ipados: 'tablet', macos: 'laptop', windows: 'laptop', linux: 'laptop' }[p] || 'devices');
 
 /** Initial-cap a phrase that came from data ("daily 03:30" to "Daily 03:30"). */
 export const capital = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);

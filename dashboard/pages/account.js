@@ -1,6 +1,6 @@
 import { call, describe, href, serverUrl, now } from '../api.js';
 import {
-  h, pageHead, section, list, row, badge, button, busy, field, input, checkbox, empty, agoInline, nextId,
+  h, icon, pageHead, section, list, row, badge, button, busy, field, input, checkbox, empty, agoInline, nextId,
   confirm, toast, failed, secret, formError, setFieldError, platformName, platformIcon, segmented, openDialog, meter,
 } from '../ui.js';
 
@@ -152,7 +152,9 @@ export function approveForm(route, labelText = 'Code from the app', hint) {
 /* ---------- Devices ---------- */
 
 function devicesSection(ctx, devices) {
-  if (!devices.length) return section('Your devices', list(empty('No devices yet', 'Connect one above.')));
+  // A TV shows an 8-character code instead of scanning one.
+  const tv = h('a.btn', { href: '#/link' }, icon('tv', 'sm'), 'Connect a TV');
+  if (!devices.length) return section('Your devices', list(empty('No devices yet', 'Connect one above.')), { aside: tv });
   const sorted = [...devices].sort((a, b) => Date.parse(b.last_seen_at || 0) - Date.parse(a.last_seen_at || 0));
   return section('Your devices', list(sorted.map((d) => {
     const remove = button('Remove', { kind: 'danger' });
@@ -177,7 +179,7 @@ function devicesSection(ctx, devices) {
       trail: [rename, remove],
       wrapTrail: true,
     });
-  }), { iconInset: true }));
+  }), { iconInset: true }), { aside: tv });
 }
 
 function renameDevice(ctx, device) {
