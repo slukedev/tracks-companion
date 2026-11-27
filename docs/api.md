@@ -1738,14 +1738,13 @@ a measured zero. Responses are `Cache-Control: no-store`. Out-of-range parameter
 
   `health` is `ok`, `degraded`, `cooldown`, `outdated`, `unavailable`, `setup` or `disabled`.
   `setup` means the source lacks configuration or tooling on this install (no yt-dlp that runs
-  here; slskd address, API key or downloads folder unset) and `detail` says what; `unavailable`
-  means it is set up but failing.
+  here) and `detail` says what; `unavailable` means it is set up but failing.
   `cooldown_until` is present during a cooldown; `version`, `latest_known` and `detail` when
   known.
 
-- `PATCH /admin/acquire/providers/{name}`: `{"enabled"?, "concurrency"?, "url"? (soulseek),
-  "api_key"? (soulseek, write-only)}`. Paths to executables and cookie files are config-file only.
-- `PATCH /admin/acquire/providers/{name}` with `api_key` needs a recent password.
+- `PATCH /admin/acquire/providers/{name}`: `{"enabled"?, "concurrency"?}`. Paths to executables
+  and cookie files are config-file only. `url` and `api_key`, which an earlier provider read,
+  are accepted and ignored.
 - `POST /admin/acquire/providers/{name}/test`: runs a health check and a sample search
   (`{"query"?}`); `200 {"ok", "elapsed_ms", "candidates", "detail"?}`.
 - `POST /admin/acquire/providers/ytdlp/update`: downloads and verifies the latest release into
@@ -1757,7 +1756,7 @@ a measured zero. Responses are `Cache-Control: no-store`. Out-of-range parameter
   Each is an Acquisition (15.1) plus `user`, `provider`, the chosen `candidate` (`{"token",
   "provider", "source", "title", "artist", "score", "quality"?, "format"?, "size"?}`),
   `attempts` (`[{"provider", "source", "at"?, "error"?}]`), `attempt_count` and
-  `failure_detail`.
+  `failure_detail`. A request made before a provider was removed keeps that provider's name.
 - `POST /admin/acquisitions/{id}/retry`, `DELETE /admin/acquisitions/{id}`.
 
 ---

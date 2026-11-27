@@ -3,7 +3,7 @@
 Trackside is a self-hosted music server for the Tracks app. It indexes music the user owns, serves
 it to Tracks over a native API and to every other client over Subsonic 1.16.1 with OpenSubsonic
 extensions, keeps per-user listens, stars and playlists, and can optionally acquire songs through
-yt-dlp and slskd when an admin turns that on. It replaces the previous Subsonic proxy Tracks
+yt-dlp when an admin turns that on. It replaces the previous Subsonic proxy Tracks
 used, one that fetched songs on demand and that Tracks talks to as a plain Subsonic server.
 
 This document describes the server as built and is kept in step with the code. The wire formats are
@@ -58,7 +58,7 @@ Contents:
   starts with no configuration at all.
 - **Longevity.** Stable on-disk formats, forward-only migrations with automatic pre-migration
   backups, scheduled `VACUUM INTO` backups, a semver'd API with a written deprecation policy.
-- **Optional acquisition.** Admin-enabled providers (yt-dlp and slskd) behind a durable job
+- **Optional acquisition.** An admin-enabled provider (yt-dlp) behind a durable job
   queue, replacing the previous proxy's "star, then poll for twenty minutes" flow with a request
   that reports its own status and ends with a stable song id (section 9).
 
@@ -67,7 +67,6 @@ Contents:
 - Ripping or decrypting streaming services (Tidal, Qobuz, Amazon, Deezer, Spotify), or
   gateways that do (SpotiFLAC, Mornye and similar). There is no provider interface aimed at
   them and none will be accepted.
-- Speaking the Soulseek protocol. Trackside only talks to an slskd instance over its REST API.
 - Being a proxy in front of another server. Trackside owns its scanner, database and users.
 - Video, podcasts, internet radio management, jukebox mode, chat, and the Jellyfin API in v1.
   The Subsonic endpoints for them answer with an empty result or "not implemented" (api.md).
@@ -98,7 +97,7 @@ It reuses `tracks-model` as a git dependency pinned to an exact revision of the 
                               playback decisions, artwork extraction and resizing
     trackside-auth/           passwords, sessions, API keys, app passwords, media tokens,
                               pairing, setup token, rate limits, axum extractors
-    trackside-acquire/        Provider trait, ytdlp and soulseek providers, ranking,
+    trackside-acquire/        Provider trait, the ytdlp provider, ranking,
                               verification, the durable acquisition queue
     trackside-enrich/         read-only Last.fm client and the background enrichment worker
     trackside-subsonic/       /rest router, XML and JSON encoding, Subsonic semantics
@@ -206,7 +205,7 @@ that recomputes stored keys (section 13).
   by `(song, content_version, profile)`; later requests join the running job.
 - **Acquisition.** A runner task leases jobs from the `acquisitions` table. Each provider has its
   own semaphore and token-bucket rate limiter. Provider subprocesses (yt-dlp) and HTTP calls
-  (slskd) honour a `CancellationToken`.
+  (the yt-dlp updater) honour a `CancellationToken`.
 - **Password hashing.** Argon2id runs on the blocking pool behind a semaphore of 2 permits, so a
   burst of logins cannot starve the CPU.
 - **Shutdown.** SIGTERM or SIGINT cancels a root `CancellationToken`: listeners stop accepting,
@@ -1566,12 +1565,17 @@ evicted.
 
 ## 9. Acquisition
 
-Admins can let users get songs they do not have yet from two built-in providers, both off by
+Admins can let users get songs they do not have yet from one built-in provider, off by
 default:
 
 - **ytdlp**: runs the `yt-dlp` executable as a subprocess.
-- **soulseek**: an HTTP client for an slskd instance's REST API. slskd runs as its own
-  container; Trackside never speaks the Soulseek protocol.
+
+Rows stored for a provider an earlier version had (`soulseek`) still decode, as
+`ProviderName::Retired`: their history lists, and a file already staged from one is still
+verified and imported. A job still fetching from one, or whose picked candidate came from one,
+fails `provider_unavailable` at once with a detail saying the source was removed; any other
+retired candidate is marked tried and skipped, and a retired candidate token is answered as
+expired.
 
 There is no provider for streaming services and the `Provider` trait is not public API for
 third-party code. ADR 0006 records the decision.
@@ -1646,24 +1650,21 @@ Hard filters (a candidate failing any is dropped):
   median candidate duration otherwise.
 - Version words: `live`, `remix`, `karaoke`, `instrumental`, `cover`, `nightcore`, `sped up`,
   `slowed`, `8d`, `reverb`, `acapella`, `tribute` (list in `acquire.reject_words`) present in the
-  candidate's folded title or folder name but not in the requested title, unless
-  `allow_versions`.
+  candidate's folded title but not in the requested title, unless `allow_versions`.
 - Artist: one of the candidate's credited identities (`tracks_model::credits_by_name`) equals the
-  request's lead identity, or the uploader is `<artist> - Topic`, or the Soulseek path contains the
-  folded artist as a folder name.
+  request's lead identity, or the uploader is `<artist> - Topic`.
 - Title: folded candidate title, with bracketed feat. credits and "official audio/video" noise
   removed, equals or contains the folded requested title.
-- Size and format: container in the allowlist, size under `acquire.max_file_bytes`.
+- Size and format: container in the allowlist, size under `acquire.max_file_bytes`, and a lossy
+  bitrate, when the source states one, of at least `acquire.min_bitrate` (256 kbps).
 
 Score (higher is better), weights in code with tests:
 
 - Lossless (FLAC, ALAC, WAV) +40; for lossy, `min(bitrate, 320) / 8`.
 - Exact folded title +20, exact artist +15, album matches +10.
 - Duration delta penalty, 2 points a second.
-- Provider preference `acquire.prefer` (default `soulseek` then `ytdlp`) +10 for the first.
+- Provider preference `acquire.prefer` (default `ytdlp`) +10 for the first.
 - ytdlp: `- Topic` channel +15, "official audio" +5, music video −5.
-- soulseek: peer has a free upload slot +10, queue length −1 each up to −10, reported upload
-  speed up to +5.
 
 ### 9.2 Verification
 
@@ -1676,8 +1677,7 @@ A staged file is accepted only if all hold:
 - Size within limits; lofty reads properties; duration within the same tolerance as ranking.
 - When ffmpeg is present, a full decode `ffmpeg -v error -i f -f null -` exits 0 with no errors
   (catches truncated downloads and corrupt streams). Without ffmpeg, lofty's properties suffice.
-- The final file name is built only from sanitised tag text, never from a provider's or peer's
-  path: NFC, no `/`, `\`, NUL or control characters, no leading dots, no Windows reserved names,
+- The final file name is built only from sanitised tag text, never from a provider's path: NFC, no `/`, `\`, NUL or control characters, no leading dots, no Windows reserved names,
   at most 180 bytes per component, a ` (2)` suffix on collision.
 
 ### 9.3 Durable queue and retries
@@ -1685,13 +1685,12 @@ A staged file is accepted only if all hold:
 - The runner selects `state IN ('queued','searching','downloading','verifying','importing') AND
   next_attempt_at <= now AND (lease_until IS NULL OR lease_until < now)` ordered by priority and
   age, sets `lease_until = now + 5 min`, and renews the lease every minute while working.
-- At start, rows with expired leases are resumed from their state: a `downloading` job with
-  slskd first asks slskd whether the transfer finished; a ytdlp job reruns yt-dlp with
-  `--continue` on the same staging directory; later states redo verification.
+- At start, rows with expired leases are resumed from their state: a `downloading` ytdlp job
+  reruns yt-dlp with `--continue` on the same staging directory; later states redo
+  verification.
 - Backoff between whole-job attempts: 1 min, 5 min, 30 min, 2 h; after 4 attempts
   `failed(exhausted)`.
-- Per-provider concurrency (ytdlp 2 fetches, soulseek 3) and rate limits (ytdlp 10 searches a
-  minute, soulseek 1 search every 3 s).
+- Per-provider concurrency (ytdlp 2 fetches) and rate limits (ytdlp 10 searches a minute).
 - Quotas: members 50 requests a day and 5 active at once (`acquire.member_daily`,
   `acquire.member_active`), server-wide 500 a day; admins are exempt from per-user quotas.
   Joined requests and dedupe hits do not count.
@@ -1728,29 +1727,6 @@ A staged file is accepted only if all hold:
 - Instant play (`fetch_streaming`): yt-dlp writes to stdout (`-o -`) and Trackside tees the
   bytes into the staging file and into an ffmpeg HLS job (section 9.5). After the download,
   tagging uses a second `--skip-download --write-thumbnail` call for the cover.
-
-**soulseek (slskd).**
-
-- Configured with `acquire.soulseek.url` and an API key from `acquire.soulseek.api_key_file`,
-  sent as `X-API-Key`. Endpoints used (slskd API v0; check against the pinned slskd version):
-  `POST /api/v0/searches`, `GET /api/v0/searches/{id}` and `/responses`,
-  `POST /api/v0/transfers/downloads/{username}`, `GET /api/v0/transfers/downloads/{username}`,
-  `DELETE` on a transfer to cancel, `GET /api/v0/application` for health.
-- Search text `<artist> <title>`, `acquire.soulseek.search_timeout` (15 s), responses limited to
-  audio files; candidates carry peer, path, size, bitrate, sample rate, bit depth, length,
-  free-slot and queue information.
-- slskd downloads into its own downloads directory, which is also mounted into Trackside at
-  `acquire.soulseek.downloads_dir`. When the transfer completes, Trackside locates the file
-  under that directory by the transfer's reported file name, checks the canonical path is inside
-  the directory, moves it into staging and verifies it.
-- Peer offline, transfer rejected, or no progress for `acquire.soulseek.stall_timeout` (120 s):
-  cancel the transfer, mark the candidate, try the next one.
-- slskd unreachable or not configured: the provider reports unhealthy, searches skip it, and the
-  dashboard says so. A request with only that provider enabled fails `provider_unavailable` after
-  its retries.
-- **Sharing.** slskd shares folders by default. The shipped compose file mounts only the acquired
-  folder into slskd, read-only, as its share, and the docs recommend keeping it that way. Users
-  are responsible for what they download and share under the laws where they live.
 
 ### 9.5 Instant play
 
@@ -2046,7 +2022,7 @@ The server starts with no file at all: data in the platform default directory, l
 | `acquire.enabled` **D** | `TRACKSIDE_ACQUIRE__ENABLED` | `false` | master switch |
 | `acquire.library` **D** | `TRACKSIDE_ACQUIRE__LIBRARY` | unset | pid or root path of the writable acquired library |
 | `acquire.staging_dir` | `TRACKSIDE_ACQUIRE__STAGING_DIR` | `<data>/acquire/staging` | |
-| `acquire.prefer` **D** | `TRACKSIDE_ACQUIRE__PREFER` | `["soulseek", "ytdlp"]` | provider order bonus |
+| `acquire.prefer` **D** | `TRACKSIDE_ACQUIRE__PREFER` | `["ytdlp"]` | provider order bonus |
 | `acquire.search_timeout` | `TRACKSIDE_ACQUIRE__SEARCH_TIMEOUT` | `"8s"` | per provider |
 | `acquire.max_file_bytes` | `TRACKSIDE_ACQUIRE__MAX_FILE_BYTES` | `"1GiB"` | |
 | `acquire.member_daily` **D** | `TRACKSIDE_ACQUIRE__MEMBER_DAILY` | `50` | |
@@ -2056,6 +2032,7 @@ The server starts with no file at all: data in the platform default directory, l
 | `acquire.fetched_keep` **D** | `TRACKSIDE_ACQUIRE__FETCHED_KEEP` | `500` | songs played without being kept that stay fetched |
 | `acquire.fetched_max_bytes` **D** | `TRACKSIDE_ACQUIRE__FETCHED_MAX_BYTES` | `"20GiB"` | the most those songs may take |
 | `acquire.reject_words` | `TRACKSIDE_ACQUIRE__REJECT_WORDS` | list in 9.1 | |
+| `acquire.min_bitrate` | `TRACKSIDE_ACQUIRE__MIN_BITRATE` | `256` | kbps below which lossy candidates are skipped |
 | `acquire.path_template` | `TRACKSIDE_ACQUIRE__PATH_TEMPLATE` | see 9 | |
 | `acquire.ytdlp.enabled` **D** | `TRACKSIDE_ACQUIRE__YTDLP__ENABLED` | `false` | |
 | `acquire.ytdlp.path` | `TRACKSIDE_ACQUIRE__YTDLP__PATH` | `<data>/bin/yt-dlp`, else `yt-dlp` on PATH | |
@@ -2064,14 +2041,6 @@ The server starts with no file at all: data in the platform default directory, l
 | `acquire.ytdlp.concurrency` | `TRACKSIDE_ACQUIRE__YTDLP__CONCURRENCY` | `2` | |
 | `acquire.ytdlp.search_rate` | `TRACKSIDE_ACQUIRE__YTDLP__SEARCH_RATE` | `"10/1m"` | |
 | `acquire.ytdlp.max_age_days` | `TRACKSIDE_ACQUIRE__YTDLP__MAX_AGE_DAYS` | `60` | outdated warning |
-| `acquire.soulseek.enabled` **D** | `TRACKSIDE_ACQUIRE__SOULSEEK__ENABLED` | `false` | |
-| `acquire.soulseek.url` **D** | `TRACKSIDE_ACQUIRE__SOULSEEK__URL` | unset | e.g. `http://slskd:5030` |
-| `acquire.soulseek.api_key` | `TRACKSIDE_ACQUIRE__SOULSEEK__API_KEY` / `_FILE` | unset | |
-| `acquire.soulseek.downloads_dir` | `TRACKSIDE_ACQUIRE__SOULSEEK__DOWNLOADS_DIR` | unset | slskd's downloads, as mounted here |
-| `acquire.soulseek.concurrency` | `TRACKSIDE_ACQUIRE__SOULSEEK__CONCURRENCY` | `3` | |
-| `acquire.soulseek.search_timeout` | `TRACKSIDE_ACQUIRE__SOULSEEK__SEARCH_TIMEOUT` | `"15s"` | |
-| `acquire.soulseek.stall_timeout` | `TRACKSIDE_ACQUIRE__SOULSEEK__STALL_TIMEOUT` | `"120s"` | |
-| `acquire.soulseek.min_bitrate` | `TRACKSIDE_ACQUIRE__SOULSEEK__MIN_BITRATE` | `256` | kbps for lossy candidates |
 | `enrichment.musicbrainz` **D** | `TRACKSIDE_ENRICHMENT__MUSICBRAINZ` | `false` | tag lookups for acquired files |
 | `enrichment.lastfm_api_key` **D** | `TRACKSIDE_ENRICHMENT__LASTFM_API_KEY` / `_FILE` | unset | one server-wide Last.fm key for suggestions (section 5, Suggestions and enrichment); secret, write-only in the dashboard |
 
@@ -2183,7 +2152,7 @@ host running the server, and the user's network reputation when acquisition is o
 | Stolen device key | that user's library and data | long-lived access | keys listed with last use and IP, one-click revoke, no admin scope, media tokens bound to the device epoch |
 | Network observer on plain HTTP | traffic | credential and token theft | passwords, keys, the plain session cookie and setup, invite, reset and pairing secrets are refused over plain HTTP from addresses that aren't nearby (`403 https_required`, api.md section 1); the docs, and Tracks' server form, warn about plain HTTP addresses; media tokens expire; legacy MD5 auth is opt-in |
 | Malicious file in the library | tag parser, image decoder | parser crash, memory exhaustion, hang | lofty and image are pure Rust; per-file timeout and quarantine; `catch_unwind` around parsing; image dimension cap (12k by 12k) before decode |
-| Malicious peer or video (acquisition) | files in staging | path traversal, non-audio payloads, decoder exploits | canonical path checks, magic-byte allowlist, size limits, full decode in an ffmpeg subprocess, names built from sanitised tags |
+| Malicious video (acquisition) | files in staging | path traversal, non-audio payloads, decoder exploits | canonical path checks, magic-byte allowlist, size limits, full decode in an ffmpeg subprocess, names built from sanitised tags |
 | Compromised yt-dlp release | runs as the server user | code execution | hash-checked updates from the official release, disabled by default, runs with the server's privileges only (non-root, read-only music in the shipped configs), optional `acquire.ytdlp.path` to a sandboxed wrapper |
 | Reverse proxy | forwarding headers | IP spoofing | forwarding headers ignored unless the peer is in `trusted_proxies` |
 | Dashboard in a browser | admin API | CSRF, XSS | SameSite=Strict cookie, custom CSRF header, Origin check, strict CSP (`default-src 'self'`), no inline scripts, all text inserted with `textContent` |
@@ -2286,11 +2255,9 @@ x86 NAS with the library on spinning disks and the data directory on SSD. Librar
 | Network filesystems deliver no events | | Periodic quick scans regardless of watching. |
 | Secret key lost | missing file with existing users | New key generated; app passwords and pending pairings stop working and are marked so in the dashboard; everything else continues. |
 | Corrupt database | `integrity_check` in `trackside check`, open errors | Server refuses to start with the error and the newest backup's name; `trackside backup restore`. |
-| slskd down or not configured | health check, connection errors | Provider unhealthy; searches skip it; jobs that need it retry with backoff, then `provider_unavailable`. |
 | yt-dlp missing or outdated | `--version` at start and daily | Provider unhealthy or "outdated" in the dashboard with an update button; image pins a known-good version. |
-| YouTube throttling or bot checks | output patterns, 429 or 403 | Provider cooldown, 15 min doubling to 6 h; next candidate from another provider; hint to add cookies. |
+| YouTube throttling or bot checks | output patterns, 429 or 403 | Provider cooldown, 15 min doubling to 6 h; the job retries with backoff; hint to add cookies. |
 | Partial downloads | size, decode check | `.part` files resumed (`--continue`) on retry or rejected by verification; janitor removes leftovers after 24 h. |
-| Peer offline mid-transfer | stall timer, transfer state | Transfer cancelled, next candidate tried. |
 | Same song requested twice | `request_key` | Second request joins the first; already in the library returns the existing id at once. |
 | Acquired file is a duplicate of an existing song | digest at import | Staged file deleted, existing id returned. |
 | Restart during acquisition | expired lease | Job resumed from its state (section 9.3). |

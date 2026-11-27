@@ -110,8 +110,7 @@ the buffer fills. Turn buffering off for that path ([reverse-proxy.md](reverse-p
 
 ## A download source says "Not set up"
 
-yt-dlp needs the `acquire` image; Soulseek needs the slskd address, API key and downloads
-folder. Use `compose.acquire.yaml`, which sets all of these
+yt-dlp needs the `acquire` image. Use `compose.acquire.yaml`, which switches to it
 ([acquisition.md](acquisition.md#not-set-up)).
 
 ## Disk full

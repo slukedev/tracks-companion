@@ -1,6 +1,7 @@
 # ADR-0006: Optional acquisition through yt-dlp and slskd providers
 
 **Status:** Accepted (supersedes the earlier draft decision to exclude external acquisition)
+**Amended:** 2026-11-27, the slskd provider was removed; yt-dlp is the only provider.
 **Date:** 2026-11-14
 **Deciders:** Tracks maintainer
 

@@ -14,7 +14,7 @@ Guides for people hosting the server. New here? Start with the
 | [upgrading.md](upgrading.md) | upgrade checklist, downgrading, building from main |
 | [troubleshooting.md](troubleshooting.md) | when something doesn't work |
 | [configuration.md](configuration.md) | every setting |
-| [acquisition.md](acquisition.md) | the optional request feature, slskd and yt-dlp |
+| [acquisition.md](acquisition.md) | the optional request feature and yt-dlp |
 
 For contributors and maintainers: [contributing.md](contributing.md) and
 [releasing.md](releasing.md).

@@ -93,7 +93,7 @@ change both together.
 |---|---|---|
 | Base images, ffmpeg, Deno, alpine | `ARG` lines at the top of `packaging/docker/Dockerfile` | `docker buildx imagetools inspect <image>:<tag>` and copy `Digest` |
 | yt-dlp | `YTDLP_VERSION` and the two `YTDLP_SHA256_*` lines | the release's `SHA2-256SUMS`, lines for `yt-dlp_linux.zip` and `yt-dlp_linux_aarch64.zip` |
-| slskd, Tailscale | `packaging/compose.acquire.yaml`, `packaging/compose.tailscale.yaml` | `docker buildx imagetools inspect` |
+| Tailscale | `packaging/compose.tailscale.yaml` | `docker buildx imagetools inspect` |
 | ffmpeg in CI | `FFMPEG_IMAGE` in `ci.yml` | same digest as the Dockerfile |
 | Rust | `rust-toolchain.toml` and `RUST_VERSION` in the Dockerfile | both together; CI checks they match |
 | GitHub Actions, including `docker/setup-buildx-action` and `docker/build-push-action` | `uses:` lines in the workflows | `git ls-remote --tags https://github.com/<owner>/<action>`, the commit of the tag (the `^{}` line for an annotated tag) |

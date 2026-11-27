@@ -138,7 +138,7 @@ The [quick start in the README](../../README.md#quick-start) uses
 | File | Adds |
 |---|---|
 | [`compose.build.yaml`](../../packaging/compose.build.yaml) | builds the image from source on this machine instead of pulling it ([above](#building-from-source-with-compose)); list it last |
-| [`compose.acquire.yaml`](../../packaging/compose.acquire.yaml) | the `acquire` image, an slskd container and the folders acquisition uses ([acquisition.md](acquisition.md)) |
+| [`compose.acquire.yaml`](../../packaging/compose.acquire.yaml) | the `acquire` image and the folder acquisition uses ([acquisition.md](acquisition.md)) |
 | [`compose.tailscale.yaml`](../../packaging/compose.tailscale.yaml) | a Tailscale container giving the server an HTTPS address on your tailnet ([remote-access.md](remote-access.md#tailscale)) |
 
 Use them with `-f`, or once in `.env`:

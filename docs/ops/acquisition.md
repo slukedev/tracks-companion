@@ -1,23 +1,19 @@
 # Acquisition
 
 Acquisition lets people on your server ask for songs they don't have yet. Trackside looks for
-each one through the providers an admin has turned on, downloads the best match, checks it is
+each one through yt-dlp once an admin has turned it on, downloads the best match, checks it is
 really the song and really audio, tags it, and files it into a library you choose. The person
 who asked sees it arrive in Tracks with its final id, usually within a minute.
 
 It's off until an admin turns it on, and nothing in Tracks mentions it unless the server
 offers it to that person.
 
-There are two providers:
-
-- **yt-dlp** finds the song on YouTube and saves its audio track as it is, without
-  converting it.
-- **Soulseek**, through an [slskd](https://github.com/slskd/slskd) instance you run next to
-  Trackside. Trackside talks only to slskd's API; slskd does the peer-to-peer part.
+The provider is **yt-dlp**, which finds the song on YouTube and saves its audio track as it
+is, without converting it.
 
 There is no provider for streaming services and there won't be one.
 
-You are responsible for what you download and share under the laws where you live.
+You are responsible for what you download under the laws where you live.
 
 ## What you need
 
@@ -27,37 +23,29 @@ You are responsible for what you download and share under the laws where you liv
   [Deno](https://docs.deno.com/runtime/getting_started/installation/) yourself.
 - A writable library for acquired songs, separate from your own music so your own folders stay
   read-only.
-- For Soulseek, an slskd instance and a Soulseek account. slskd creates the account the first
-  time it signs in, if the name is free.
 
 ## Setting it up with Docker Compose
 
 [`compose.acquire.yaml`](../../packaging/compose.acquire.yaml) layers on top of the normal
-`compose.yaml`. It switches to the `acquire` image, adds an `acquired` folder as the writable
-library, and runs slskd with that folder as its only share.
+`compose.yaml`. It switches to the `acquire` image and adds an `acquired` folder as the
+writable library.
 
-1. Download it next to `compose.yaml` and make the folders, owned by the user both containers
-   run as:
+1. Download it next to `compose.yaml` and make the folder, owned by the user the container
+   runs as:
 
    ```sh
    curl -fsSLO https://raw.githubusercontent.com/slukedev/tracks-companion/main/packaging/compose.acquire.yaml
-   mkdir -p acquired slskd/app slskd/downloads
-   sudo chown -R 65532:65532 acquired slskd
+   mkdir -p acquired
+   sudo chown -R 65532:65532 acquired
    ```
 
-2. Add the settings to `.env`:
+2. Use both files on every command:
 
    ```sh
-   echo "SLSKD_API_KEY=$(openssl rand -hex 32)" >> .env
-   cat >> .env <<'EOF'
-   SOULSEEK_USERNAME=choose-a-name
-   SOULSEEK_PASSWORD=choose-a-password
-   SLSKD_WEB_PASSWORD=another-password
-   COMPOSE_FILE=compose.yaml:compose.acquire.yaml
-   EOF
+   echo "COMPOSE_FILE=compose.yaml:compose.acquire.yaml" >> .env
    ```
 
-3. Start both:
+3. Start it:
 
    ```sh
    docker compose up -d
@@ -67,47 +55,19 @@ library, and runs slskd with that folder as its only share.
 4. In the dashboard, **Libraries**, **Add Library**: name it "Acquired", folder `/acquired`,
    and mark it writable.
 
-5. On the **Requests** page, choose that library, turn on the providers you want, and turn
-   acquisition on. The page shows whether each provider is healthy.
+5. On the **Requests** page, choose that library, turn on yt-dlp, and turn acquisition on.
+   The page shows whether yt-dlp is healthy.
 
 6. Decide who may ask: admins always can; for members it's a per-person permission on the
    **Users** page.
 
-slskd's own web page is at `http://localhost:5030` on the server (sign in as `slskd` with
-`SLSKD_WEB_PASSWORD`). It's published on localhost only. Use it to check that slskd is
-connected to Soulseek and what it's sharing.
-
 ## "Not set up"
 
-The **Requests** page shows a source as **Not set up** when this install is missing what it
+The **Requests** page shows yt-dlp as **Not set up** when this install is missing what it
 needs, and **Not reachable** when it is set up but failing.
 
-- **yt-dlp**, "Needs the acquire image": the default `standard` image can't run yt-dlp, and
-  **Check for Update** can't fix that. Switch to the `acquire` image with
-  `compose.acquire.yaml` as above.
-- **Soulseek**, "Missing: ...": set the slskd address and API key on the **Requests** page,
-  and `acquire.soulseek.downloads_dir` in the config file (it's slskd's downloads folder as
-  Trackside sees it). `compose.acquire.yaml` sets all three.
-
-## What slskd shares
-
-slskd shares the folders it's told to, and Soulseek works on the understanding that people
-share. The shipped compose file gives slskd exactly one share: the `acquired` folder, mounted
-read-only. Your own music isn't mounted into slskd at all, so it can't be shared by mistake.
-
-Keep it that way. If you'd rather share nothing, slskd still downloads, but some peers will
-refuse to upload to someone who shares nothing.
-
-To check, open slskd's web page and look under Shares, or:
-
-```sh
-curl -s -H "X-API-Key: $SLSKD_API_KEY" http://localhost:5030/api/v0/shares
-```
-
-It should list one share, `/share`.
-
-Port 50300 is published for incoming peer connections. Forwarding it on your router is optional
-and only makes more transfers succeed.
+"Needs the acquire image" means the default `standard` image can't run yt-dlp, and **Check for
+Update** can't fix that. Switch to the `acquire` image with `compose.acquire.yaml` as above.
 
 ## yt-dlp
 
@@ -126,7 +86,7 @@ To go back to the image's copy, delete `<data>/bin/yt-dlp`.
 
 When YouTube asks yt-dlp to prove it isn't a bot, or answers with 429 or 403, Trackside stops
 using yt-dlp for 15 minutes, then 30, and so on up to 6 hours, and the dashboard says so.
-Requests use the other provider meanwhile. Trackside doesn't try to get around these checks.
+Requests wait and try again meanwhile. Trackside doesn't try to get around these checks.
 
 If it keeps happening, give yt-dlp the cookies of a signed-in browser session. Export them in
 Netscape format (yt-dlp's
@@ -156,6 +116,7 @@ services:
 | `acquire.member_active` | 5 | requests per member in progress at once |
 | `acquire.global_daily` | 500 | requests for the whole server per day |
 | `acquire.max_file_bytes` | `"1GiB"` | larger files are skipped |
+| `acquire.min_bitrate` | 256 | lossy files below this many kbps are skipped |
 | `acquire.instant_play` | false | let yt-dlp results play while they download |
 
 Admins aren't limited per person. Asking for a song that's already in the library, or that
@@ -180,8 +141,7 @@ away, nothing is removed until it is back.
 Every file is checked before it reaches a library: it must be a regular file inside the
 staging folder, its first bytes must be one of FLAC, MP3, AAC or ALAC in MP4 without video, Ogg,
 WAV or AIFF, its length must match the song, and ffmpeg must decode it end to end without
-errors. Anything else is deleted. File names come from the tags, never from the uploader or
-peer.
+errors. Anything else is deleted. File names come from the tags, never from the uploader.
 
 Downloads in progress live in `<data>/acquire/staging/`, and leftovers are cleaned up within a
 day. A restart picks up where each request was.
@@ -190,5 +150,5 @@ day. A restart picks up where each request was.
 
 Turn acquisition off on the **Requests** page, or set `TRACKSIDE_ACQUIRE__ENABLED=false`.
 Requests in progress stop and Tracks hides the feature. Songs already acquired stay in their
-library. To remove slskd too, take `compose.acquire.yaml` out of `COMPOSE_FILE` and run
-`docker compose up -d --remove-orphans`.
+library. To go back to the standard image, take `compose.acquire.yaml` out of `COMPOSE_FILE`
+and run `docker compose up -d`.

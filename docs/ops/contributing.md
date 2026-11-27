@@ -90,5 +90,5 @@ setup token, the healthcheck and the tools that variant ships.
 Self-hosters read `README.md` and `docs/ops/`. Keep them in step with what the
 server does: a new config key goes in [configuration.md](configuration.md), a new failure
 someone can hit goes in [troubleshooting.md](troubleshooting.md). Write plainly, for someone
-who runs a home server but doesn't read Rust. Provider names (yt-dlp, Soulseek, slskd) appear
+who runs a home server but doesn't read Rust. Provider names (yt-dlp) appear
 only in the server's acquisition docs and dashboard page, never in Tracks or its README.

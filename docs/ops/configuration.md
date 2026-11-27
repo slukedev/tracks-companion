@@ -23,10 +23,9 @@ The command line has two options, both also usable as environment variables:
 Environment names are `TRACKSIDE_` and the key in capitals with `__` between levels:
 `scanner.quick_interval` is `TRACKSIDE_SCANNER__QUICK_INTERVAL`. The exceptions are
 `TRACKSIDE_DATA_DIR`, `TRACKSIDE_MUSIC_DIR`, `TRACKSIDE_CACHE_DIR`, `TRACKSIDE_ADMIN_USERNAME`
-and `TRACKSIDE_ADMIN_PASSWORD`. The three keys that hold a secret (`auth.admin_password`,
-`acquire.soulseek.api_key`, `enrichment.lastfm_api_key`) also accept `<NAME>_FILE`, a path to
-read the value from, which is how Docker secrets work. If both are set, the plain variable
-wins and the log warns.
+and `TRACKSIDE_ADMIN_PASSWORD`. The two keys that hold a secret (`auth.admin_password` and
+`enrichment.lastfm_api_key`) also accept `<NAME>_FILE`, a path to read the value from, which is
+how Docker secrets work. If both are set, the plain variable wins and the log warns.
 
 Value formats, in the file and the environment:
 
@@ -75,6 +74,12 @@ An unknown key in the file, or an unknown `TRACKSIDE_*` variable, is a warning (
 `config show` and in the log at start), not an error, so a typo doesn't stop the server; check
 the warnings after editing. A value that can't be read, such as `"30 seconds"` for a duration,
 is an error naming the key, and the server doesn't start.
+
+A key that an earlier version read is accepted and ignored, with one warning naming it, so an
+upgrade doesn't stop the server. The `acquire.soulseek.*` keys of the removed Soulseek provider
+are such keys, as are their `TRACKSIDE_ACQUIRE__SOULSEEK__*` variables and
+`TRACKSIDE_ACQUIRE__SOULSEEK__API_KEY_FILE`. `acquire.soulseek.min_bitrate` still counts: it
+sets `acquire.min_bitrate` when that isn't set.
 
 `trackside check` loads the configuration the same way and also checks the data folder and the
 database, without starting the server.
@@ -242,7 +247,7 @@ keep = 14
 | `acquire.enabled` **D** | `TRACKSIDE_ACQUIRE__ENABLED` | `false` | master switch |
 | `acquire.library` **D** | `TRACKSIDE_ACQUIRE__LIBRARY` | unset | pid or root path of the writable acquired library |
 | `acquire.staging_dir` | `TRACKSIDE_ACQUIRE__STAGING_DIR` | `<data>/acquire/staging` | |
-| `acquire.prefer` **D** | `TRACKSIDE_ACQUIRE__PREFER` | `["soulseek", "ytdlp"]` | provider order bonus |
+| `acquire.prefer` **D** | `TRACKSIDE_ACQUIRE__PREFER` | `["ytdlp"]` | provider order bonus |
 | `acquire.search_timeout` | `TRACKSIDE_ACQUIRE__SEARCH_TIMEOUT` | `"8s"` | per provider |
 | `acquire.max_file_bytes` | `TRACKSIDE_ACQUIRE__MAX_FILE_BYTES` | `"1GiB"` | |
 | `acquire.member_daily` **D** | `TRACKSIDE_ACQUIRE__MEMBER_DAILY` | `50` | |
@@ -252,6 +257,7 @@ keep = 14
 | `acquire.fetched_keep` **D** | `TRACKSIDE_ACQUIRE__FETCHED_KEEP` | `500` | songs played without being kept that stay for replays |
 | `acquire.fetched_max_bytes` **D** | `TRACKSIDE_ACQUIRE__FETCHED_MAX_BYTES` | `"20GiB"` | the most those songs may take |
 | `acquire.reject_words` | `TRACKSIDE_ACQUIRE__REJECT_WORDS` | `live`, `remix`, `karaoke`, `instrumental`, `cover`, `nightcore`, `sped up`, `slowed`, `8d`, `reverb`, `acapella`, `tribute` | |
+| `acquire.min_bitrate` | `TRACKSIDE_ACQUIRE__MIN_BITRATE` | `256` | kbps below which lossy candidates are skipped |
 | `acquire.path_template` | `TRACKSIDE_ACQUIRE__PATH_TEMPLATE` | `"{album_artist}/{album}/{disc}-{track:02} {title}.{ext}"`, or `{artist}/Singles/{title}.{ext}` without an album | |
 | `acquire.ytdlp.enabled` **D** | `TRACKSIDE_ACQUIRE__YTDLP__ENABLED` | `false` | |
 | `acquire.ytdlp.path` | `TRACKSIDE_ACQUIRE__YTDLP__PATH` | `<data>/bin/yt-dlp`, else `yt-dlp` on PATH | |
@@ -260,14 +266,6 @@ keep = 14
 | `acquire.ytdlp.concurrency` | `TRACKSIDE_ACQUIRE__YTDLP__CONCURRENCY` | `2` | |
 | `acquire.ytdlp.search_rate` | `TRACKSIDE_ACQUIRE__YTDLP__SEARCH_RATE` | `"10/1m"` | |
 | `acquire.ytdlp.max_age_days` | `TRACKSIDE_ACQUIRE__YTDLP__MAX_AGE_DAYS` | `60` | outdated warning |
-| `acquire.soulseek.enabled` **D** | `TRACKSIDE_ACQUIRE__SOULSEEK__ENABLED` | `false` | |
-| `acquire.soulseek.url` **D** | `TRACKSIDE_ACQUIRE__SOULSEEK__URL` | unset | e.g. `http://slskd:5030` |
-| `acquire.soulseek.api_key` | `TRACKSIDE_ACQUIRE__SOULSEEK__API_KEY` / `_FILE` | unset | |
-| `acquire.soulseek.downloads_dir` | `TRACKSIDE_ACQUIRE__SOULSEEK__DOWNLOADS_DIR` | unset | slskd's downloads, as mounted here |
-| `acquire.soulseek.concurrency` | `TRACKSIDE_ACQUIRE__SOULSEEK__CONCURRENCY` | `3` | |
-| `acquire.soulseek.search_timeout` | `TRACKSIDE_ACQUIRE__SOULSEEK__SEARCH_TIMEOUT` | `"15s"` | |
-| `acquire.soulseek.stall_timeout` | `TRACKSIDE_ACQUIRE__SOULSEEK__STALL_TIMEOUT` | `"120s"` | |
-| `acquire.soulseek.min_bitrate` | `TRACKSIDE_ACQUIRE__SOULSEEK__MIN_BITRATE` | `256` | kbps for lossy candidates |
 
 ### enrichment
 
