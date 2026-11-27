@@ -301,6 +301,11 @@ pub const KEYS: &[KeyInfo] = &[
         CommaList,
     ),
     key(
+        "acquire.min_bitrate",
+        "TRACKSIDE_ACQUIRE__MIN_BITRATE",
+        Integer,
+    ),
+    key(
         "acquire.path_template",
         "TRACKSIDE_ACQUIRE__PATH_TEMPLATE",
         Text,
@@ -337,45 +342,6 @@ pub const KEYS: &[KeyInfo] = &[
         Integer,
     ),
     dash(
-        "acquire.soulseek.enabled",
-        "TRACKSIDE_ACQUIRE__SOULSEEK__ENABLED",
-        Bool,
-    ),
-    dash(
-        "acquire.soulseek.url",
-        "TRACKSIDE_ACQUIRE__SOULSEEK__URL",
-        Text,
-    ),
-    secret(
-        "acquire.soulseek.api_key",
-        "TRACKSIDE_ACQUIRE__SOULSEEK__API_KEY",
-    ),
-    key(
-        "acquire.soulseek.downloads_dir",
-        "TRACKSIDE_ACQUIRE__SOULSEEK__DOWNLOADS_DIR",
-        Text,
-    ),
-    key(
-        "acquire.soulseek.concurrency",
-        "TRACKSIDE_ACQUIRE__SOULSEEK__CONCURRENCY",
-        Integer,
-    ),
-    key(
-        "acquire.soulseek.search_timeout",
-        "TRACKSIDE_ACQUIRE__SOULSEEK__SEARCH_TIMEOUT",
-        Text,
-    ),
-    key(
-        "acquire.soulseek.stall_timeout",
-        "TRACKSIDE_ACQUIRE__SOULSEEK__STALL_TIMEOUT",
-        Text,
-    ),
-    key(
-        "acquire.soulseek.min_bitrate",
-        "TRACKSIDE_ACQUIRE__SOULSEEK__MIN_BITRATE",
-        Integer,
-    ),
-    dash(
         "enrichment.musicbrainz",
         "TRACKSIDE_ENRICHMENT__MUSICBRAINZ",
         Bool,
@@ -389,11 +355,150 @@ pub const KEYS: &[KeyInfo] = &[
     },
 ];
 
+/// A key an earlier version read. It is accepted and ignored with a warning, or its value
+/// moves to the key that replaced it when that one is not set (docs/ops/releasing.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RetiredKey {
+    pub key: &'static str,
+    pub env: &'static str,
+    /// Was also read from `<env>_FILE`.
+    pub secret: bool,
+    /// The key that took over its value, if any.
+    pub moved_to: Option<&'static str>,
+    /// Why it went, when nothing took over.
+    pub reason: &'static str,
+}
+
+const SOULSEEK_REMOVED: &str = "Soulseek support was removed";
+
+const fn soulseek(key: &'static str, env: &'static str) -> RetiredKey {
+    RetiredKey {
+        key,
+        env,
+        secret: false,
+        moved_to: None,
+        reason: SOULSEEK_REMOVED,
+    }
+}
+
+/// Every retired key.
+pub const RETIRED_KEYS: &[RetiredKey] = &[
+    soulseek(
+        "acquire.soulseek.enabled",
+        "TRACKSIDE_ACQUIRE__SOULSEEK__ENABLED",
+    ),
+    soulseek("acquire.soulseek.url", "TRACKSIDE_ACQUIRE__SOULSEEK__URL"),
+    RetiredKey {
+        secret: true,
+        ..soulseek(
+            "acquire.soulseek.api_key",
+            "TRACKSIDE_ACQUIRE__SOULSEEK__API_KEY",
+        )
+    },
+    soulseek(
+        "acquire.soulseek.downloads_dir",
+        "TRACKSIDE_ACQUIRE__SOULSEEK__DOWNLOADS_DIR",
+    ),
+    soulseek(
+        "acquire.soulseek.concurrency",
+        "TRACKSIDE_ACQUIRE__SOULSEEK__CONCURRENCY",
+    ),
+    soulseek(
+        "acquire.soulseek.search_timeout",
+        "TRACKSIDE_ACQUIRE__SOULSEEK__SEARCH_TIMEOUT",
+    ),
+    soulseek(
+        "acquire.soulseek.stall_timeout",
+        "TRACKSIDE_ACQUIRE__SOULSEEK__STALL_TIMEOUT",
+    ),
+    RetiredKey {
+        moved_to: Some("acquire.min_bitrate"),
+        ..soulseek(
+            "acquire.soulseek.min_bitrate",
+            "TRACKSIDE_ACQUIRE__SOULSEEK__MIN_BITRATE",
+        )
+    },
+];
+
 /// Environment variables the server reads that are not configuration keys.
 const OTHER_ENV: &[&str] = &["TRACKSIDE_CONFIG"];
 
 fn info(key: &str) -> Option<&'static KeyInfo> {
     KEYS.iter().find(|k| k.key == key)
+}
+
+fn retired(key: &str) -> Option<&'static RetiredKey> {
+    RETIRED_KEYS.iter().find(|k| k.key == key)
+}
+
+fn is_section(dotted: &str) -> bool {
+    let prefix = format!("{dotted}.");
+    KEYS.iter().any(|k| k.key.starts_with(&prefix))
+        || RETIRED_KEYS.iter().any(|k| k.key.starts_with(&prefix))
+}
+
+/// A retired key found while layering, with its value when another key takes it over.
+struct FoundRetired {
+    key: &'static RetiredKey,
+    value: Option<Value>,
+    source: ConfigSource,
+}
+
+/// The value of a retired key whose value moved, as the new key's kind.
+fn moved_value(key: &RetiredKey, text: &str) -> Result<Option<Value>, ConfigError> {
+    let Some(target) = key.moved_to.and_then(info) else {
+        return Ok(None);
+    };
+    parse_value(
+        &KeyInfo {
+            key: key.key,
+            ..*target
+        },
+        text,
+    )
+    .map(Some)
+}
+
+/// Moves retired values to their new keys where those are unset, and warns once per retired
+/// key.
+fn apply_retired(base: &mut Table, found: &[FoundRetired], report: &mut ConfigReport) {
+    for key in RETIRED_KEYS {
+        let uses: Vec<&FoundRetired> = found.iter().filter(|f| f.key == key).collect();
+        // Layers run from lowest to highest precedence, so the last use wins.
+        let Some(winner) = uses.last() else {
+            continue;
+        };
+        let mut places: Vec<String> = Vec::new();
+        for place in uses.iter().map(|f| match f.source {
+            ConfigSource::File => String::from("the configuration file"),
+            ConfigSource::Env => format!("the environment ({})", key.env),
+            ConfigSource::Override | ConfigSource::Default => String::from("the command line"),
+        }) {
+            if !places.contains(&place) {
+                places.push(place);
+            }
+        }
+        let places = places.join(" and ");
+        let warning = match (key.moved_to, &winner.value) {
+            (Some(new), Some(value)) if report.source(new) == ConfigSource::Default => {
+                set(base, new, value.clone());
+                report.sources.insert(new, winner.source);
+                format!(
+                    "{} is deprecated and sets {new}; rename it in {places}",
+                    key.key
+                )
+            }
+            (Some(new), _) => format!(
+                "{} is deprecated and ignored because {new} is set; remove it from {places}",
+                key.key
+            ),
+            (None, _) => format!(
+                "{} is deprecated and ignored ({}); remove it from {places}",
+                key.key, key.reason
+            ),
+        };
+        report.warnings.push(warning);
+    }
 }
 
 fn invalid(key: &str, message: impl Into<String>) -> ConfigError {
@@ -474,7 +579,13 @@ fn get<'a>(table: &'a Table, key: &str) -> Option<&'a Value> {
 
 /// Copies the file's values over the defaults, recording each known key and warning about
 /// unknown ones.
-fn layer_file(base: &mut Table, file: &Table, prefix: &str, report: &mut ConfigReport) {
+fn layer_file(
+    base: &mut Table,
+    file: &Table,
+    prefix: &str,
+    report: &mut ConfigReport,
+    found: &mut Vec<FoundRetired>,
+) {
     for (name, value) in file {
         let dotted = if prefix.is_empty() {
             name.clone()
@@ -484,12 +595,16 @@ fn layer_file(base: &mut Table, file: &Table, prefix: &str, report: &mut ConfigR
         if let Some(info) = info(&dotted) {
             set(base, info.key, value.clone());
             report.sources.insert(info.key, ConfigSource::File);
+        } else if let Some(key) = retired(&dotted) {
+            found.push(FoundRetired {
+                key,
+                value: key.moved_to.map(|_| value.clone()),
+                source: ConfigSource::File,
+            });
         } else if let Value::Table(inner) = value
-            && KEYS
-                .iter()
-                .any(|k| k.key.starts_with(&format!("{dotted}.")))
+            && is_section(&dotted)
         {
-            layer_file(base, inner, &dotted, report);
+            layer_file(base, inner, &dotted, report, found);
         } else {
             report.warnings.push(format!(
                 "unknown configuration key {dotted:?} in the file is ignored"
@@ -521,6 +636,7 @@ fn layer_env(
     base: &mut Table,
     env: &[(String, String)],
     report: &mut ConfigReport,
+    found: &mut Vec<FoundRetired>,
 ) -> Result<(), ConfigError> {
     for info in KEYS {
         let direct = env_value(env, info.env).filter(|v| !v.is_empty());
@@ -552,12 +668,31 @@ fn layer_env(
         set(base, info.key, parse_value(info, &text)?);
         report.sources.insert(info.key, ConfigSource::Env);
     }
+    for key in RETIRED_KEYS {
+        let direct = env_value(env, key.env).filter(|v| !v.is_empty());
+        let from_file = key.secret
+            && env_value(env, &format!("{}_FILE", key.env)).is_some_and(|v| !v.is_empty());
+        if direct.is_none() && !from_file {
+            continue;
+        }
+        found.push(FoundRetired {
+            key,
+            value: direct
+                .map(|text| moved_value(key, text))
+                .transpose()?
+                .flatten(),
+            source: ConfigSource::Env,
+        });
+    }
     for (name, _) in env {
         if !name.starts_with("TRACKSIDE_") {
             continue;
         }
         let known = OTHER_ENV.contains(&name.as_str())
             || KEYS
+                .iter()
+                .any(|k| k.env == name || (k.secret && format!("{}_FILE", k.env) == *name))
+            || RETIRED_KEYS
                 .iter()
                 .any(|k| k.env == name || (k.secret && format!("{}_FILE", k.env) == *name));
         if !known {
@@ -573,8 +708,17 @@ fn layer_overrides(
     base: &mut Table,
     overrides: &[(String, String)],
     report: &mut ConfigReport,
+    found: &mut Vec<FoundRetired>,
 ) -> Result<(), ConfigError> {
     for (key, text) in overrides {
+        if let Some(old) = retired(key.trim()) {
+            found.push(FoundRetired {
+                key: old,
+                value: moved_value(old, text)?,
+                source: ConfigSource::Override,
+            });
+            continue;
+        }
         let info = info(key.trim()).ok_or_else(|| invalid(key, "no such configuration key"))?;
         set(base, info.key, parse_value(info, text)?);
         report.sources.insert(info.key, ConfigSource::Override);
@@ -627,11 +771,13 @@ pub fn load_config(sources: &super::ConfigSources) -> Result<(Config, ConfigRepo
         return Err(invalid("defaults", "not a table"));
     };
     let mut report = ConfigReport::default();
+    let mut retired = Vec::new();
     if let Some(file) = &file {
-        layer_file(&mut base, file, "", &mut report);
+        layer_file(&mut base, file, "", &mut report, &mut retired);
     }
-    layer_env(&mut base, &sources.env, &mut report)?;
-    layer_overrides(&mut base, &sources.overrides, &mut report)?;
+    layer_env(&mut base, &sources.env, &mut report, &mut retired)?;
+    layer_overrides(&mut base, &sources.overrides, &mut report, &mut retired)?;
+    apply_retired(&mut base, &retired, &mut report);
     let mut config: Config = Value::Table(base)
         .try_into()
         .map_err(|e: toml::de::Error| {

@@ -179,7 +179,7 @@ mod tests {
     }
 
     fn client() -> reqwest::Client {
-        crate::slskd::http_client().unwrap()
+        crate::net::http_client().unwrap()
     }
 
     #[tokio::test]

@@ -31,7 +31,7 @@ use trackside_media::{HlsInput, Media, MediaError, Priority, Profile};
 
 use crate::limits::{Cooldown, TokenBucket};
 use crate::provider::{
-    Candidate, Provider, ProviderHealth, ProviderName, ProviderSettings, SearchQuery, SourceHints,
+    Candidate, Provider, ProviderHealth, ProviderName, SearchQuery, SourceHints,
 };
 use crate::rank::{RankOptions, Ranked, quality_of, rank, tolerance_ms};
 use crate::store::{self, TargetLibrary};
@@ -361,24 +361,17 @@ impl Acquirer {
         let slots = deps
             .providers
             .into_iter()
-            .map(|provider| {
+            .filter_map(|provider| {
                 let (enabled, concurrency, rate) = match provider.name() {
                     ProviderName::Ytdlp => (
                         config.ytdlp.enabled,
                         config.ytdlp.concurrency,
                         config.ytdlp.search_rate,
                     ),
-                    ProviderName::Soulseek => (
-                        config.soulseek.enabled,
-                        config.soulseek.concurrency,
-                        Rate {
-                            count: 1,
-                            per: Duration::from_secs(3),
-                        },
-                    ),
+                    ProviderName::Retired => return None,
                 };
                 let concurrency = concurrency.max(1);
-                Slot {
+                Some(Slot {
                     provider,
                     enabled: AtomicBool::new(enabled),
                     concurrency: AtomicU32::new(concurrency),
@@ -387,7 +380,7 @@ impl Acquirer {
                     cooldown: Mutex::new(Cooldown::default()),
                     health: Mutex::new((ProviderHealth::Ok { version: None }, None)),
                     stats: Mutex::new(DayStats::default()),
-                }
+                })
             })
             .collect();
         let external_dir = deps.data_dir.as_deref().map_or_else(
@@ -504,7 +497,7 @@ impl Inner {
             reject_words: self.config.reject_words.clone(),
             prefer: self.live().prefer,
             max_file_bytes: self.config.max_file_bytes,
-            min_lossy_kbps: self.config.soulseek.min_bitrate,
+            min_lossy_kbps: self.config.min_bitrate,
         }
     }
 
@@ -571,14 +564,6 @@ impl Inner {
                 get(&provider_key(slot.name(), "concurrency")).and_then(serde_json::Value::as_u64)
             {
                 resize(slot, v as u32);
-            }
-            if let Some(url) =
-                get(&provider_key(slot.name(), "url")).and_then(serde_json::Value::as_str)
-            {
-                let _ = slot.provider.reconfigure(&ProviderSettings {
-                    url: Some(url.to_owned()),
-                    api_key: None,
-                });
             }
         }
     }
@@ -764,28 +749,12 @@ pub(crate) fn quality_of_row(c: &CandidateRow) -> Quality {
 /// A stored candidate as the fetch code needs it. Hints are only for ranking, so they are
 /// rebuilt from the reference.
 pub(crate) fn candidate_of_row(row: &CandidateRow) -> Option<Candidate> {
-    let provider = ProviderName::parse(&row.provider)?;
-    let text = |key: &str| {
-        row.provider_ref
-            .get(key)
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("")
-            .to_owned()
-    };
-    let hints = match provider {
-        ProviderName::Ytdlp => SourceHints::Video {
-            uploader: String::new(),
-            topic_channel: false,
-            official: false,
-            music_video: false,
-        },
-        ProviderName::Soulseek => SourceHints::Peer {
-            username: text("username"),
-            folder: String::new(),
-            free_slot: false,
-            queue_length: 0,
-            upload_speed: 0,
-        },
+    let provider = ProviderName::from_stored(&row.provider)?;
+    let hints = SourceHints::Video {
+        uploader: String::new(),
+        topic_channel: false,
+        official: false,
+        music_video: false,
     };
     Some(Candidate {
         provider,
@@ -1265,6 +1234,9 @@ impl AcquireControl for Acquirer {
                         else {
                             return Ok(Decided::CandidateExpired);
                         };
+                        if ProviderName::parse(&candidate.provider).is_none() {
+                            return Ok(Decided::CandidateExpired);
+                        }
                         if new.instant && !streaming.contains(&candidate.provider) {
                             return Ok(Decided::NotInstant);
                         }
@@ -1534,24 +1506,8 @@ impl AcquireControl for Acquirer {
                     name,
                     enabled,
                     concurrency,
-                    url,
-                    api_key,
                 } => {
                     let slot = inner.slot_named(&name).ok_or(AcquireError::NotFound)?;
-                    let key_changed = api_key.is_some();
-                    if url.is_some() || api_key.is_some() {
-                        slot.provider
-                            .reconfigure(&ProviderSettings {
-                                url: url.clone(),
-                                api_key,
-                            })
-                            .map_err(|e| AcquireError::Invalid(e.to_string()))?;
-                        *lock(&slot.health) = (ProviderHealth::Ok { version: None }, None);
-                        inner.check_health(slot).await;
-                    }
-                    if let Some(url) = &url {
-                        stored.push((provider_key(slot.name(), "url"), serde_json::json!(url)));
-                    }
                     if let Some(enabled) = enabled {
                         slot.enabled.store(enabled, Ordering::Relaxed);
                         stored.push((
@@ -1577,7 +1533,6 @@ impl AcquireControl for Acquirer {
                     }
                     serde_json::json!({
                         "provider": name, "enabled": enabled, "concurrency": concurrency,
-                        "url": url, "api_key_changed": key_changed,
                     })
                 }
                 ProviderChange::Global {
@@ -1722,7 +1677,7 @@ impl AcquireControl for Acquirer {
             let task = Arc::clone(&inner);
             inner.tracker.spawn(async move {
                 let target = ytdlp::updated_binary(&data_dir);
-                let result = match crate::slskd::http_client() {
+                let result = match crate::net::http_client() {
                     Ok(client) => update::install(
                         &client,
                         &task.timing.ytdlp_release_base,
@@ -1871,7 +1826,7 @@ impl AcquireControl for Acquirer {
 fn tool_name(name: ProviderName) -> &'static str {
     match name {
         ProviderName::Ytdlp => "yt-dlp",
-        ProviderName::Soulseek => "slskd",
+        ProviderName::Retired => "a retired source",
     }
 }
 

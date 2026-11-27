@@ -12,20 +12,21 @@
     "providers": [
       {
         "configured": true,
-        "detail": "slskd 0.22.5",
+        "detail": "yt-dlp 2026.11.03",
         "enabled": true,
         "health": "ok",
-        "name": "soulseek",
+        "latest_known": "2026.11.03",
+        "name": "ytdlp",
         "settings": {
-          "concurrency": 3,
-          "url": "http://slskd:5030"
+          "concurrency": 2,
+          "search_rate": "10/1m"
         },
         "stats": {
           "failures_today": 0,
           "fetches_today": 2,
           "searches_today": 18
         },
-        "version": "0.22.5"
+        "version": "2026.11.03"
       }
     ],
     "today": 14

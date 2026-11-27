@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
-use trackside_core::config::Secret;
 use trackside_core::control::GrowingFile;
 use trackside_core::records::{Codec, Container};
 use trackside_core::{BoxFuture, Millis};
@@ -15,26 +14,38 @@ use trackside_core::{BoxFuture, Millis};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProviderName {
     Ytdlp,
-    Soulseek,
+    /// A source an earlier version had. Rows that name one still decode, so their history
+    /// lists and a file already downloaded from one still imports, but nothing fetches from it.
+    Retired,
 }
 
 impl ProviderName {
-    pub const ALL: [Self; 2] = [Self::Ytdlp, Self::Soulseek];
+    /// The providers this version has.
+    pub const ALL: [Self; 1] = [Self::Ytdlp];
+
+    /// Names earlier versions stored for sources that are gone.
+    const RETIRED: &[&str] = &["soulseek"];
 
     /// The name in configuration, the database and admin views.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Ytdlp => "ytdlp",
-            Self::Soulseek => "soulseek",
+            Self::Retired => "retired",
         }
     }
 
+    /// A provider this version has, by name.
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "ytdlp" => Some(Self::Ytdlp),
-            "soulseek" => Some(Self::Soulseek),
             _ => None,
         }
+    }
+
+    /// A name read from a stored row: [`ProviderName::parse`], or [`ProviderName::Retired`]
+    /// for a source an earlier version had.
+    pub fn from_stored(s: &str) -> Option<Self> {
+        Self::parse(s).or_else(|| Self::RETIRED.contains(&s).then_some(Self::Retired))
     }
 }
 
@@ -69,13 +80,6 @@ pub enum SourceHints {
         topic_channel: bool,
         official: bool,
         music_video: bool,
-    },
-    Peer {
-        username: String,
-        folder: String,
-        free_slot: bool,
-        queue_length: u32,
-        upload_speed: u64,
     },
 }
 
@@ -203,13 +207,6 @@ impl ProviderHealth {
     }
 }
 
-/// A dashboard change to a provider's connection settings.
-#[derive(Clone, Debug, Default)]
-pub struct ProviderSettings {
-    pub url: Option<String>,
-    pub api_key: Option<Secret>,
-}
-
 /// A source of files. Implementations honour `cancel` promptly.
 pub trait Provider: Send + Sync + std::fmt::Debug + 'static {
     fn name(&self) -> ProviderName;
@@ -269,20 +266,43 @@ pub trait Provider: Send + Sync + std::fmt::Debug + 'static {
 
     fn health(&self) -> BoxFuture<'_, ProviderHealth>;
 
-    /// Applies new connection settings from the dashboard.
-    fn reconfigure(&self, _settings: &ProviderSettings) -> Result<(), ProviderError> {
-        Err(ProviderError::Rejected(String::from(
-            "this provider has no connection settings",
-        )))
-    }
-
     /// Settings shown in the dashboard. Never secrets.
     fn settings_view(&self) -> serde_json::Value {
         serde_json::Value::Object(serde_json::Map::new())
     }
 
-    /// Whether the provider has what it needs to run (an executable, a URL).
+    /// Whether the provider has what it needs to run, such as an executable.
     fn configured(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProviderName;
+
+    #[test]
+    fn every_provider_round_trips_through_its_name() {
+        for name in ProviderName::ALL {
+            assert_eq!(ProviderName::parse(name.as_str()), Some(name));
+        }
+    }
+
+    #[test]
+    fn a_retired_source_is_not_a_provider() {
+        assert_eq!(ProviderName::parse("soulseek"), None);
+    }
+
+    #[test]
+    fn a_stored_retired_source_decodes_as_retired() {
+        assert_eq!(
+            ProviderName::from_stored("soulseek"),
+            Some(ProviderName::Retired)
+        );
+    }
+
+    #[test]
+    fn an_unknown_stored_name_does_not_decode() {
+        assert_eq!(ProviderName::from_stored("napster"), None);
     }
 }

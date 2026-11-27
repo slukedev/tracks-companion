@@ -13,8 +13,9 @@ use tokio_util::sync::CancellationToken;
 use trackside_core::config::AcquireConfig;
 use trackside_core::control::{
     AcquireControl, AcquireError, AcquireFailure, AcquireRequest, AcquisitionFilter,
-    AcquisitionState, AcquisitionView, ExternalPlayRequest, ExternalQuery, GrowState, GrowingFile,
-    HlsJobId, ImportOutcome, ProviderChange, ProviderHealthState, ScanControl,
+    AcquisitionState, AcquisitionView, AdminAcquisitionView, ExternalPlayRequest, ExternalQuery,
+    GrowState, GrowingFile, HlsJobId, ImportOutcome, ProviderChange, ProviderHealthState,
+    ScanControl,
 };
 use trackside_core::db::{DbOptions, FilesystemCheck};
 use trackside_core::ids::PublicId;
@@ -303,12 +304,7 @@ impl FreeSpace for FakeSpace {
 fn candidate(provider: ProviderName, key: &str, lossless: bool) -> Candidate {
     Candidate {
         provider,
-        provider_ref: match provider {
-            ProviderName::Ytdlp => serde_json::json!({ "id": key }),
-            ProviderName::Soulseek => {
-                serde_json::json!({ "username": "peer", "filename": key, "size": 20 })
-            }
-        },
+        provider_ref: serde_json::json!({ "id": key }),
         title: String::from("Halo"),
         artist: String::from("Beyoncé"),
         album: None,
@@ -320,20 +316,11 @@ fn candidate(provider: ProviderName, key: &str, lossless: bool) -> Candidate {
         bit_depth: None,
         lossless,
         size: Some(20),
-        hints: match provider {
-            ProviderName::Ytdlp => SourceHints::Video {
-                uploader: String::from("Beyoncé - Topic"),
-                topic_channel: true,
-                official: false,
-                music_video: false,
-            },
-            ProviderName::Soulseek => SourceHints::Peer {
-                username: String::from("peer"),
-                folder: String::from("Beyoncé\\Album"),
-                free_slot: true,
-                queue_length: 0,
-                upload_speed: 0,
-            },
+        hints: SourceHints::Video {
+            uploader: String::from("Beyoncé - Topic"),
+            topic_channel: true,
+            official: false,
+            music_video: false,
         },
     }
 }
@@ -402,7 +389,6 @@ impl World {
         let mut config = trackside_core::Config::defaults(dir.path()).acquire;
         config.enabled = true;
         config.ytdlp.enabled = true;
-        config.soulseek.enabled = true;
         config.staging_dir = dir.path().join("staging");
         let access = |user, role| Access {
             user: UserKey(user),
@@ -554,8 +540,8 @@ async fn request_for_owned_song_returns_existing_id_immediately() {
     let world = World::new().await;
     let song = world.insert_song("Halo", "Beyoncé", 201_000).await;
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "a", true)],
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
     );
     let acquirer = world.start(vec![provider.clone()]);
     let view = acquirer.request(&world.member, halo()).await.unwrap();
@@ -569,7 +555,7 @@ async fn request_for_owned_song_returns_existing_id_immediately() {
 async fn an_owned_song_with_a_different_duration_is_acquired() {
     let world = World::new().await;
     world.insert_song("Halo", "Beyoncé", 300_000).await;
-    let acquirer = world.start(vec![FakeProvider::new(ProviderName::Soulseek, Vec::new())]);
+    let acquirer = world.start(vec![FakeProvider::new(ProviderName::Ytdlp, Vec::new())]);
     let view = acquirer.request(&world.member, halo()).await.unwrap();
     assert_eq!(view.state, AcquisitionState::Queued);
 }
@@ -579,8 +565,8 @@ async fn duplicate_request_joins_the_active_one_and_does_not_count_against_quota
     let mut world = World::new().await;
     world.config.member_daily = 1;
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "a", true)],
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
     );
     provider.plan(&[Plan::Block]);
     let acquirer = world.start(vec![provider.clone()]);
@@ -611,8 +597,8 @@ async fn duplicate_request_joins_the_active_one_and_does_not_count_against_quota
 async fn joined_requests_finish_with_the_one_they_joined() {
     let world = World::new().await;
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "a", true)],
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
     );
     provider.plan(&[Plan::Block]);
     let acquirer = world.start(vec![provider.clone()]);
@@ -634,8 +620,8 @@ async fn restart_resumes_a_downloading_job_from_its_lease() {
     let db_path = dir.path().join("trackside.db");
     let world = World::with_db(Some(&db_path)).await;
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "a", true)],
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
     );
     provider.plan(&[Plan::Block]);
     let acquirer = world.start(vec![provider.clone()]);
@@ -650,8 +636,8 @@ async fn restart_resumes_a_downloading_job_from_its_lease() {
 
     let song = world.song_added();
     let again = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "a", true)],
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
     );
     let acquirer = world.start(vec![again.clone()]);
     let done = wait_for(&mut events, &view.id, is(AcquisitionState::Done)).await;
@@ -677,10 +663,10 @@ async fn acquirer_row(
 async fn failed_candidate_falls_back_to_the_next() {
     let world = World::new().await;
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
+        ProviderName::Ytdlp,
         vec![
-            candidate(ProviderName::Soulseek, "best", true),
-            candidate(ProviderName::Soulseek, "second", false),
+            candidate(ProviderName::Ytdlp, "best", true),
+            candidate(ProviderName::Ytdlp, "second", false),
         ],
     );
     provider.plan(&[Plan::Stall]);
@@ -701,17 +687,17 @@ async fn failed_candidate_falls_back_to_the_next() {
     let job = &admin.items[0];
     assert_eq!(job.candidates.len(), 2);
     assert_eq!(job.candidates[0].failure.as_deref(), Some("stalled"));
-    assert_eq!(job.provider.as_deref(), Some("soulseek"));
+    assert_eq!(job.provider.as_deref(), Some("ytdlp"));
 }
 
 #[tokio::test(start_paused = true)]
 async fn a_rejected_file_falls_back_to_the_next_candidate() {
     let world = World::new().await;
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
+        ProviderName::Ytdlp,
         vec![
-            candidate(ProviderName::Soulseek, "zip", true),
-            candidate(ProviderName::Soulseek, "good", false),
+            candidate(ProviderName::Ytdlp, "zip", true),
+            candidate(ProviderName::Ytdlp, "good", false),
         ],
     );
     provider.plan(&[Plan::Write(ZIP)]);
@@ -740,8 +726,8 @@ async fn a_rejected_file_falls_back_to_the_next_candidate() {
 async fn all_candidates_failed_retries_with_backoff() {
     let world = World::new().await;
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "a", true)],
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
     );
     provider.always(Plan::Stall);
     let acquirer = world.start(vec![provider.clone()]);
@@ -766,7 +752,7 @@ async fn all_candidates_failed_retries_with_backoff() {
 #[tokio::test(start_paused = true)]
 async fn nothing_found_fails_no_match_at_once() {
     let world = World::new().await;
-    let provider = FakeProvider::new(ProviderName::Soulseek, vec![]);
+    let provider = FakeProvider::new(ProviderName::Ytdlp, vec![]);
     let acquirer = world.start(vec![provider]);
     let mut events = world.events.subscribe();
     let view = acquirer.request(&world.member, halo()).await.unwrap();
@@ -777,9 +763,9 @@ async fn nothing_found_fails_no_match_at_once() {
 #[tokio::test(start_paused = true)]
 async fn an_unreachable_only_provider_ends_provider_unavailable_after_retries() {
     let world = World::new().await;
-    let provider = FakeProvider::new(ProviderName::Soulseek, vec![]);
+    let provider = FakeProvider::new(ProviderName::Ytdlp, vec![]);
     *provider.search_error.lock().unwrap() =
-        Some(|| ProviderError::Unavailable(String::from("cannot reach slskd")));
+        Some(|| ProviderError::Unavailable(String::from("cannot run yt-dlp")));
     let acquirer = world.start_timed(
         vec![provider],
         Timing {
@@ -797,7 +783,7 @@ async fn an_unreachable_only_provider_ends_provider_unavailable_after_retries() 
 async fn quota_exceeded_is_429_with_reset_time() {
     let mut world = World::new().await;
     world.config.member_daily = 2;
-    let provider = FakeProvider::new(ProviderName::Soulseek, vec![]);
+    let provider = FakeProvider::new(ProviderName::Ytdlp, vec![]);
     let acquirer = world.start(vec![provider]);
     let titles = ["One", "Two", "Three"];
     let mut first_at = None;
@@ -830,8 +816,8 @@ async fn the_active_quota_limits_requests_in_flight() {
     let mut world = World::new().await;
     world.config.member_active = 1;
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "a", true)],
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
     );
     provider.always(Plan::Block);
     let acquirer = world.start(vec![provider]);
@@ -852,25 +838,17 @@ async fn bot_check_puts_provider_in_cooldown() {
         vec![candidate(ProviderName::Ytdlp, "bnVUHWCynig", false)],
     );
     video.always(Plan::BotCheck);
-    let peer = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "peer-file", false)],
-    );
-    world.song_added();
-    let mut config_world = world;
-    config_world.config.prefer = vec![String::from("ytdlp"), String::from("soulseek")];
-    let world = config_world;
-    let acquirer = world.start(vec![video.clone(), peer.clone()]);
+    let acquirer = world.start(vec![video.clone()]);
     let mut events = world.events.subscribe();
     let started = world.clock.now();
     let view = acquirer.request(&world.member, halo()).await.unwrap();
-    wait_for(&mut events, &view.id, is(AcquisitionState::Done)).await;
+    let fetched = std::cell::Cell::new(false);
+    wait_for(&mut events, &view.id, |v| {
+        fetched.set(fetched.get() || v.state == AcquisitionState::Downloading);
+        fetched.get() && v.state == AcquisitionState::Queued
+    })
+    .await;
     assert_eq!(video.fetches.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        peer.fetches.load(Ordering::SeqCst),
-        1,
-        "the next candidate came from the other provider"
-    );
     let status = acquirer.providers().await;
     let ytdlp = status.iter().find(|s| s.name == "ytdlp").unwrap();
     assert_eq!(ytdlp.health, ProviderHealthState::Cooldown);
@@ -895,8 +873,8 @@ async fn disk_full_pauses_and_resumes() {
     let world = World::new().await;
     world.space.0.store(0, Ordering::SeqCst);
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "a", true)],
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
     );
     let song = world.song_added();
     let acquirer = world.start(vec![provider.clone()]);
@@ -922,8 +900,8 @@ async fn a_hung_free_space_check_pauses_the_queue_instead_of_the_runtime() {
     let world = World::new().await;
     world.space.1.store(true, Ordering::SeqCst);
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "a", true)],
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
     );
     let song = world.song_added();
     let acquirer = world.start_timed(
@@ -971,8 +949,8 @@ async fn removed(path: &Path) -> bool {
 async fn staging_is_removed_on_done_failed_and_cancelled() {
     let world = World::new().await;
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "a", true)],
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
     );
     provider.plan(&[Plan::Write(GOOD_FLAC), Plan::Stall, Plan::Block]);
     world.song_added();
@@ -1040,8 +1018,8 @@ async fn janitor_removes_orphans() {
     std::fs::write(orphan.join("audio.flac.part"), b"x").unwrap();
     std::fs::write(world.config.staging_dir.join("stray.part"), b"x").unwrap();
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "a", true)],
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
     );
     provider.always(Plan::Block);
     let acquirer = world.start(vec![provider]);
@@ -1064,16 +1042,14 @@ async fn view_never_contains_provider_names() {
     let world = World::new().await;
     let video = FakeProvider::new(
         ProviderName::Ytdlp,
-        vec![candidate(ProviderName::Ytdlp, "bnVUHWCynig", false)],
+        vec![
+            candidate(ProviderName::Ytdlp, "bnVUHWCynig", false),
+            candidate(ProviderName::Ytdlp, "dQw4w9WgXcQ", true),
+        ],
     );
-    video.plan(&[Plan::Stall]);
-    let peer = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "file.flac", true)],
-    );
-    peer.plan(&[Plan::Stall]);
+    video.plan(&[Plan::Stall, Plan::Stall]);
     world.song_added();
-    let acquirer = world.start(vec![video, peer]);
+    let acquirer = world.start(vec![video]);
     let mut events = world.events.subscribe();
     let mut seen: Vec<String> = Vec::new();
 
@@ -1137,7 +1113,7 @@ async fn view_never_contains_provider_names() {
 
     for text in &seen {
         let lower = text.to_lowercase();
-        for name in ["ytdlp", "yt-dlp", "soulseek", "slskd", "youtube"] {
+        for name in ["ytdlp", "yt-dlp", "youtube"] {
             assert!(!lower.contains(name), "{name} leaked in {text}");
         }
     }
@@ -1308,12 +1284,12 @@ async fn a_joined_instant_request_plays_the_stream_it_joined() {
 #[tokio::test(start_paused = true)]
 async fn instant_needs_a_streaming_candidate_and_the_setting() {
     let mut world = World::new().await;
-    let peer = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "f", true)],
+    let files = FakeProvider::new(
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "f", true)],
     );
     world.config.instant_play = false;
-    let acquirer = world.start(vec![peer]);
+    let acquirer = world.start(vec![files]);
     let mut request = halo();
     request.instant = true;
     assert!(matches!(
@@ -1326,8 +1302,8 @@ async fn instant_needs_a_streaming_candidate_and_the_setting() {
 async fn done_event_carries_the_song_id_and_the_change_is_in_sync() {
     let world = World::new().await;
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "a", true)],
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
     );
     let song = world.song_added();
     let acquirer = world.start(vec![provider]);
@@ -1349,8 +1325,8 @@ async fn done_event_carries_the_song_id_and_the_change_is_in_sync() {
 async fn a_digest_duplicate_ends_done_existing_and_removes_the_copy() {
     let world = World::new().await;
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "a", true)],
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
     );
     let existing = world
         .insert_song("Some Other Name", "Somebody", 200_000)
@@ -1371,10 +1347,10 @@ async fn a_digest_duplicate_ends_done_existing_and_removes_the_copy() {
 async fn a_picked_candidate_is_tried_first_and_an_unknown_token_has_expired() {
     let world = World::new().await;
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
+        ProviderName::Ytdlp,
         vec![
-            candidate(ProviderName::Soulseek, "best", true),
-            candidate(ProviderName::Soulseek, "picked", false),
+            candidate(ProviderName::Ytdlp, "best", true),
+            candidate(ProviderName::Ytdlp, "picked", false),
         ],
     );
     world.song_added();
@@ -1420,7 +1396,7 @@ async fn a_picked_candidate_is_tried_first_and_an_unknown_token_has_expired() {
     let mut stale = halo();
     stale.title = String::from("Other");
     stale.candidate = Some(trackside_core::CandidateToken::derive(
-        "soulseek",
+        "ytdlp",
         "{\"gone\":1}",
     ));
     assert!(matches!(
@@ -1433,7 +1409,7 @@ async fn a_picked_candidate_is_tried_first_and_an_unknown_token_has_expired() {
 async fn requests_and_cancellations_are_audited() {
     let world = World::new().await;
     world.space.0.store(0, Ordering::SeqCst);
-    let provider = FakeProvider::new(ProviderName::Soulseek, vec![]);
+    let provider = FakeProvider::new(ProviderName::Ytdlp, vec![]);
     let acquirer = world.start(vec![provider]);
     let view = acquirer
         .request(
@@ -1472,7 +1448,7 @@ async fn requests_and_cancellations_are_audited() {
 #[tokio::test(start_paused = true)]
 async fn others_cannot_see_or_cancel_a_request() {
     let world = World::new().await;
-    let acquirer = world.start(vec![FakeProvider::new(ProviderName::Soulseek, vec![])]);
+    let acquirer = world.start(vec![FakeProvider::new(ProviderName::Ytdlp, vec![])]);
     let view = acquirer.request(&world.member, halo()).await.unwrap();
     assert!(matches!(
         acquirer.get(&world.other, &view.id).await,
@@ -1495,7 +1471,7 @@ async fn the_feature_is_offered_only_when_enabled_and_allowed() {
         legacy_subsonic: false,
         max_bitrate_kbps: None,
     };
-    let acquirer = world.start(vec![FakeProvider::new(ProviderName::Soulseek, vec![])]);
+    let acquirer = world.start(vec![FakeProvider::new(ProviderName::Ytdlp, vec![])]);
     acquirer
         .search(&world.member, ExternalQuery::Text(String::from("x")))
         .await
@@ -1523,7 +1499,7 @@ async fn the_feature_is_offered_only_when_enabled_and_allowed() {
     assert!(acquirer.feature_for(&blind, &permissions, true).is_none());
 
     world.config.enabled = false;
-    let off = world.start(vec![FakeProvider::new(ProviderName::Soulseek, vec![])]);
+    let off = world.start(vec![FakeProvider::new(ProviderName::Ytdlp, vec![])]);
     assert!(matches!(
         off.request(&world.member, halo()).await,
         Err(AcquireError::Disabled)
@@ -1535,8 +1511,8 @@ async fn the_feature_is_offered_only_when_enabled_and_allowed() {
 async fn turning_acquisition_off_fails_queued_requests_as_disabled() {
     let world = World::new().await;
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "a", true)],
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
     );
     world.space.0.store(0, Ordering::SeqCst);
     let acquirer = world.start(vec![provider]);
@@ -1561,10 +1537,10 @@ async fn turning_acquisition_off_fails_queued_requests_as_disabled() {
 #[tokio::test(start_paused = true)]
 async fn per_provider_concurrency_limits_parallel_fetches() {
     let mut world = World::new().await;
-    world.config.soulseek.concurrency = 1;
+    world.config.ytdlp.concurrency = 1;
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "a", true)],
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
     );
     provider.always(Plan::Block);
     let acquirer = world.start(vec![provider.clone()]);
@@ -1588,7 +1564,7 @@ async fn per_provider_concurrency_limits_parallel_fetches() {
 async fn user_searches_are_rate_limited() {
     let world = World::new().await;
     let acquirer = world.start_timed(
-        vec![FakeProvider::new(ProviderName::Soulseek, vec![])],
+        vec![FakeProvider::new(ProviderName::Ytdlp, vec![])],
         Timing {
             user_search_rate: trackside_core::config::Rate {
                 count: 2,
@@ -1622,8 +1598,8 @@ async fn user_searches_are_rate_limited() {
 async fn search_more_returns_the_session_and_only_to_its_owner() {
     let world = World::new().await;
     let provider = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "a", true)],
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
     );
     let acquirer = world.start(vec![provider]);
     let first = acquirer
@@ -2288,9 +2264,9 @@ async fn playing_without_keeping_respects_limits_and_cooldowns() {
 #[tokio::test(start_paused = true)]
 async fn playing_without_keeping_needs_a_source_that_streams() {
     let mut world = World::new().await;
-    let peer = FakeProvider::new(
-        ProviderName::Soulseek,
-        vec![candidate(ProviderName::Soulseek, "f", true)],
+    let files = FakeProvider::new(
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "f", true)],
     );
     let permissions = Permissions {
         can_download: true,
@@ -2299,7 +2275,7 @@ async fn playing_without_keeping_needs_a_source_that_streams() {
         legacy_subsonic: false,
         max_bitrate_kbps: None,
     };
-    let acquirer = world.start(vec![peer]);
+    let acquirer = world.start(vec![files]);
     let search = acquirer
         .search(
             &world.member,
@@ -2368,4 +2344,180 @@ async fn a_play_cache_scan_that_times_out_keeps_new_fetches_waiting() {
     assert!(acquirer.inner.external_start.try_lock().is_err());
     tokio::time::sleep(Duration::from_millis(800)).await;
     assert!(acquirer.inner.external_start.try_lock().is_ok());
+}
+
+/// Starts a request whose fetch blocks, then stops the acquirer with the job downloading, as an
+/// upgrade does.
+async fn stopped_while_downloading(world: &World, keys: &[&str]) -> AcquisitionId {
+    let provider = FakeProvider::new(
+        ProviderName::Ytdlp,
+        keys.iter()
+            .enumerate()
+            .map(|(i, key)| candidate(ProviderName::Ytdlp, key, i == 0))
+            .collect(),
+    );
+    provider.plan(&[Plan::Block]);
+    let acquirer = world.start(vec![provider]);
+    let mut events = world.events.subscribe();
+    let view = acquirer.request(&world.member, halo()).await.unwrap();
+    wait_for(&mut events, &view.id, is(AcquisitionState::Downloading)).await;
+    acquirer.shutdown().await;
+    view.id
+}
+
+/// Rewrites stored rows as an earlier version that had a Soulseek provider left them.
+async fn stored_as_retired(world: &World, sql: &'static str, id: &AcquisitionId) {
+    let id = id.clone();
+    world
+        .db
+        .write(move |tx| {
+            tx.execute(sql, [id.as_str()])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+async fn admin_view(acquirer: &Acquirer, id: &AcquisitionId) -> AdminAcquisitionView {
+    acquirer
+        .admin_list(AcquisitionFilter {
+            limit: 50,
+            ..AcquisitionFilter::default()
+        })
+        .await
+        .unwrap()
+        .items
+        .into_iter()
+        .find(|a| &a.view.id == id)
+        .unwrap()
+}
+
+const CHOSEN_IS_RETIRED: &str = "UPDATE acquisition_candidates SET provider = 'soulseek'
+     WHERE id = (SELECT candidate_id FROM acquisitions WHERE pid = ?1)";
+
+#[tokio::test(start_paused = true)]
+async fn a_download_from_a_retired_source_fails_once_with_a_clear_reason() {
+    let world = World::new().await;
+    let id = stopped_while_downloading(&world, &["a"]).await;
+    stored_as_retired(&world, CHOSEN_IS_RETIRED, &id).await;
+    stored_as_retired(
+        &world,
+        "UPDATE acquisitions SET provider = 'soulseek' WHERE pid = ?1",
+        &id,
+    )
+    .await;
+
+    let provider = FakeProvider::new(
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
+    );
+    let mut events = world.events.subscribe();
+    let acquirer = world.start(vec![provider.clone()]);
+    let failed = wait_for(&mut events, &id, is(AcquisitionState::Failed)).await;
+    assert_eq!(failed.failure, Some(AcquireFailure::ProviderUnavailable));
+    let admin = admin_view(&acquirer, &id).await;
+    assert_eq!(
+        admin.failure_detail.as_deref(),
+        Some(crate::runner::RETIRED_SOURCE)
+    );
+    assert_eq!(
+        admin.provider.as_deref(),
+        Some("soulseek"),
+        "history is kept"
+    );
+    assert_eq!(provider.fetches.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.resumes.load(Ordering::SeqCst), 0);
+    tokio::time::sleep(Duration::from_hours(3)).await;
+    let row = acquirer_row(&world.db, &id).await;
+    assert_eq!(row.state, AcquisitionState::Failed, "it is not retried");
+    assert_eq!(provider.searches.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_file_already_fetched_from_a_retired_source_is_still_imported() {
+    let world = World::new().await;
+    let id = stopped_while_downloading(&world, &["a"]).await;
+    stored_as_retired(&world, CHOSEN_IS_RETIRED, &id).await;
+    stored_as_retired(
+        &world,
+        "UPDATE acquisitions SET state = 'verifying' WHERE pid = ?1",
+        &id,
+    )
+    .await;
+    std::fs::write(staging_of(&world, &id).join("audio.flac"), GOOD_FLAC).unwrap();
+
+    let song = world.song_added();
+    let provider = FakeProvider::new(ProviderName::Ytdlp, Vec::new());
+    let mut events = world.events.subscribe();
+    let _acquirer = world.start(vec![provider.clone()]);
+    let done = wait_for(&mut events, &id, is(AcquisitionState::Done)).await;
+    assert_eq!(done.song, Some(song));
+    assert_eq!(provider.searches.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_retired_candidate_is_skipped_for_the_next_one() {
+    let world = World::new().await;
+    let id = stopped_while_downloading(&world, &["best", "second"]).await;
+    stored_as_retired(&world, CHOSEN_IS_RETIRED, &id).await;
+    stored_as_retired(
+        &world,
+        "UPDATE acquisitions SET state = 'searching' WHERE pid = ?1",
+        &id,
+    )
+    .await;
+
+    let song = world.song_added();
+    let provider = FakeProvider::new(ProviderName::Ytdlp, Vec::new());
+    let mut events = world.events.subscribe();
+    let acquirer = world.start(vec![provider.clone()]);
+    let done = wait_for(&mut events, &id, is(AcquisitionState::Done)).await;
+    assert_eq!(done.song, Some(song));
+    assert_eq!(provider.fetches.load(Ordering::SeqCst), 1);
+    let admin = admin_view(&acquirer, &id).await;
+    let retired = admin
+        .candidates
+        .iter()
+        .find(|c| c.provider == "soulseek")
+        .unwrap();
+    assert_eq!(
+        retired.failure.as_deref(),
+        Some(crate::runner::RETIRED_SOURCE)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_search_result_from_a_retired_source_cannot_be_requested() {
+    let world = World::new().await;
+    let provider = FakeProvider::new(
+        ProviderName::Ytdlp,
+        vec![candidate(ProviderName::Ytdlp, "a", true)],
+    );
+    let acquirer = world.start(vec![provider]);
+    let search = acquirer
+        .search(
+            &world.member,
+            ExternalQuery::Text(String::from("beyonce halo")),
+        )
+        .await
+        .unwrap();
+    let token = search.candidates[0].token.clone();
+    let stored = token.clone();
+    world
+        .db
+        .write(move |tx| {
+            tx.execute(
+                "UPDATE acquisition_candidates SET provider = 'soulseek' WHERE token = ?1",
+                [stored.as_str()],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let mut request = halo();
+    request.candidate = Some(token);
+    assert!(matches!(
+        acquirer.request(&world.member, request).await,
+        Err(AcquireError::CandidateExpired)
+    ));
 }

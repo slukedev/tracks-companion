@@ -206,16 +206,12 @@ fn acquirer(
     clock: Arc<dyn Clock>,
     shutdown: CancellationToken,
 ) -> Arc<dyn trackside_core::AcquireControl> {
-    let mut providers: Vec<Arc<dyn trackside_acquire::Provider>> =
+    let providers: Vec<Arc<dyn trackside_acquire::Provider>> =
         vec![Arc::new(trackside_acquire::YtdlpProvider::new(
             &config.acquire.ytdlp,
             &config.data_dir,
             config.acquire.max_file_bytes,
         ))];
-    match trackside_acquire::SoulseekProvider::new(&config.acquire.soulseek) {
-        Ok(provider) => providers.push(Arc::new(provider)),
-        Err(e) => tracing::debug!(error = %e, "soulseek provider not set up"),
-    }
     trackside_acquire::Acquirer::start(
         db.clone(),
         scan,

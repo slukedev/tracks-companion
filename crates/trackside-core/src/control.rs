@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::access::{Access, Permissions};
-use crate::config::Secret;
 use crate::db::DbError;
 use crate::events::ScanProgress;
 use crate::ids::{AcquisitionId, CandidateToken, ImportId, LibraryId, ScanRunId, SongId, UserId};
@@ -370,8 +369,6 @@ pub enum ProviderChange {
         name: String,
         enabled: Option<bool>,
         concurrency: Option<u32>,
-        url: Option<String>,
-        api_key: Option<Secret>,
     },
     /// `PATCH /admin/acquire`.
     Global {

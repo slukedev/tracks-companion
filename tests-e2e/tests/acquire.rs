@@ -1,5 +1,5 @@
-//! Acquisition end to end with a fake yt-dlp and a fake slskd: search, request, import,
-//! events, joining an existing song, and a job that survives a crash.
+//! Acquisition end to end with a fake yt-dlp: search, request, import, events, joining an
+//! existing song, a job that survives a crash, and settings left over from an older version.
 
 mod common;
 
@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use common::{Env, boot};
 use serde_json::{Value, json};
-use trackside_e2e::fakes::{FakeSlskd, FakeYtdlp};
+use trackside_e2e::fakes::FakeYtdlp;
 use trackside_e2e::library::{Format, Track, write_track};
 use trackside_e2e::{Auth, Client};
 
@@ -186,48 +186,64 @@ async fn a_request_through_ytdlp_is_imported_streamed_and_joined_later() -> anyh
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_request_through_slskd_downloads_and_imports_the_flac() -> anyhow::Result<()> {
+async fn soulseek_settings_from_an_older_version_are_ignored_and_ytdlp_still_acquires()
+-> anyhow::Result<()> {
     let Some(ffmpeg) = common::ffmpeg() else {
         return Ok(());
     };
     let tmp = common::tempdir()?;
-    let src = source(tmp.path(), &ffmpeg, Format::Flac)?;
-    let downloads = tmp.path().join("slskd-downloads");
-    let slskd = FakeSlskd::start(&downloads, &src, ARTIST, "E2E Album", TITLE).await?;
-    let (url, key, dir) = (
-        slskd.url.clone(),
-        slskd.key.clone(),
-        downloads.display().to_string(),
-    );
+    let src = source(tmp.path(), &ffmpeg, Format::M4a)?;
+    let fake = FakeYtdlp::write(&tmp.path().join("bin"), &src, ARTIST, TITLE, 3.0)?;
+    let script = fake.script.display().to_string();
+    let key_file = tmp.path().join("slskd-key");
+    std::fs::write(&key_file, "old-key-0123456789")?;
+    let key_file = key_file.display().to_string();
     let Some(env) = boot(move |s| {
         s.env("TRACKSIDE_ACQUIRE__ENABLED", "true")
+            .env("TRACKSIDE_ACQUIRE__YTDLP__ENABLED", "true")
+            .env("TRACKSIDE_ACQUIRE__YTDLP__PATH", script.clone())
             .env("TRACKSIDE_ACQUIRE__SOULSEEK__ENABLED", "true")
-            .env("TRACKSIDE_ACQUIRE__SOULSEEK__URL", url)
-            .env("TRACKSIDE_ACQUIRE__SOULSEEK__API_KEY", key)
-            .env("TRACKSIDE_ACQUIRE__SOULSEEK__DOWNLOADS_DIR", dir)
-            .env("TRACKSIDE_ACQUIRE__YTDLP__PATH", "/nonexistent/yt-dlp")
+            .env("TRACKSIDE_ACQUIRE__SOULSEEK__URL", "http://127.0.0.1:9")
+            .env(
+                "TRACKSIDE_ACQUIRE__SOULSEEK__API_KEY_FILE",
+                key_file.clone(),
+            )
+            .env("TRACKSIDE_ACQUIRE__SOULSEEK__MIN_BITRATE", "128")
     })
     .await?
     else {
         return Ok(());
     };
+    let logs = env.server.log_text();
+    for key in [
+        "acquire.soulseek.enabled",
+        "acquire.soulseek.url",
+        "acquire.soulseek.api_key",
+    ] {
+        let warned = format!("{key} is deprecated and ignored");
+        assert_eq!(logs.matches(&warned).count(), 1, "{key}: {logs}");
+    }
+    assert!(
+        logs.contains("acquire.soulseek.min_bitrate is deprecated and sets acquire.min_bitrate"),
+        "{logs}"
+    );
+    assert!(!logs.contains("old-key-0123456789"), "{logs}");
+
     let c = &env.client;
+    let providers = c.get("/admin/acquire/providers", &env.admin).await?.json();
+    let names: Vec<&str> = providers["providers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p["name"].as_str())
+        .collect();
+    assert_eq!(names, ["ytdlp"], "{providers}");
     acquire_target(&env).await?;
     let started = request(c, &env.key, None).await?;
     assert_eq!(started.status, 202, "{}", started.text());
     let id = started.json()["id"].as_str().unwrap_or_default().to_owned();
-    let done = wait_done(c, &env.key, &id, Duration::from_secs(90)).await?;
-    let song = c
-        .get(
-            &format!("/songs/{}", done["song_id"].as_str().unwrap_or_default()),
-            &env.key,
-        )
-        .await?
-        .json();
-    assert_eq!(song["format"]["container"], "flac", "{song}");
-    let log = slskd.log();
-    assert!(log.iter().any(|l| l.starts_with("search")), "{log:?}");
-    assert!(log.iter().any(|l| l.starts_with("enqueue")), "{log:?}");
+    let done = wait_done(c, &env.key, &id, Duration::from_secs(60)).await?;
+    assert!(done["song_id"].is_string(), "{done}");
     Ok(())
 }
 

@@ -18,7 +18,9 @@ use trackside_core::{AcquisitionId, DbError, SongId, UserKey};
 use crate::acquirer::{
     Inner, Running, Slot, candidate_of_row, candidate_row, lock, quality_of_row,
 };
-use crate::provider::{Candidate, FetchedFile, ProgressSink, ProviderError, SearchQuery};
+use crate::provider::{
+    Candidate, FetchedFile, ProgressSink, ProviderError, ProviderName, SearchQuery,
+};
 use crate::rank::rank;
 use crate::store::{self, TargetLibrary};
 use crate::tag::write_tags;
@@ -28,6 +30,9 @@ use crate::verify::{Expectation, TagValues, safe_file_name, unique_path, verify_
 const SINGLES_TEMPLATE: &str = "{artist}/Singles/{title}.{ext}";
 /// Where a user-picked candidate sits among the job's candidates: first.
 const PICKED_SCORE: f32 = 1000.0;
+/// Why a job bound to a source this version no longer has failed.
+pub(crate) const RETIRED_SOURCE: &str =
+    "its source was removed in this version; request the song again";
 /// ENOSPC.
 const NO_SPACE: i32 = 28;
 
@@ -412,6 +417,15 @@ impl Job<'_> {
                 Imported::Rejected(why) => self.mark_tried(&candidate.0.token, &why).await?,
             }
         }
+        if self.needs_retired_source(&row).await? {
+            return self
+                .finish(
+                    AcquisitionState::Failed,
+                    Some(AcquireFailure::ProviderUnavailable),
+                    Some(String::from(RETIRED_SOURCE)),
+                )
+                .await;
+        }
         if row.state == AcquisitionState::Downloading
             && let Some((cand_row, candidate)) = self.chosen(&row).await?
         {
@@ -478,6 +492,10 @@ impl Job<'_> {
                 self.mark_tried(&cand_row.token, "unknown provider").await?;
                 continue;
             };
+            if candidate.provider == ProviderName::Retired {
+                self.mark_tried(&cand_row.token, RETIRED_SOURCE).await?;
+                continue;
+            }
             match self
                 .try_candidate(&row, &target, &cand_row, &candidate, false, &mut tally)
                 .await?
@@ -527,6 +545,41 @@ impl Job<'_> {
             .read(move |c| acquisitions::candidate_by_token(c, &token))
             .await?;
         Ok(found.and_then(|r| candidate_of_row(&r).map(|c| (r, c))))
+    }
+
+    /// Whether the job is bound to a source this version no longer has: it was fetching from
+    /// one, or the user picked a result from one. Such a job cannot finish as asked.
+    async fn needs_retired_source(&self, row: &AcquisitionRow) -> Result<bool, DbError> {
+        let fetching = matches!(
+            row.state,
+            AcquisitionState::Downloading
+                | AcquisitionState::Verifying
+                | AcquisitionState::Importing
+        );
+        let tokens: Vec<_> = [
+            row.candidate.clone().filter(|_| fetching),
+            row.candidate_token.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if tokens.is_empty() {
+            return Ok(false);
+        }
+        let providers = self
+            .inner
+            .db
+            .read(move |c| {
+                tokens
+                    .iter()
+                    .map(|t| acquisitions::candidate_by_token(c, t))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .await?;
+        Ok(providers
+            .into_iter()
+            .flatten()
+            .any(|r| ProviderName::from_stored(&r.provider) == Some(ProviderName::Retired)))
     }
 
     async fn untried(&self) -> Result<Vec<CandidateRow>, DbError> {

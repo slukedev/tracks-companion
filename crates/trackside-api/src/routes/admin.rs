@@ -1596,7 +1596,6 @@ async fn apply_acquisition_settings(state: &ApiState, changes: &[(&'static str, 
     if changes.iter().any(|(n, _)| {
         n.starts_with("acquire.")
             && !n.starts_with("acquire.ytdlp")
-            && !n.starts_with("acquire.soulseek")
             && !n.starts_with("acquire.fetched_")
             && *n != "acquire.library"
     }) {
@@ -1608,20 +1607,12 @@ async fn apply_acquisition_settings(state: &ApiState, changes: &[(&'static str, 
     {
         wanted.push(fetched_limits(state).await);
     }
-    for provider in ["ytdlp", "soulseek"] {
-        let enabled = get(&format!("acquire.{provider}.enabled")).and_then(Value::as_bool);
-        let url = get(&format!("acquire.{provider}.url"))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        if enabled.is_some() || url.is_some() {
-            wanted.push(ProviderChange::Provider {
-                name: provider.to_owned(),
-                enabled,
-                concurrency: None,
-                url,
-                api_key: None,
-            });
-        }
+    if let Some(enabled) = get("acquire.ytdlp.enabled").and_then(Value::as_bool) {
+        wanted.push(ProviderChange::Provider {
+            name: String::from("ytdlp"),
+            enabled: Some(enabled),
+            concurrency: None,
+        });
     }
     for change in wanted {
         if let Err(e) = state.acquire.configure(change).await {
@@ -2086,9 +2077,6 @@ async fn patch_provider(
     Path(name): Path<String>,
     Json(body): Json<ProviderPatch>,
 ) -> ApiResult<Response> {
-    if body.api_key.is_some() {
-        require_recent_auth(&state, &principal)?;
-    }
     let known = state.acquire.providers().await;
     if !known.iter().any(|p| p.name == name) {
         return Err(ApiError::not_found());
@@ -2099,8 +2087,6 @@ async fn patch_provider(
             name: name.clone(),
             enabled: body.enabled,
             concurrency: body.concurrency,
-            url: body.url.clone(),
-            api_key: body.api_key.map(Secret::new),
         })
         .await?;
     audit_log(

@@ -33,11 +33,6 @@ const PREFERRED_PROVIDER_BONUS: f32 = 10.0;
 const TOPIC_BONUS: f32 = 15.0;
 const OFFICIAL_AUDIO_BONUS: f32 = 5.0;
 const MUSIC_VIDEO_PENALTY: f32 = 5.0;
-const FREE_SLOT_BONUS: f32 = 10.0;
-const MAX_QUEUE_PENALTY: f32 = 10.0;
-const MAX_SPEED_BONUS: f32 = 5.0;
-/// Upload speed, in bytes a second, that earns the full speed bonus.
-const FULL_SPEED: f32 = 1_000_000.0;
 /// What lossy video audio usually is when the source does not say.
 const ASSUMED_VIDEO_KBPS: u32 = 128;
 
@@ -160,10 +155,8 @@ impl Facts {
     fn of(candidate: &Candidate, wanted: &Wanted) -> Self {
         if wanted.is_free_text() {
             let haystack = words(&search_folded(&format!(
-                "{} {} {}",
-                candidate.artist,
-                candidate.title,
-                folder_of(candidate)
+                "{} {}",
+                candidate.artist, candidate.title
             )));
             let all = wanted.words.iter().all(|w| haystack.contains(w));
             return Self {
@@ -187,8 +180,7 @@ impl Facts {
         let artist_matches = exact_artist
             || credits
                 .iter()
-                .any(|credit| credit.identity == wanted.artist)
-            || folder_names(candidate).any(|name| name == wanted.artist);
+                .any(|credit| credit.identity == wanted.artist);
         let album_matches = match (&wanted.album, &candidate.album) {
             (Some(want), Some(have)) => &folded(have) == want,
             _ => false,
@@ -266,11 +258,7 @@ fn median_duration(candidates: &[Candidate]) -> Option<u32> {
 }
 
 fn has_unwanted_version(candidate: &Candidate, wanted: &Wanted, reject_words: &[String]) -> bool {
-    let text = words(&search_folded(&format!(
-        "{} {}",
-        candidate.title,
-        folder_of(candidate)
-    )));
+    let text = words(&search_folded(&candidate.title));
     reject_words.iter().any(|phrase| {
         let phrase = words(&search_folded(phrase));
         !phrase.is_empty()
@@ -285,7 +273,6 @@ fn score(candidate: &Candidate, facts: &Facts, query: &SearchQuery, options: &Ra
     } else {
         let kbps = candidate.bitrate_kbps.unwrap_or(match candidate.hints {
             SourceHints::Video { .. } => ASSUMED_VIDEO_KBPS,
-            SourceHints::Peer { .. } => 0,
         });
         kbps.min(320) as f32 / 8.0
     };
@@ -320,18 +307,6 @@ fn score(candidate: &Candidate, facts: &Facts, query: &SearchQuery, options: &Ra
             if *music_video {
                 score -= MUSIC_VIDEO_PENALTY;
             }
-        }
-        SourceHints::Peer {
-            free_slot,
-            queue_length,
-            upload_speed,
-            ..
-        } => {
-            if *free_slot {
-                score += FREE_SLOT_BONUS;
-            }
-            score -= (*queue_length as f32).min(MAX_QUEUE_PENALTY);
-            score += (*upload_speed as f32 / FULL_SPEED).min(1.0) * MAX_SPEED_BONUS;
         }
     }
     score
@@ -410,22 +385,7 @@ fn is_topic_of(candidate: &Candidate, artist: &str) -> bool {
                 .strip_suffix(" - topic")
                 .is_some_and(|name| name == artist)
         }
-        SourceHints::Peer { .. } => false,
     }
-}
-
-fn folder_of(candidate: &Candidate) -> &str {
-    match &candidate.hints {
-        SourceHints::Peer { folder, .. } => folder,
-        SourceHints::Video { .. } => "",
-    }
-}
-
-fn folder_names(candidate: &Candidate) -> impl Iterator<Item = String> + '_ {
-    folder_of(candidate)
-        .split(['\\', '/'])
-        .filter(|part| !part.is_empty())
-        .map(folded)
 }
 
 #[cfg(test)]
@@ -449,7 +409,7 @@ mod tests {
             reject_words: trackside_core::Config::defaults("/data")
                 .acquire
                 .reject_words,
-            prefer: vec![ProviderName::Soulseek, ProviderName::Ytdlp],
+            prefer: vec![ProviderName::Ytdlp],
             max_file_bytes: 1 << 30,
             min_lossy_kbps: 256,
         }
@@ -479,14 +439,10 @@ mod tests {
         }
     }
 
-    fn peer(title: &str, artist: &str, folder: &str, lossless: bool, kbps: u32) -> Candidate {
+    /// A candidate whose source states its format.
+    fn file(title: &str, artist: &str, lossless: bool, kbps: u32) -> Candidate {
         Candidate {
-            provider: ProviderName::Soulseek,
-            provider_ref: serde_json::json!({ "file": format!("{folder}{title}{lossless}") }),
-            title: title.to_owned(),
-            artist: artist.to_owned(),
-            album: None,
-            duration_ms: Some(200_000),
+            provider_ref: serde_json::json!({ "id": format!("{title}{lossless}{kbps}") }),
             container: Some(if lossless {
                 Container::Flac
             } else {
@@ -498,13 +454,7 @@ mod tests {
             bit_depth: lossless.then_some(16),
             lossless,
             size: Some(10_000_000),
-            hints: SourceHints::Peer {
-                username: String::from("peer"),
-                folder: folder.to_owned(),
-                free_slot: true,
-                queue_length: 0,
-                upload_speed: 500_000,
-            },
+            ..video(title, artist, "Uploader", 200_000)
         }
     }
 
@@ -538,23 +488,6 @@ mod tests {
             &options(),
         );
         assert_eq!(ranked.len(), 1);
-    }
-
-    #[test]
-    fn version_words_in_a_peer_folder_are_rejected() {
-        let q = query("Halo", "Beyoncé", None);
-        let ranked = rank(
-            &q,
-            vec![peer(
-                "Halo",
-                "Beyoncé",
-                "Music\\Beyoncé\\Live at Wembley",
-                true,
-                900,
-            )],
-            &options(),
-        );
-        assert_eq!(ranked.len(), 0);
     }
 
     #[test]
@@ -597,9 +530,7 @@ mod tests {
             &options(),
         );
         assert_eq!(ranked.len(), 2);
-        let SourceHints::Video { uploader, .. } = &ranked[0].candidate.hints else {
-            panic!("expected a video");
-        };
+        let SourceHints::Video { uploader, .. } = &ranked[0].candidate.hints;
         assert_eq!(uploader, "Beyoncé - Topic");
     }
 
@@ -609,8 +540,8 @@ mod tests {
         let ranked = rank(
             &q,
             vec![
-                peer("Halo", "Beyoncé", "Beyoncé\\Album", false, 320),
-                peer("Halo", "Beyoncé", "Beyoncé\\Album", true, 900),
+                file("Halo", "Beyoncé", false, 320),
+                file("Halo", "Beyoncé", true, 900),
             ],
             &options(),
         );
@@ -622,11 +553,7 @@ mod tests {
     #[test]
     fn low_bitrate_lossy_files_are_dropped() {
         let q = query("Halo", "Beyoncé", None);
-        let ranked = rank(
-            &q,
-            vec![peer("Halo", "Beyoncé", "x", false, 128)],
-            &options(),
-        );
+        let ranked = rank(&q, vec![file("Halo", "Beyoncé", false, 128)], &options());
         assert_eq!(ranked.len(), 0);
     }
 
@@ -685,22 +612,11 @@ mod tests {
     }
 
     #[test]
-    fn artist_in_a_peer_folder_name_matches() {
-        let q = query("Halo", "Beyoncé", None);
-        let ranked = rank(
-            &q,
-            vec![peer("Halo", "Unknown", "Music\\Beyonce\\I Am", true, 900)],
-            &options(),
-        );
-        assert_eq!(ranked.len(), 1);
-    }
-
-    #[test]
     fn oversized_and_disallowed_containers_are_dropped() {
         let q = query("Halo", "Beyoncé", None);
-        let mut big = peer("Halo", "Beyoncé", "x", true, 900);
+        let mut big = file("Halo", "Beyoncé", true, 900);
         big.size = Some(2 << 30);
-        let mut wma = peer("Halo", "Beyoncé", "x", true, 900);
+        let mut wma = file("Halo", "Beyoncé", true, 900);
         wma.container = Some(Container::Ape);
         assert_eq!(rank(&q, vec![big, wma], &options()).len(), 0);
     }
@@ -708,13 +624,13 @@ mod tests {
     #[test]
     fn the_first_preferred_provider_gets_a_bonus() {
         let q = query("Halo", "Beyoncé", None);
-        let a = peer("Halo", "Beyoncé", "x", true, 900);
+        let a = file("Halo", "Beyoncé", true, 900);
         let base = rank(&q, vec![a.clone()], &options())[0].score;
-        let prefer_ytdlp = RankOptions {
-            prefer: vec![ProviderName::Ytdlp],
+        let no_preference = RankOptions {
+            prefer: Vec::new(),
             ..options()
         };
-        let other = rank(&q, vec![a], &prefer_ytdlp)[0].score;
+        let other = rank(&q, vec![a], &no_preference)[0].score;
         assert!((base - other - PREFERRED_PROVIDER_BONUS).abs() < f32::EPSILON);
     }
 

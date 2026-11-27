@@ -403,7 +403,7 @@ fn external_art() -> ExternalArtId {
 
 fn candidate() -> CandidateView {
     CandidateView {
-        token: CandidateToken::derive("soulseek", "peer:/music/Beyonce/Halo.flac"),
+        token: CandidateToken::parse("xtka7fegwc8p56dnxvg3w").expect("a candidate token"),
         title: String::from("Halo"),
         artist: String::from("Beyoncé"),
         album: Some(String::from("I Am... Sasha Fierce")),
@@ -446,35 +446,20 @@ fn scan_run(library: &Library) -> ScanRun {
 
 fn provider() -> ProviderStatus {
     ProviderStatus {
-        name: String::from("soulseek"),
+        name: String::from("ytdlp"),
         enabled: true,
         configured: true,
         health: ProviderHealthState::Ok,
-        detail: Some(String::from("slskd 0.22.5")),
+        detail: Some(String::from("yt-dlp 2026.11.03")),
         cooldown_until: None,
-        version: Some(String::from("0.22.5")),
-        latest_known: None,
-        settings: serde_json::json!({"concurrency": 3, "url": "http://slskd:5030"}),
+        version: Some(String::from("2026.11.03")),
+        latest_known: Some(String::from("2026.11.03")),
+        settings: serde_json::json!({"concurrency": 2, "search_rate": "10/1m"}),
         stats: ProviderStats {
             searches_today: 18,
             fetches_today: 2,
             failures_today: 0,
         },
-    }
-}
-
-fn not_set_up() -> ProviderStatus {
-    ProviderStatus {
-        name: String::from("ytdlp"),
-        enabled: true,
-        configured: true,
-        health: ProviderHealthState::NotSetUp,
-        detail: Some(String::from("Needs the acquire image")),
-        cooldown_until: None,
-        version: None,
-        latest_known: None,
-        settings: serde_json::json!({"concurrency": 2, "path": "yt-dlp"}),
-        stats: ProviderStats::default(),
     }
 }
 
@@ -1464,19 +1449,17 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
     put(
         "admin/providers.json",
         &wire::admin::Providers {
-            providers: vec![map::provider(&provider()), map::provider(&not_set_up())],
+            providers: vec![map::provider(&provider())],
         },
     )?;
     let admin_view = AdminAcquisitionView {
         view: view(&s, AcquisitionState::Downloading),
         user: Some(s.user.id.clone()),
-        provider: Some(String::from("soulseek")),
+        provider: Some(String::from("ytdlp")),
         chosen: Some(AdminCandidate {
             token: candidate().token,
-            provider: String::from("soulseek"),
-            provider_ref: serde_json::json!(
-                "vinylwitch: Beyonce/2008 I Am Sasha Fierce [FLAC]/03 Halo.flac"
-            ),
+            provider: String::from("ytdlp"),
+            provider_ref: serde_json::json!("bnVUHWCynig"),
             title: String::from("Halo"),
             artist: String::from("Beyoncé"),
             score: 0.94,
@@ -2062,7 +2045,7 @@ fn provider_names_appear_only_in_admin_fixtures() -> TestResult {
             continue;
         }
         let text = value.to_string().to_ascii_lowercase();
-        for word in ["soulseek", "slskd", "ytdlp", "yt-dlp", "youtube"] {
+        for word in ["ytdlp", "yt-dlp", "youtube"] {
             assert!(!text.contains(word), "{name} names {word}");
         }
     }

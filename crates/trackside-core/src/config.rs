@@ -541,9 +541,10 @@ pub struct AcquireConfig {
     #[serde(deserialize_with = "size", serialize_with = "ser::size")]
     pub fetched_max_bytes: u64,
     pub reject_words: Vec<String>,
+    /// Lossy candidates below this many kbps are dropped.
+    pub min_bitrate: u32,
     pub path_template: String,
     pub ytdlp: YtdlpConfig,
-    pub soulseek: SoulseekConfig,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -557,20 +558,6 @@ pub struct YtdlpConfig {
     pub concurrency: u32,
     pub search_rate: Rate,
     pub max_age_days: u32,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct SoulseekConfig {
-    pub enabled: bool,
-    pub url: Option<String>,
-    pub api_key: Option<Secret>,
-    pub downloads_dir: Option<PathBuf>,
-    pub concurrency: u32,
-    #[serde(deserialize_with = "duration", serialize_with = "ser::duration")]
-    pub search_timeout: Duration,
-    #[serde(deserialize_with = "duration", serialize_with = "ser::duration")]
-    pub stall_timeout: Duration,
-    pub min_bitrate: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -746,7 +733,7 @@ impl AcquireConfig {
             enabled: false,
             library: None,
             staging_dir: data_dir.join("acquire").join("staging"),
-            prefer: strings(&["soulseek", "ytdlp"]),
+            prefer: strings(&["ytdlp"]),
             search_timeout: Duration::from_secs(8),
             max_file_bytes: 1 << 30,
             member_daily: 50,
@@ -756,6 +743,7 @@ impl AcquireConfig {
             fetched_keep: 500,
             fetched_max_bytes: 20 << 30,
             reject_words: strings(REJECT_WORDS),
+            min_bitrate: 256,
             path_template: String::from("{album_artist}/{album}/{disc}-{track:02} {title}.{ext}"),
             ytdlp: YtdlpConfig {
                 enabled: false,
@@ -768,16 +756,6 @@ impl AcquireConfig {
                     per: Duration::from_secs(60),
                 },
                 max_age_days: 60,
-            },
-            soulseek: SoulseekConfig {
-                enabled: false,
-                url: None,
-                api_key: None,
-                downloads_dir: None,
-                concurrency: 3,
-                search_timeout: Duration::from_secs(15),
-                stall_timeout: Duration::from_secs(120),
-                min_bitrate: 256,
             },
         }
     }
@@ -868,7 +846,9 @@ pub enum ConfigError {
 
 mod loader;
 
-pub use loader::{KEYS, KeyInfo, ShownValue, ValueKind, load_config, render_show, show};
+pub use loader::{
+    KEYS, KeyInfo, RETIRED_KEYS, RetiredKey, ShownValue, ValueKind, load_config, render_show, show,
+};
 
 /// Keys set by the file or the environment, which the dashboard shows as read-only.
 pub fn locked_keys(report: &ConfigReport) -> BTreeSet<&'static str> {

@@ -705,17 +705,13 @@ pub struct Providers {
     pub providers: Vec<ProviderStatus>,
 }
 
-/// `PATCH /admin/acquire/providers/{name}`. `api_key` is write-only.
+/// `PATCH /admin/acquire/providers/{name}`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderPatch {
     #[serde(default)]
     pub enabled: Option<bool>,
     #[serde(default)]
     pub concurrency: Option<u32>,
-    #[serde(default)]
-    pub url: Option<String>,
-    #[serde(default)]
-    pub api_key: Option<String>,
 }
 
 /// `POST /admin/acquire/providers/{name}/test`.

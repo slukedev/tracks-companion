@@ -1,5 +1,5 @@
-//! Acquisition: the `Provider` trait and its yt-dlp and Soulseek (slskd) implementations,
-//! ranking, verification, tagging, and the durable job runner behind `AcquireControl`.
+//! Acquisition: the `Provider` trait and its yt-dlp implementation, ranking, verification,
+//! tagging, and the durable job runner behind `AcquireControl`.
 //!
 //! Everything here is off unless an admin enables it. Provider names never leave this crate
 //! except through the admin views.
@@ -7,11 +7,11 @@
 mod acquirer;
 mod external;
 mod limits;
+mod net;
 mod process;
 mod provider;
 mod rank;
 mod runner;
-mod slskd;
 mod store;
 mod tag;
 mod update;
@@ -22,13 +22,12 @@ pub use acquirer::{Acquirer, AcquirerDeps, DiskSpace, FreeSpace, MediaOps, Timin
 pub use limits::{Cooldown, FIRST_COOLDOWN, MAX_COOLDOWN, TokenBucket};
 pub use provider::{
     Candidate, FetchedFile, Progress, ProgressSink, Provider, ProviderError, ProviderHealth,
-    ProviderName, ProviderSettings, SearchQuery, SourceHints, StreamingFetch,
+    ProviderName, SearchQuery, SourceHints, StreamingFetch,
 };
 pub use rank::{
     ALLOWED_CONTAINERS, RankOptions, Ranked, clean_title, duration_fits, quality_of, rank,
     tolerance_ms,
 };
-pub use slskd::{SoulseekProvider, http_client};
 pub use tag::{TagError, write_tags};
 pub use update::{DEFAULT_RELEASE_BASE, UpdateError, asset_name, install as install_ytdlp};
 pub use verify::{

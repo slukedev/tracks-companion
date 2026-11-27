@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use trackside_core::config::{
-    ConfigError, ConfigSource, ConfigSources, KEYS, REDACTED, ValueKind, load_config, locked_keys,
-    render_show, show,
+    ConfigError, ConfigSource, ConfigSources, KEYS, REDACTED, RETIRED_KEYS, ValueKind, load_config,
+    locked_keys, render_show, show,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -121,7 +121,7 @@ fn every_key_has_a_default_and_an_env_name_that_parses() -> TestResult {
 fn secrets_also_come_from_files() -> TestResult {
     let dir = tempfile::tempdir()?;
     let secrets = KEYS.iter().filter(|k| k.secret).collect::<Vec<_>>();
-    assert_eq!(secrets.len(), 3);
+    assert_eq!(secrets.len(), 2);
     let mut pairs = vec![(
         String::from("TRACKSIDE_ADMIN_USERNAME"),
         String::from("admin"),
@@ -150,15 +150,6 @@ fn secrets_also_come_from_files() -> TestResult {
             .as_ref()
             .map(trackside_core::config::Secret::expose),
         Some("from-file-auth.admin_password")
-    );
-    assert_eq!(
-        config
-            .acquire
-            .soulseek
-            .api_key
-            .as_ref()
-            .map(trackside_core::config::Secret::expose),
-        Some("from-file-acquire.soulseek.api_key")
     );
     assert_eq!(
         config
@@ -262,9 +253,176 @@ fn config_show_redacts_secrets() -> TestResult {
     assert_eq!(lines.len(), KEYS.len());
     let unset = lines
         .iter()
-        .find(|l| l.key == "acquire.soulseek.api_key")
+        .find(|l| l.key == "tls.cert_file")
         .map(|l| l.value.as_str());
     assert_eq!(unset, Some("unset"));
     assert!(!format!("{config:?}").contains("hunter2"));
+    Ok(())
+}
+
+fn file_sources(text: &str) -> Result<(tempfile::TempDir, ConfigSources), std::io::Error> {
+    let dir = tempfile::tempdir()?;
+    let file = dir.path().join("config.toml");
+    std::fs::write(&file, text)?;
+    Ok((
+        dir,
+        ConfigSources {
+            file: Some(file),
+            env: env(&[]),
+            ..ConfigSources::default()
+        },
+    ))
+}
+
+#[test]
+fn retired_keys_are_not_keys() {
+    for retired in RETIRED_KEYS {
+        assert!(
+            KEYS.iter()
+                .all(|k| k.key != retired.key && k.env != retired.env),
+            "{} is both current and retired",
+            retired.key
+        );
+    }
+}
+
+#[test]
+fn retired_keys_in_the_file_are_ignored_with_one_warning_each() -> TestResult {
+    let (_dir, sources) = file_sources(
+        "[acquire.soulseek]\nenabled = true\nurl = \"http://slskd:5030\"\napi_key = \"secret\"\n",
+    )?;
+    let (_, report) = load_config(&sources)?;
+    assert_eq!(report.warnings.len(), 3, "{:?}", report.warnings);
+    for key in [
+        "acquire.soulseek.enabled",
+        "acquire.soulseek.url",
+        "acquire.soulseek.api_key",
+    ] {
+        let named: Vec<_> = report
+            .warnings
+            .iter()
+            .filter(|w| w.starts_with(&format!("{key} is deprecated and ignored")))
+            .collect();
+        assert_eq!(named.len(), 1, "{key}: {:?}", report.warnings);
+    }
+    assert!(!report.warnings.iter().any(|w| w.contains("secret")));
+    Ok(())
+}
+
+#[test]
+fn a_retired_key_set_in_the_file_and_the_environment_warns_once() -> TestResult {
+    let (_dir, mut sources) = file_sources("[acquire.soulseek]\nurl = \"http://slskd:5030\"\n")?;
+    sources.env.push((
+        String::from("TRACKSIDE_ACQUIRE__SOULSEEK__URL"),
+        String::from("http://other:5030"),
+    ));
+    let (_, report) = load_config(&sources)?;
+    assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+    assert!(report.warnings[0].contains("TRACKSIDE_ACQUIRE__SOULSEEK__URL"));
+    assert!(report.warnings[0].contains("the configuration file"));
+    Ok(())
+}
+
+#[test]
+fn retired_environment_variables_and_secret_files_are_ignored_with_a_warning() -> TestResult {
+    let (_, report) = load_config(&ConfigSources {
+        env: env(&[
+            ("TRACKSIDE_ACQUIRE__SOULSEEK__ENABLED", "true"),
+            (
+                "TRACKSIDE_ACQUIRE__SOULSEEK__API_KEY_FILE",
+                "/nonexistent/key",
+            ),
+        ]),
+        ..ConfigSources::default()
+    })?;
+    assert_eq!(report.warnings.len(), 2, "{:?}", report.warnings);
+    assert!(
+        report
+            .warnings
+            .iter()
+            .all(|w| w.contains("is deprecated and ignored") && !w.contains("unknown")),
+        "{:?}",
+        report.warnings
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("acquire.soulseek.api_key "))
+    );
+    Ok(())
+}
+
+#[test]
+fn a_retired_key_on_the_command_line_is_ignored_with_a_warning() -> TestResult {
+    let (_, report) = load_config(&ConfigSources {
+        env: env(&[]),
+        overrides: vec![(
+            String::from("acquire.soulseek.concurrency"),
+            String::from("3"),
+        )],
+        ..ConfigSources::default()
+    })?;
+    assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+    assert!(report.warnings[0].starts_with("acquire.soulseek.concurrency is deprecated"));
+    Ok(())
+}
+
+#[test]
+fn the_old_min_bitrate_sets_the_new_key_when_it_is_unset() -> TestResult {
+    let (_dir, sources) = file_sources("[acquire.soulseek]\nmin_bitrate = 192\n")?;
+    let (config, report) = load_config(&sources)?;
+    assert_eq!(config.acquire.min_bitrate, 192);
+    assert_eq!(report.source("acquire.min_bitrate"), ConfigSource::File);
+    assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+    assert!(report.warnings[0].contains("sets acquire.min_bitrate"));
+    Ok(())
+}
+
+#[test]
+fn the_old_min_bitrate_from_the_environment_sets_the_new_key() -> TestResult {
+    let (config, report) = load_config(&ConfigSources {
+        env: env(&[("TRACKSIDE_ACQUIRE__SOULSEEK__MIN_BITRATE", "160")]),
+        ..ConfigSources::default()
+    })?;
+    assert_eq!(config.acquire.min_bitrate, 160);
+    assert_eq!(report.source("acquire.min_bitrate"), ConfigSource::Env);
+    assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+    Ok(())
+}
+
+#[test]
+fn the_new_min_bitrate_wins_over_the_old_one() -> TestResult {
+    let (_dir, mut sources) = file_sources("[acquire.soulseek]\nmin_bitrate = 192\n")?;
+    sources.env.push((
+        String::from("TRACKSIDE_ACQUIRE__MIN_BITRATE"),
+        String::from("320"),
+    ));
+    let (config, report) = load_config(&sources)?;
+    assert_eq!(config.acquire.min_bitrate, 320);
+    assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+    assert!(report.warnings[0].contains("ignored because acquire.min_bitrate is set"));
+    Ok(())
+}
+
+#[test]
+fn the_old_min_bitrate_must_still_be_a_number() {
+    let bad = load_config(&ConfigSources {
+        env: env(&[("TRACKSIDE_ACQUIRE__SOULSEEK__MIN_BITRATE", "high")]),
+        ..ConfigSources::default()
+    });
+    assert!(
+        matches!(bad, Err(ConfigError::Invalid { key, .. }) if key == "acquire.soulseek.min_bitrate")
+    );
+}
+
+#[test]
+fn min_bitrate_defaults_to_256() -> TestResult {
+    let (config, _) = load_config(&ConfigSources {
+        env: env(&[]),
+        ..ConfigSources::default()
+    })?;
+    assert_eq!(config.acquire.min_bitrate, 256);
+    assert_eq!(config.acquire.prefer, ["ytdlp"]);
     Ok(())
 }

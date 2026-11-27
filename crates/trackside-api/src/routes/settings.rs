@@ -27,7 +27,6 @@ pub(crate) enum Kind {
     Profile,
     Schedule,
     Library,
-    Url,
     /// Write-only text, sealed at rest. Its value on the wire is whether it is set.
     Secret,
 }
@@ -158,16 +157,6 @@ pub(crate) const KEYS: &[Key] = &[
         name: "acquire.ytdlp.enabled",
         kind: Kind::Bool,
         value: |c| json!(c.acquire.ytdlp.enabled),
-    },
-    Key {
-        name: "acquire.soulseek.enabled",
-        kind: Kind::Bool,
-        value: |c| json!(c.acquire.soulseek.enabled),
-    },
-    Key {
-        name: "acquire.soulseek.url",
-        kind: Kind::Url,
-        value: |c| json!(c.acquire.soulseek.url),
     },
     Key {
         name: "enrichment.musicbrainz",
@@ -339,11 +328,6 @@ pub(crate) fn validate(kind: Kind, value: &Value) -> Result<Value, String> {
             Value::Null => Ok(Value::Null),
             Value::String(t) if LibraryId::parse(t).is_ok() || t.starts_with('/') => Ok(json!(t)),
             _ => Err(String::from("must be a library id or a root path")),
-        },
-        Kind::Url => match text() {
-            Some(t) if t.starts_with("http://") || t.starts_with("https://") => Ok(json!(t)),
-            None if value.is_null() => Ok(Value::Null),
-            _ => Err(String::from("must be an http or https URL")),
         },
         Kind::Secret => match text() {
             Some(t)
