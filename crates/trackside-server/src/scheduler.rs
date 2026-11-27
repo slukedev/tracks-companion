@@ -8,7 +8,7 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use tokio_util::sync::CancellationToken;
 use trackside_core::config::BackupSchedule;
-use trackside_core::repo::{acquisitions, idempotency, imports, pairings, sessions};
+use trackside_core::repo::{acquisitions, device_links, idempotency, imports, pairings, sessions};
 use trackside_core::{Db, Millis};
 
 use crate::backup::{BackupKind, Backups, next_run};
@@ -24,7 +24,8 @@ pub struct Retention {
 /// Uploads nothing was sent to for this long are given up.
 pub const ABANDONED_UPLOAD: Duration = Duration::from_hours(24);
 
-/// One round of maintenance: expired sessions, pairings, idempotency records and candidates,
+/// One round of maintenance: expired sessions, pairings, device links (an hour after they
+/// expire), idempotency records and candidates,
 /// abandoned uploads and their staging files, old tombstones, songs missing past the grace
 /// period, then a WAL checkpoint.
 pub async fn maintain(db: &Db, retention: Retention) -> Result<(), trackside_core::DbError> {
@@ -46,6 +47,7 @@ pub async fn maintain(db: &Db, retention: Retention) -> Result<(), trackside_cor
     db.write(move |tx| {
         sessions::prune(tx, now)?;
         pairings::prune(tx, now)?;
+        device_links::prune(tx, now.saturating_sub(trackside_auth::KEEP_EXPIRED))?;
         idempotency::prune(tx, now.saturating_sub(Duration::from_hours(24)))?;
         acquisitions::prune_candidates(tx, now)?;
         trackside_core::sync::prune_tombstones(tx, now.saturating_sub(retention.tombstones))?;
@@ -304,6 +306,68 @@ mod tests {
         assert!(!staged.exists());
         let id = row.id;
         assert!(test.db.read(move |c| imports::get(c, &id)).await?.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn maintenance_sweeps_device_links_an_hour_after_they_expire()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let test = TestDb::new()?;
+        let link = |n: u8| device_links::NewLink {
+            device_code_hash: [n; 32],
+            user_code_locator: [n; 32],
+            user_code_hash: [n; 32],
+            device: trackside_core::repo::devices::NewDevice {
+                client_device_id: format!("tv-{n}"),
+                name: String::from("Living Room TV"),
+                platform: String::from("android_tv"),
+                model: None,
+                app_name: None,
+                app_version: None,
+            },
+            nearby: true,
+            interval_ms: 5000,
+            expires_at: trackside_core::Clock::now(&*test.clock)
+                .saturating_add(Duration::from_mins(10)),
+        };
+        let first = link(1);
+        let old = test
+            .db
+            .write(move |tx| device_links::insert(tx, &first))
+            .await?;
+        test.clock.advance(Duration::from_mins(30));
+        let second = link(2);
+        let fresh = test
+            .db
+            .write(move |tx| device_links::insert(tx, &second))
+            .await?;
+        let retention = Retention {
+            tombstones: Duration::from_hours(90 * 24),
+            missing: Duration::from_hours(30 * 24),
+        };
+        maintain(&test.db, retention).await?;
+        let key = old.key;
+        assert!(
+            test.db
+                .read(move |c| device_links::get(c, key))
+                .await?
+                .is_some()
+        );
+        test.clock.advance(Duration::from_mins(45));
+        maintain(&test.db, retention).await?;
+        assert!(
+            test.db
+                .read(move |c| device_links::get(c, key))
+                .await?
+                .is_none()
+        );
+        let key = fresh.key;
+        assert!(
+            test.db
+                .read(move |c| device_links::get(c, key))
+                .await?
+                .is_some()
+        );
         Ok(())
     }
 }

@@ -526,11 +526,12 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for Limited<T> {
 struct Dashboard;
 
 /// The file a dashboard path serves: `/setup`, `/invite/<token>` and `/reset/<token>` are
-/// their pages; `dev/` and docs are not served.
+/// their pages, and `/link` (a device link's `verification_url`) is the dashboard, which opens
+/// its Enter a Code page; `dev/` and docs are not served.
 pub fn dashboard_file(path: &str) -> Option<String> {
     let path = path.trim_start_matches('/');
     let file = match path {
-        "" | "index.html" => "index.html",
+        "" | "index.html" | "link" => "index.html",
         "setup" | "setup/" => "setup.html",
         p if p.starts_with("invite/") && page_token(p) => "invite.html",
         p if p.starts_with("reset/") && page_token(p) => "reset.html",
@@ -661,6 +662,7 @@ mod tests {
     fn dashboard_paths_map_to_their_pages() {
         assert_eq!(dashboard_file("/").as_deref(), Some("index.html"));
         assert_eq!(dashboard_file("/setup").as_deref(), Some("setup.html"));
+        assert_eq!(dashboard_file("/link").as_deref(), Some("index.html"));
         assert_eq!(
             dashboard_file("/invite/abc123").as_deref(),
             Some("invite.html")
