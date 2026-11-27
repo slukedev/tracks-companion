@@ -219,6 +219,21 @@ pub struct QueueItem {
     pub index: u32,
     #[serde(default = "de::yes", deserialize_with = "de::nullable_true")]
     pub available: bool,
+    /// What the item streams from: the provider instance and its item id. Only format and
+    /// provenance; the server never sends a stream address.
+    #[serde(default, deserialize_with = "de::lenient")]
+    pub streamdetails: Option<StreamOrigin>,
+}
+
+/// The provenance part of `StreamDetails`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct StreamOrigin {
+    /// The provider instance id.
+    #[serde(default, deserialize_with = "de::nullable")]
+    pub provider: String,
+    #[serde(default, deserialize_with = "de::nullable")]
+    pub item_id: String,
 }
 
 impl QueueItem {

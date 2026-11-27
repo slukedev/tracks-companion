@@ -228,7 +228,7 @@ impl Client {
             permits: Arc::new(Semaphore::new(options.max_in_flight.max(1))),
             timeout: options.request_timeout,
         };
-        let tls = options.endpoint.is_secure().then(connection::tls_config);
+        let tls = connection::tls_config(&options);
         let tasks = TaskTracker::new();
 
         let supervisor = Supervisor {
@@ -358,7 +358,7 @@ impl Client {
 
 /// Connects once, authenticates and closes: for a "test connection" button.
 pub async fn probe(options: &Options) -> Result<Session, ConnectError> {
-    let tls = options.endpoint.is_secure().then(connection::tls_config);
+    let tls = connection::tls_config(options);
     let Established {
         mut ws,
         server,

@@ -14,7 +14,7 @@ pub use enums::{
 pub use media::{
     AudioFormat, ExternalId, Image, MediaItem, Metadata, ProviderMapping, SearchResults,
 };
-pub use player::{DeviceInfo, Player, PlayerMedia, PlayerQueue, QueueItem};
+pub use player::{DeviceInfo, Player, PlayerMedia, PlayerQueue, QueueItem, StreamOrigin};
 pub use server::{
     ProviderConfig, ProviderError, ProviderInstance, ProviderManifest, ServerInfo, SetupFlowStep,
     User,

@@ -37,17 +37,35 @@ pub(crate) struct Established {
     pub compatibility: Compatibility,
 }
 
-/// The TLS setup for `wss://`: the workspace's rustls with ring, verified by the platform's
-/// certificate store as reqwest does.
-pub(crate) fn tls_config() -> Result<Arc<ClientConfig>, String> {
+/// The TLS setup for `wss://`, or `None` for `ws://`: the workspace's rustls with ring,
+/// verified by the platform's certificate store as reqwest does, or by the custom CA alone
+/// when one is given.
+pub(crate) fn tls_config(options: &Options) -> Option<Result<Arc<ClientConfig>, String>> {
+    options
+        .endpoint
+        .is_secure()
+        .then(|| build_tls(options.custom_ca.as_ref()))
+}
+
+fn build_tls(custom: Option<&crate::options::CustomCa>) -> Result<Arc<ClientConfig>, String> {
     use rustls_platform_verifier::BuilderVerifierExt;
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let config = ClientConfig::builder_with_provider(provider)
+    let builder = ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
-        .map_err(|e| e.to_string())?
-        .with_platform_verifier()
-        .map_err(|e| e.to_string())?
-        .with_no_client_auth();
+        .map_err(|e| e.to_string())?;
+    let config = match custom {
+        Some(ca) => {
+            let mut roots = rustls::RootCertStore::empty();
+            for cert in ca.0.iter() {
+                roots.add(cert.clone()).map_err(|e| e.to_string())?;
+            }
+            builder.with_root_certificates(roots).with_no_client_auth()
+        }
+        None => builder
+            .with_platform_verifier()
+            .map_err(|e| e.to_string())?
+            .with_no_client_auth(),
+    };
     Ok(Arc::new(config))
 }
 

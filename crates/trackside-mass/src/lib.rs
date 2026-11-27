@@ -30,6 +30,8 @@ pub mod models;
 mod options;
 mod protocol;
 pub mod schema;
+#[cfg(feature = "testing")]
+pub mod testing;
 mod token;
 
 pub use api::{
@@ -45,5 +47,5 @@ pub use error::{
 };
 pub use event::{Event, RawEvent, Snapshot, SnapshotReason, Update};
 pub use image::{ImageFormat, ImageSize, image_url};
-pub use options::Options;
+pub use options::{CaError, CustomCa, Options};
 pub use token::Token;
