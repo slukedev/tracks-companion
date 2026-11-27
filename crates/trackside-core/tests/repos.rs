@@ -8,8 +8,8 @@ use trackside_core::records::{ItemKind, ItemRef};
 use trackside_core::repo::listens::{ListenSource, ListenStatus, NewListen, RejectReason};
 use trackside_core::repo::playlists::{NewPlaylist, PlaylistPatch};
 use trackside_core::repo::{
-    annotations, devices, idempotency, invites, keys, listens, pairings, password_resets,
-    playlists, sessions, users,
+    annotations, device_links, devices, idempotency, invites, keys, listens, pairings,
+    password_resets, playlists, sessions, users,
 };
 use trackside_core::testing::{TEST_START, TestDb, scanned};
 use trackside_core::{Access, Clock, DbError, Millis};
@@ -512,5 +512,113 @@ fn finished_scan_runs_are_kept_to_a_bounded_history() -> TestResult {
     assert_eq!(runs, i64::from(KEEP_RUNS) + 1);
     assert_eq!(errors, i64::from(KEEP_RUNS));
     assert_eq!(still_running, Some(ScanState::Running));
+    Ok(())
+}
+
+fn link(n: u8, expires_at: Millis) -> device_links::NewLink {
+    device_links::NewLink {
+        device_code_hash: [n; 32],
+        user_code_locator: [n; 32],
+        user_code_hash: [n.wrapping_add(100); 32],
+        device: devices::NewDevice {
+            client_device_id: format!("tv-{n}"),
+            name: String::from("Living Room TV"),
+            platform: String::from("android_tv"),
+            model: Some(String::from("Chromecast with Google TV")),
+            app_name: None,
+            app_version: None,
+        },
+        nearby: true,
+        interval_ms: 5000,
+        expires_at,
+    }
+}
+
+#[test]
+fn device_links_lock_decide_once_and_complete_once() -> TestResult {
+    let test = TestDb::new()?;
+    let user = test.add_user("luke", Role::Member, &[])?.key;
+    let expires = test.clock.now().saturating_add(Duration::from_mins(10));
+    let new = link(1, expires);
+    let row = test.write_blocking(move |tx| device_links::insert(tx, &new))?;
+    assert_eq!(row.state, device_links::LinkState::Pending);
+    assert_eq!(row.device.platform, "android_tv");
+    assert!(row.nearby);
+    let clash = link(1, expires);
+    assert!(matches!(
+        test.write_blocking(move |tx| device_links::insert(tx, &clash)),
+        Err(DbError::Conflict(_))
+    ));
+    let found = test.read_blocking(|c| device_links::by_locator(c, &[1; 32]))?;
+    assert_eq!(found.map(|r| r.key), Some(row.key));
+    let by_code = test.read_blocking(|c| device_links::by_device_code(c, &[1; 32]))?;
+    assert_eq!(by_code.map(|r| r.key), Some(row.key));
+    let now = test.clock.now();
+    assert_eq!(
+        test.read_blocking(move |c| device_links::count_pending(c, now))?,
+        1
+    );
+
+    let key = row.key;
+    test.write_blocking(move |tx| device_links::decide(tx, key, user, Some("library stream")))?;
+    assert!(matches!(
+        test.write_blocking(move |tx| device_links::decide(tx, key, user, None)),
+        Err(DbError::Conflict(_))
+    ));
+    let decided = test
+        .read_blocking(move |c| device_links::get(c, key))?
+        .ok_or("gone")?;
+    assert_eq!(decided.state, device_links::LinkState::Approved);
+    assert_eq!(decided.scopes.as_deref(), Some("library stream"));
+    test.write_blocking(move |tx| device_links::complete(tx, key))?;
+    assert!(matches!(
+        test.write_blocking(move |tx| device_links::complete(tx, key)),
+        Err(DbError::Conflict(_))
+    ));
+
+    let other = link(2, expires);
+    let other = test
+        .write_blocking(move |tx| device_links::insert(tx, &other))?
+        .key;
+    for n in 1..=5 {
+        assert_eq!(
+            test.write_blocking(move |tx| device_links::fail_attempt(tx, other, 5))?,
+            n
+        );
+    }
+    let locked = test
+        .read_blocking(move |c| device_links::get(c, other))?
+        .ok_or("gone")?;
+    assert_eq!(locked.state, device_links::LinkState::Locked);
+    assert_eq!(
+        test.write_blocking(move |tx| device_links::fail_attempt(tx, other, 5))?,
+        5,
+        "a locked link counts no further"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_expired_device_link_frees_its_code() -> TestResult {
+    let test = TestDb::new()?;
+    let expires = test.clock.now().saturating_add(Duration::from_mins(10));
+    let first = link(1, expires);
+    test.write_blocking(move |tx| device_links::insert(tx, &first))?;
+    test.clock.advance(Duration::from_mins(10));
+    let mut again = link(1, test.clock.now().saturating_add(Duration::from_mins(10)));
+    again.device_code_hash = [9; 32];
+    test.write_blocking(move |tx| device_links::insert(tx, &again))?;
+    let now = test.clock.now();
+    assert_eq!(
+        test.read_blocking(move |c| device_links::count_pending(c, now))?,
+        1
+    );
+    assert_eq!(
+        test.write_blocking(move |tx| device_links::prune(
+            tx,
+            now.saturating_add(Duration::from_mins(11))
+        ))?,
+        1
+    );
     Ok(())
 }

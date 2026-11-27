@@ -7,7 +7,9 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::control::AcquisitionView;
-use crate::ids::{DeviceKey, ImportId, LibraryId, LibraryKey, ScanRunId, Seq, SongId, UserKey};
+use crate::ids::{
+    DeviceId, DeviceKey, ImportId, LibraryId, LibraryKey, ScanRunId, Seq, SongId, UserKey,
+};
 use crate::records::{ImportState, ScanCounts, ScanState};
 
 /// Who may see an event.
@@ -64,6 +66,14 @@ pub enum ServerEvent {
     /// A user's Trackside Cloud data changed: their clients should pull `entity`. Never carries
     /// the data itself.
     CloudChanged { user: UserKey, entity: &'static str },
+    /// A device linked with a code the user approved collected its key: their device list
+    /// gained it.
+    DeviceLinked {
+        user: UserKey,
+        device: DeviceId,
+        name: String,
+        platform: String,
+    },
 }
 
 /// A broadcast channel of [`ServerEvent`]s. Cloning shares the channel.
