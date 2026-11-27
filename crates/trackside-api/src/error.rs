@@ -5,7 +5,7 @@ use std::time::Duration;
 use axum::Json;
 use axum::response::{IntoResponse, Response};
 use http::{HeaderValue, StatusCode, header};
-use trackside_auth::AuthError;
+use trackside_auth::{AuthError, LinkError};
 use trackside_core::DbError;
 use trackside_core::control::{AcquireError, ScanControlError};
 use trackside_core::sync::SyncError;
@@ -225,6 +225,60 @@ impl From<AuthError> for ApiError {
             AuthError::Io(_) | AuthError::Unimplemented(_) => Self::internal(&error),
             other => Self::new(status, code, other.to_string()),
         }
+    }
+}
+
+impl From<LinkError> for ApiError {
+    fn from(error: LinkError) -> Self {
+        match error {
+            LinkError::NotFound => Self::new(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "No device is waiting with that code.",
+            ),
+            LinkError::Expired => Self::new(StatusCode::GONE, "link_expired", error.to_string()),
+            LinkError::Used => Self::conflict("link_used", error.to_string()),
+            LinkError::Locked => Self::new(StatusCode::GONE, "link_locked", error.to_string()),
+            LinkError::Auth(auth) => auth.into(),
+            device => polling_error(&device),
+        }
+    }
+}
+
+/// The device's answers while it polls, named as RFC 8628 names them.
+fn polling_error(error: &LinkError) -> ApiError {
+    match error {
+        LinkError::Pending => ApiError::new(
+            StatusCode::PRECONDITION_REQUIRED,
+            "authorization_pending",
+            error.to_string(),
+        ),
+        LinkError::SlowDown { interval } => ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "slow_down",
+            error.to_string(),
+        )
+        .with_details(serde_json::json!({ "interval_s": interval.as_secs() }))
+        .with_retry_after(*interval),
+        LinkError::Denied => {
+            ApiError::new(StatusCode::FORBIDDEN, "access_denied", error.to_string())
+        }
+        _ => ApiError::new(
+            StatusCode::GONE,
+            "expired_token",
+            "Start again with a new code.",
+        ),
+    }
+}
+
+/// What the device hears while it polls: `expired_token` for a link that ended, whatever the
+/// approver would have been told, and RFC 8628's other answers.
+pub fn device_link_error(error: LinkError) -> ApiError {
+    match error {
+        LinkError::Expired | LinkError::NotFound | LinkError::Locked | LinkError::Used => {
+            polling_error(&LinkError::Expired)
+        }
+        other => other.into(),
     }
 }
 

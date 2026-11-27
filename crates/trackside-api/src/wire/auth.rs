@@ -240,6 +240,72 @@ pub struct Approved {
     pub device: ApprovedDevice,
 }
 
+/// `POST /link/start`: a device that cannot scan or type a long code asks to be linked.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkStartRequest {
+    pub device: DeviceInfo,
+}
+
+/// A device link just started. The device shows `user_code` and a QR of `link_url` (or of
+/// `verification_url` for a phone without Tracks), and polls with `device_code` every
+/// `interval_s` seconds.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkStart {
+    pub device_code: String,
+    /// `XXXX-XXXX`.
+    pub user_code: String,
+    /// The dashboard's Enter a Code page with `?code=` filled in.
+    pub verification_url: String,
+    /// `tracks://link?server=<server_id>&code=<user_code>`, for the QR.
+    pub link_url: String,
+    pub interval_s: u64,
+    pub expires_at: Time,
+}
+
+/// `POST /link/lookup`, `/link/approve` and `/link/deny`. The dash and case are optional.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkCodeRequest {
+    pub user_code: String,
+}
+
+/// `POST /link/poll`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkPollRequest {
+    pub device_code: String,
+}
+
+/// `pending` (looked up), `approved` or `denied` (just decided).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkState {
+    Pending,
+    Approved,
+    Denied,
+}
+
+/// The device a link would add, as it described itself.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkDevice {
+    pub name: String,
+    pub platform: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_name: Option<String>,
+}
+
+/// What a code links, so the approver can confirm it before approving.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkInfo {
+    pub state: LinkState,
+    pub device: LinkDevice,
+    /// Started from the server's own network, loopback or the tailnet. A link someone asks
+    /// you to approve that was started from elsewhere deserves a second look.
+    pub nearby: bool,
+    pub requested_at: Time,
+    pub expires_at: Time,
+}
+
 /// `GET /invites/{token}`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InviteInfo {

@@ -143,7 +143,7 @@ pub(crate) fn new_device(info: DeviceInfo) -> ApiResult<NewDevice> {
     let platform = info
         .platform
         .map(|p| p.trim().to_ascii_lowercase())
-        .filter(|p| ["ios", "macos", "android", "web", "other"].contains(&p.as_str()))
+        .filter(|p| ["ios", "macos", "android", "android_tv", "web", "other"].contains(&p.as_str()))
         .unwrap_or_else(|| String::from("other"));
     let short = |v: Option<String>| v.map(|v| v.trim().chars().take(100).collect::<String>());
     Ok(NewDevice {
@@ -286,7 +286,10 @@ async fn session_end(
 }
 
 /// **`PairResult`** for a key just issued.
-async fn pair_result(state: &ApiState, issued: IssuedDeviceKey) -> ApiResult<PairResult> {
+pub(crate) async fn pair_result(
+    state: &ApiState,
+    issued: IssuedDeviceKey,
+) -> ApiResult<PairResult> {
     let user = load_user(state, issued.principal.access.user).await?;
     let token = state.auth.mint_media_token(&issued.principal)?;
     let server = server_summary(state, false).await;
