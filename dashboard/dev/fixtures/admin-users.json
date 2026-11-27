@@ -9,7 +9,9 @@
         "can_download": true,
         "can_upload": true,
         "can_request": true,
-        "legacy_subsonic": true
+        "legacy_subsonic": true,
+        "can_use_speakers": true,
+        "can_play_services": true
       },
       "library_ids": [
         "l0a8f2c9e7d1b3k5m6n4",
@@ -29,7 +31,9 @@
         "can_download": true,
         "can_upload": false,
         "can_request": true,
-        "legacy_subsonic": false
+        "legacy_subsonic": false,
+        "can_use_speakers": true,
+        "can_play_services": true
       },
       "library_ids": [
         "l0a8f2c9e7d1b3k5m6n4",
@@ -49,6 +53,8 @@
         "can_upload": false,
         "can_request": false,
         "legacy_subsonic": true,
+        "can_use_speakers": true,
+        "can_play_services": true,
         "max_bitrate_kbps": 320
       },
       "library_ids": [
@@ -67,7 +73,9 @@
         "can_download": false,
         "can_upload": false,
         "can_request": false,
-        "legacy_subsonic": false
+        "legacy_subsonic": false,
+        "can_use_speakers": true,
+        "can_play_services": true
       },
       "library_ids": [
         "l0a8f2c9e7d1b3k5m6n4"

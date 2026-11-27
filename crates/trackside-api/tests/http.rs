@@ -250,6 +250,7 @@ async fn start_with_transcoder(
         scan: Arc::new(FakeScanControl::new()),
         acquire,
         enrich: Arc::new(trackside_core::NoEnrich),
+        assistant: std::sync::Arc::new(trackside_core::NoAssistant),
         events: test.events.clone(),
         config: Arc::new(config),
         server: ServerInfo::new(

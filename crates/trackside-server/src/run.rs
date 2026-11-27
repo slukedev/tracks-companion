@@ -237,6 +237,47 @@ fn acquirer(
     Arc::new(crate::noacq::NoAcquisition)
 }
 
+#[cfg(feature = "assistant")]
+type AssistantHandle = trackside_assistant::Assistant;
+#[cfg(not(feature = "assistant"))]
+type AssistantHandle = ();
+
+#[cfg(feature = "assistant")]
+async fn assistant(
+    deps: (&Db, &Arc<Auth>, &EventBus, &Arc<Config>, &Arc<ConfigReport>),
+    urls: UrlBook,
+    shutdown: CancellationToken,
+) -> (Arc<dyn trackside_core::AssistantControl>, AssistantHandle) {
+    let (db, auth, events, config, report) = deps;
+    let started = trackside_assistant::Assistant::start(trackside_assistant::Deps {
+        db: db.clone(),
+        auth: Arc::clone(auth),
+        events: events.clone(),
+        config: Arc::clone(config),
+        report: Arc::clone(report),
+        server_name: config.server.name.clone(),
+        lan_url: Arc::new(move || {
+            urls.get()
+                .into_iter()
+                .find(|u| u.kind == trackside_api::wire::auth::UrlKind::Lan)
+                .map(|u| u.url)
+        }),
+        shutdown,
+        tuning: trackside_assistant::Tuning::default(),
+    })
+    .await;
+    (Arc::new(started.clone()), started)
+}
+
+#[cfg(not(feature = "assistant"))]
+async fn assistant(
+    _deps: (&Db, &Arc<Auth>, &EventBus, &Arc<Config>, &Arc<ConfigReport>),
+    _urls: UrlBook,
+    _shutdown: CancellationToken,
+) -> (Arc<dyn trackside_core::AssistantControl>, AssistantHandle) {
+    (Arc::new(trackside_core::NoAssistant), ())
+}
+
 /// Sets up the first admin from `auth.admin_username` and `auth.admin_password`, or prints the
 /// setup banner while no admin exists.
 async fn setup(auth: &Auth, config: &Config, setup_url: &str) -> anyhow::Result<()> {
@@ -260,6 +301,8 @@ async fn setup(auth: &Auth, config: &Config, setup_url: &str) -> anyhow::Result<
                 can_request: true,
                 legacy_subsonic: true,
                 max_bitrate_kbps: None,
+                can_use_speakers: true,
+                can_play_services: true,
             },
             libraries: Vec::new(),
         };
@@ -447,6 +490,12 @@ pub async fn run_with(
     info.base_path.clone_from(&base_path);
     info.urls = urls.clone();
     info.report = Arc::new(report);
+    let (assistant_control, assistant_handle) = assistant(
+        (&db, &auth, &events, &config, &info.report),
+        urls.clone(),
+        shutdown.clone(),
+    )
+    .await;
     info.fingerprint.clone_from(&fingerprint);
     let metrics = Arc::new(Metrics::default());
     let backup_status = Arc::new(Mutex::new(BackupStatus::default()));
@@ -491,6 +540,7 @@ pub async fn run_with(
         scan: Arc::clone(&scan),
         acquire,
         enrich: Arc::clone(&enrich),
+        assistant: assistant_control,
         events: events.clone(),
         config: Arc::clone(&config),
         server: info,
@@ -656,6 +706,10 @@ pub async fn run_with(
     shutdown.cancelled().await;
     let _ = sd_notify::notify(&[sd_notify::NotifyState::Stopping]);
     media.shutdown();
+    #[cfg(feature = "assistant")]
+    assistant_handle.shutdown().await;
+    #[cfg(not(feature = "assistant"))]
+    let () = assistant_handle;
     tracing::info!(
         grace_s = config.server.shutdown_grace.as_secs(),
         "stopping; letting open requests finish"

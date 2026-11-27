@@ -238,6 +238,7 @@ async fn start() -> Result<Server, Box<dyn std::error::Error>> {
         scan: Arc::new(FakeScanControl::new()),
         acquire: Arc::clone(&acquire) as Arc<dyn AcquireControl>,
         enrich: Arc::new(trackside_core::NoEnrich),
+        assistant: std::sync::Arc::new(trackside_core::NoAssistant),
         events: test.events.clone(),
         config: Arc::new(config),
         server,

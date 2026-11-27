@@ -135,6 +135,7 @@ fn large_library_stays_within_budgets() -> TestResult {
                 role: Role::Member,
                 permissions: trackside_core::Permissions::default(),
                 libraries: vec![library.key],
+                service: None,
             },
         )
     })?;

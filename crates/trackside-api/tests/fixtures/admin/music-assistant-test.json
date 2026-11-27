@@ -1,0 +1,14 @@
+{
+  "detail": "Connected to Music Assistant 2.10.13 as trackside (admin).",
+  "elapsed_ms": 312,
+  "ok": true,
+  "players": 5,
+  "providers": 9,
+  "server": {
+    "compatible": true,
+    "name": "Music Assistant",
+    "schema_version": 65,
+    "tested": true,
+    "version": "2.10.13"
+  }
+}

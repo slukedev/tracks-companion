@@ -12,6 +12,7 @@ pub mod events;
 pub mod library;
 pub mod playback;
 pub mod social;
+pub mod speakers;
 pub mod sync;
 
 use std::collections::BTreeMap;
@@ -323,6 +324,10 @@ pub struct Features {
     /// Trackside Cloud is on (section 19).
     #[serde(default)]
     pub cloud: bool,
+    /// This server has the speakers, catalog and relay routes; whether this user may use
+    /// them now is `/me`'s `features`.
+    #[serde(default)]
+    pub speakers: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

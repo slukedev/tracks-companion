@@ -281,6 +281,10 @@ async fn overview(
         count: user_count,
         devices: device_count,
     };
+    let assistant = state.assistant.overview().await;
+    body.problems
+        .extend(super::music_assistant::overview_problems(&assistant));
+    body.music_assistant = Some(super::music_assistant::overview_body(&assistant));
     let providers = state.acquire.providers().await;
     body.acquisition = if providers.is_empty() {
         None
@@ -393,6 +397,7 @@ pub fn admin_user(
         last_seen_at: last_seen_at.map(Time),
         disabled: user.disabled_at.is_some(),
         counts,
+        service: user.service.clone(),
     }
 }
 
@@ -478,6 +483,8 @@ fn apply_permissions(base: &Permissions, patch: Option<&PermissionsPatch>) -> Pe
         can_request: patch.can_request.unwrap_or(base.can_request),
         legacy_subsonic: patch.legacy_subsonic.unwrap_or(base.legacy_subsonic),
         max_bitrate_kbps: patch.max_bitrate_kbps.unwrap_or(base.max_bitrate_kbps),
+        can_use_speakers: patch.can_use_speakers.unwrap_or(base.can_use_speakers),
+        can_play_services: patch.can_play_services.unwrap_or(base.can_play_services),
     }
 }
 
@@ -657,6 +664,12 @@ async fn password_reset(
 ) -> ApiResult<Response> {
     require_recent_auth(&state, &principal)?;
     let user = find_user(&state, &id).await?;
+    if user.service.is_some() {
+        return Err(ApiError::conflict(
+            "service_account",
+            "This account belongs to an integration and has no password.",
+        ));
+    }
     let reset = state
         .auth
         .create_password_reset(principal.access.user, user.key)
@@ -1762,6 +1775,7 @@ async fn list_keys(
                 created_at: record.created_at,
                 last_used_at: record.last_used_at,
                 last_used_ip: record.last_used_ip,
+                managed_by: k.managed_by.clone(),
             })
         })
         .collect();

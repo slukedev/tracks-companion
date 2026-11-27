@@ -53,6 +53,7 @@ fn user(db: &Db, name: &str) -> Result<UserKey, Box<dyn std::error::Error>> {
         role: Role::Member,
         permissions: Permissions::default(),
         libraries: Vec::new(),
+        service: None,
     };
     Ok(db.write_blocking(move |tx| users::create(tx, &new))?.key)
 }

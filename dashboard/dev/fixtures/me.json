@@ -8,7 +8,9 @@
       "can_download": true,
       "can_upload": true,
       "can_request": true,
-      "legacy_subsonic": true
+      "legacy_subsonic": true,
+      "can_use_speakers": true,
+      "can_play_services": true
     }
   },
   "libraries": [
@@ -59,6 +61,13 @@
     },
     "apple_music": {
       "developer_token": true
+    },
+    "catalog": {
+      "relay": true,
+      "relay_cellular": true
+    },
+    "speakers": {
+      "control": true
     }
   }
 }

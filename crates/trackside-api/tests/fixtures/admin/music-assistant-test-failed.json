@@ -1,0 +1,12 @@
+{
+  "detail": "Music Assistant refused the token (error 23: Invalid or expired token).",
+  "elapsed_ms": 140,
+  "ok": false,
+  "server": {
+    "compatible": true,
+    "name": "Music Assistant",
+    "schema_version": 128,
+    "tested": true,
+    "version": "2.11.0b11"
+  }
+}

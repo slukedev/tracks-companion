@@ -1,0 +1,31 @@
+[package]
+name = "trackside-assistant"
+description = "Music Assistant for Trackside: speakers, the admin connection and Trackside's own registration."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+trackside-core.workspace = true
+trackside-auth.workspace = true
+trackside-mass.workspace = true
+tracks-model.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+base64.workspace = true
+http.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+trackside-core = { workspace = true, features = ["testing"] }
+trackside-mass = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

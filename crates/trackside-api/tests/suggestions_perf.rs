@@ -363,6 +363,7 @@ fn seed(db: &Db, root: &Path, total: usize) -> TestResult {
                     role: if u == 0 { Role::Admin } else { Role::Member },
                     permissions: Permissions::default(),
                     libraries: vec![library.key],
+                    service: None,
                 },
             )
         })?;
@@ -576,6 +577,7 @@ async fn start(total: usize) -> TestResult<Server> {
         scan: Arc::new(FakeScanControl::new()),
         acquire: Arc::new(OpenAcquisition),
         enrich: lastfm.clone(),
+        assistant: std::sync::Arc::new(trackside_core::NoAssistant),
         events: db.events().clone(),
         config: Arc::clone(&config),
         server: ServerInfo::new(uuid::Uuid::new_v4(), "Home", clock.now()),

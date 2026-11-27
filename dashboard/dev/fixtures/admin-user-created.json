@@ -8,6 +8,8 @@
     "can_upload": false,
     "can_request": false,
     "legacy_subsonic": true,
+    "can_use_speakers": true,
+    "can_play_services": true,
     "max_bitrate_kbps": 320
   },
   "library_ids": [

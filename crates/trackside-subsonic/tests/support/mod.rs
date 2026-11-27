@@ -538,6 +538,7 @@ impl Fixture {
                         role: Role::Admin,
                         permissions: Permissions::default(),
                         libraries: Vec::new(),
+                        service: None,
                     },
                 )?;
                 let member = repo::users::create(
@@ -552,6 +553,7 @@ impl Fixture {
                             ..Permissions::default()
                         },
                         libraries: vec![a.key],
+                        service: None,
                     },
                 )?;
                 Ok((a, b, admin.key, member.key))

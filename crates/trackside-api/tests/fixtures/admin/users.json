@@ -12,8 +12,10 @@
       ],
       "permissions": {
         "can_download": true,
+        "can_play_services": true,
         "can_request": true,
         "can_upload": true,
+        "can_use_speakers": true,
         "legacy_subsonic": true
       },
       "role": "admin",

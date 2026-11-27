@@ -13,8 +13,10 @@ name = "trackside"
 path = "src/main.rs"
 
 [features]
-default = ["acquire", "acme"]
+default = ["acquire", "acme", "assistant"]
 acquire = ["dep:trackside-acquire"]
+# Music Assistant: speakers, and Trackside as a source in it.
+assistant = ["dep:trackside-assistant"]
 acme = ["dep:rustls-acme"]
 
 [dependencies]
@@ -23,6 +25,7 @@ trackside-media.workspace = true
 trackside-auth.workspace = true
 trackside-scan.workspace = true
 trackside-acquire = { workspace = true, optional = true }
+trackside-assistant = { workspace = true, optional = true }
 trackside-enrich.workspace = true
 trackside-subsonic.workspace = true
 trackside-api.workspace = true

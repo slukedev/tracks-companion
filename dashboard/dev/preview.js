@@ -1,5 +1,6 @@
 // Answers api.js calls from dev/fixtures when the page is opened with ?preview.
-// Variants: ?preview=member, noacq, nostats, fresh, setup, signedout, ratelimit, slow, error, reauth.
+// Variants: ?preview=member, noacq, nostats, fresh, setup, signedout, ratelimit, slow, error, reauth,
+// needsadmin (a Music Assistant token that is not an admin's). A test with the token "wrong" fails.
 // A pasted Apple Music key without BEGIN PRIVATE KEY answers 400, to see the field error.
 // Connect a TV: a code starting 0 is unknown, E expired, D used, K locked, R rate limited,
 // N from outside the home network; any other code is a TV waiting.
@@ -22,9 +23,11 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 let signedIn = sessionStorage.getItem('preview-signed-in') === '1';
 let reauthed = false;
-const SENSITIVE = ['PATCH /admin/users/{id}', 'DELETE /admin/users/{id}', 'POST /me/api-keys', 'POST /admin/users/{id}/password-reset', 'PUT /admin/apple-music', 'DELETE /admin/apple-music'];
+const SENSITIVE = ['PATCH /admin/users/{id}', 'DELETE /admin/users/{id}', 'POST /me/api-keys', 'POST /admin/users/{id}/password-reset', 'PUT /admin/apple-music', 'DELETE /admin/apple-music', 'DELETE /admin/music-assistant', 'POST /admin/music-assistant/registration', 'DELETE /admin/music-assistant/registration'];
 // The Apple Music key: saved in the normal preview, absent on a fresh server, and changed by the page.
 let appleMusicSet = null;
+// Music Assistant: connected in the normal preview, not set up on a fresh server.
+let assistantSet = null;
 
 const reads = {
   'GET /setup/status': (v) => (v === 'setup' ? 'setup-status-required' : 'setup-status'),
@@ -47,6 +50,9 @@ const reads = {
   'GET /admin/settings': () => 'admin-settings',
   'GET /admin/enrichment': () => 'admin-enrichment',
   'GET /admin/apple-music': (v) => ((appleMusicSet ?? v !== 'fresh') ? 'admin-apple-music' : 'admin-apple-music-unset'),
+  'GET /admin/music-assistant': (v) => ((assistantSet ?? v !== 'fresh') ? 'admin-music-assistant' : 'admin-music-assistant-unset'),
+  'GET /admin/music-assistant/registration': (v) => (v === 'needsadmin' ? 'admin-music-assistant-registration-needs-admin' : 'admin-music-assistant-registration'),
+  'GET /admin/music-assistant/providers': () => 'admin-music-assistant-providers',
   'GET /admin/server/urls': () => 'admin-server-urls',
   'GET /admin/backups': () => 'admin-backups',
   'GET /admin/audit': () => 'admin-audit',
@@ -86,6 +92,11 @@ const writes = {
     return 'admin-apple-music';
   },
   'DELETE /admin/apple-music': () => { appleMusicSet = false; return null; },
+  'PATCH /admin/music-assistant': () => { assistantSet = true; return 'admin-music-assistant'; },
+  'DELETE /admin/music-assistant': () => { assistantSet = false; return null; },
+  'POST /admin/music-assistant/test': (_, __, body) => (body?.token === 'wrong' ? 'admin-music-assistant-test-failed' : 'admin-music-assistant-test'),
+  'POST /admin/music-assistant/registration': () => 'admin-music-assistant-registration',
+  'DELETE /admin/music-assistant/registration': () => null,
   'PATCH /admin/settings': (_, __, body) => {
     if (body?.['acquire.fetched_keep'] < 0) fail(400, 'bad_request', 'Use 0 or more.', { field: 'acquire.fetched_keep' });
     if (typeof body?.['acquire.fetched_max_bytes'] === 'string' && !/^\d+(\.\d+)?\s*[KMGT]i?B$/i.test(body['acquire.fetched_max_bytes'])) fail(400, 'bad_request', 'Write a size like 20GiB.', { field: 'acquire.fetched_max_bytes' });

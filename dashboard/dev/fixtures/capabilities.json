@@ -34,7 +34,8 @@
     "lyrics": true,
     "uploads": false,
     "events": true,
-    "animated_art": false
+    "animated_art": false,
+    "speakers": true
   },
   "subsonic": {
     "enabled": true,

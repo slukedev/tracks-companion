@@ -234,6 +234,8 @@ pub struct Principal {
     pub key: Option<KeyId>,
     /// The dashboard session, for session requests.
     pub session: Option<SessionInfo>,
+    /// A service account (`users.service`): its keys work only on `/rest`.
+    pub service: bool,
 }
 
 /// A dashboard session behind a request.
@@ -276,6 +278,8 @@ pub(crate) fn effective_permissions(role: Role, stored: Permissions) -> Permissi
             can_request: true,
             legacy_subsonic: true,
             max_bitrate_kbps: stored.max_bitrate_kbps,
+            can_use_speakers: true,
+            can_play_services: true,
         },
         Role::Member => stored,
     }
@@ -670,6 +674,9 @@ pub struct Auth {
     link_polls: limit::RequestLimiter<limit::IpKey>,
     link_guesses: limit::FailureLimiter<UserKey>,
     link_guesses_global: limit::FailureLimiter<()>,
+    speaker_commands: limit::RequestLimiter<UserKey>,
+    speaker_plays: limit::RequestLimiter<UserKey>,
+    assistant_tests: limit::RequestLimiter<UserKey>,
     cache: Arc<cache::CredentialCache>,
     /// Media epochs of devices seen authenticating, so a media token can be minted without
     /// a database read. The epoch is checked against the database when the token is used.
@@ -697,6 +704,15 @@ impl std::fmt::Debug for Auth {
 /// Apple Music developer tokens a user may ask for in a minute. The server hands out the
 /// same cached token, so a client needs one only when it starts or the token is due.
 pub const DEVELOPER_TOKENS_PER_MINUTE: u32 = 10;
+
+/// Speaker commands a user may send a second, and at once (contract 5.4). Volume and seek
+/// drags are coalesced by the server, so a slider at 10 a second stays well inside this.
+pub const SPEAKER_COMMANDS_PER_SECOND: u32 = 10;
+pub const SPEAKER_COMMAND_BURST: u32 = 30;
+/// `play` and `transfer` commands a user may send a minute.
+pub const SPEAKER_PLAYS_PER_MINUTE: u32 = 30;
+/// Music Assistant connection tests an admin may run a minute.
+pub const ASSISTANT_TESTS_PER_MINUTE: u32 = 6;
 
 /// Wrong pairing-request codes a signed-in user may enter in 10 minutes.
 const APPROVAL_ATTEMPTS: u32 = 5;
@@ -764,6 +780,21 @@ impl Auth {
                 link::GUESSES_GLOBAL_PER_HOUR,
                 Duration::from_hours(1),
                 link::GUESSES_GLOBAL_PER_HOUR / 4,
+                Arc::clone(&clock),
+            ),
+            speaker_commands: limit::RequestLimiter::new(
+                SPEAKER_COMMANDS_PER_SECOND,
+                SPEAKER_COMMAND_BURST,
+                Arc::clone(&clock),
+            ),
+            speaker_plays: limit::RequestLimiter::per_minute(
+                SPEAKER_PLAYS_PER_MINUTE,
+                SPEAKER_PLAYS_PER_MINUTE,
+                Arc::clone(&clock),
+            ),
+            assistant_tests: limit::RequestLimiter::per_minute(
+                ASSISTANT_TESTS_PER_MINUTE,
+                ASSISTANT_TESTS_PER_MINUTE,
                 Arc::clone(&clock),
             ),
             cache,
@@ -985,6 +1016,32 @@ impl Auth {
             .map_err(AuthError::rate_limited)
     }
 
+    /// Counts one speaker command; `play` and `transfer` also count against their own
+    /// per-minute limit.
+    pub fn speaker_command(
+        &self,
+        principal: &Principal,
+        starts_playback: bool,
+    ) -> Result<(), AuthError> {
+        let user = principal.access.user;
+        self.speaker_commands
+            .check(&user, &self.clock)
+            .map_err(AuthError::rate_limited)?;
+        if starts_playback {
+            self.speaker_plays
+                .check(&user, &self.clock)
+                .map_err(AuthError::rate_limited)?;
+        }
+        Ok(())
+    }
+
+    /// Counts one Music Assistant connection test.
+    pub fn assistant_test(&self, principal: &Principal) -> Result<(), AuthError> {
+        self.assistant_tests
+            .check(&principal.access.user, &self.clock)
+            .map_err(AuthError::rate_limited)
+    }
+
     /// Takes one of the user's 3 transcode slots.
     pub fn transcode_slot(
         &self,
@@ -1123,6 +1180,7 @@ pub(crate) fn load_principal(
         device,
         key: None,
         session: None,
+        service: record.service.is_some(),
     }))
 }
 
@@ -1212,6 +1270,8 @@ mod tests {
             can_request: false,
             legacy_subsonic: false,
             max_bitrate_kbps: Some(128),
+            can_use_speakers: false,
+            can_play_services: false,
         };
         let admin = effective_permissions(Role::Admin, stored.clone());
         assert!(admin.can_download && admin.can_request && admin.legacy_subsonic);
@@ -1235,6 +1295,7 @@ mod tests {
             device: None,
             key: None,
             session: None,
+            service: false,
         };
         assert!(!principal.allows(Scopes::REQUEST));
         assert!(principal.allows(Scopes::WRITE));

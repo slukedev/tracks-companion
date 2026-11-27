@@ -7,6 +7,8 @@
     "can_download": true,
     "can_upload": false,
     "can_request": true,
-    "legacy_subsonic": false
+    "legacy_subsonic": false,
+    "can_use_speakers": true,
+    "can_play_services": true
   }
 }

@@ -64,6 +64,16 @@ pub struct Permissions {
     pub legacy_subsonic: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_bitrate_kbps: Option<u32>,
+    /// See and control speakers. Absent from older servers, meaning on.
+    #[serde(default = "yes")]
+    pub can_use_speakers: bool,
+    /// Play streaming services through the owner's Music Assistant.
+    #[serde(default = "yes")]
+    pub can_play_services: bool,
+}
+
+const fn yes() -> bool {
+    true
 }
 
 /// The user shape of sections 6 and 7.
@@ -357,6 +367,30 @@ pub struct MeFeatures {
     /// Present only when the server holds a `MusicKit` key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub apple_music: Option<AppleMusicFeature>,
+    /// Streaming services through Music Assistant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog: Option<CatalogFeature>,
+    /// Music Assistant speakers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speakers: Option<SpeakersFeature>,
+}
+
+/// `features.catalog` in `/me`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogFeature {
+    /// This device can play catalog items through the relay (the lossless tier).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub relay: bool,
+    /// The relay's cellular tier too, which needs ffmpeg.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub relay_cellular: bool,
+}
+
+/// `features.speakers` in `/me`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpeakersFeature {
+    /// The credential may send commands (it has `write`).
+    pub control: bool,
 }
 
 /// `features.apple_music` in `/me`.

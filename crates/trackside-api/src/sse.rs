@@ -21,6 +21,8 @@ pub struct EventFilter {
     pub device: Option<DeviceKey>,
     /// Whether acquisition events reach this caller (the feature is available to them).
     pub acquisition: bool,
+    /// Whether speaker events reach this caller (`features.speakers`).
+    pub speakers: bool,
     /// Prefixed in front of instant-play URLs.
     pub base_path: String,
 }
@@ -134,6 +136,12 @@ pub fn visible_event(event: &ServerEvent, filter: &EventFilter) -> Outgoing {
                 platform: platform.clone(),
             }),
         },
+        ServerEvent::Speaker(event) if filter.speakers => {
+            match crate::routes::speakers::event_body(event, access) {
+                Some((event, data)) => Outgoing::Send { event, data },
+                None => Outgoing::Skip,
+            }
+        }
         ServerEvent::ServerUrls { version } => Outgoing::Send {
             event: "server_urls",
             data: data(&ServerUrlsEvent {
@@ -297,6 +305,7 @@ mod tests {
             },
             device: Some(DeviceKey(9)),
             acquisition: false,
+            speakers: false,
             base_path: String::new(),
         }
     }

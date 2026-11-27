@@ -1,0 +1,8 @@
+{
+  "base_url": "http://192.168.1.20:4747",
+  "last_error": {
+    "at": "2026-11-14T09:30:00.000Z",
+    "message": "The Music Assistant account trackside is not an admin, so it cannot add providers."
+  },
+  "state": "needs_admin"
+}

@@ -49,9 +49,21 @@ pub mod build {
     pub use crate::routes::enrichment::status_body as enrichment_status_body;
     pub use crate::routes::link::{link_info_body, link_start_body};
     pub use crate::routes::media::{decision_body, download_name, reason_text};
+    pub use crate::routes::music_assistant::{
+        overview_body as music_assistant_overview_body,
+        overview_problems as music_assistant_problems,
+        providers_body as music_assistant_providers_body,
+        registration_body as music_assistant_registration_body,
+        status_body as music_assistant_body, test_body as music_assistant_test_body,
+    };
     pub use crate::routes::public::capabilities_body;
     pub use crate::routes::settings::{LASTFM_API_KEY, apply_stored_auth, stored_secret};
     pub use crate::routes::social::{check_listen, listen_result};
+    pub use crate::routes::speakers::{
+        command_body as speaker_command_body, command_event_body as speaker_command_event_body,
+        event_body as speaker_event_body, queue_body as speaker_queue_body, speaker_body,
+        speakers_body,
+    };
     pub use crate::routes::stats::{
         DayBuckets, day_buckets, listening_body, requests_body, storage_body, streams_body,
     };
@@ -425,6 +437,8 @@ pub struct ApiState {
     pub acquire: Arc<dyn AcquireControl>,
     /// Last.fm lookups for suggestions.
     pub enrich: Arc<dyn EnrichControl>,
+    /// Music Assistant: speakers and the admin connection.
+    pub assistant: Arc<dyn trackside_core::AssistantControl>,
     pub events: EventBus,
     pub config: Arc<Config>,
     pub server: ServerInfo,

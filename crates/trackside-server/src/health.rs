@@ -238,6 +238,7 @@ impl HealthSource for Health {
                     transcode_cache_bytes: self.media.transcode_cache_bytes(),
                 },
                 acquisition: None,
+                music_assistant: None,
                 users: trackside_api::wire::admin::OverviewUsers::default(),
                 backups: self.backups_summary(),
             }

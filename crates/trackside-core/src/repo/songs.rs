@@ -846,3 +846,23 @@ pub fn total_bytes(c: &Connection, a: &Access) -> Result<u64, DbError> {
     )?;
     Ok(to_u64(total))
 }
+
+/// Where each present song lives and its artwork, ignoring who asks: for state shared
+/// between callers (what a speaker plays), checked per caller later.
+pub fn placement(
+    c: &Connection,
+    ids: &[SongId],
+) -> Result<HashMap<SongId, (LibraryKey, Option<crate::ids::ArtworkId>)>, DbError> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let list = json_strings(ids.iter().map(PublicId::as_str));
+    let mut statement = c.prepare_cached(
+        "SELECT pid, library_id, artwork_id FROM songs
+         WHERE pid IN (SELECT value FROM json_each(?1)) AND missing_since IS NULL",
+    )?;
+    let rows = statement.query_map([&list], |row| {
+        Ok((row.get::<_, SongId>(0)?, (row.get(1)?, row.get(2)?)))
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}

@@ -10,6 +10,13 @@
     },
     "apple_music": {
       "developer_token": true
+    },
+    "catalog": {
+      "relay": true,
+      "relay_cellular": true
+    },
+    "speakers": {
+      "control": true
     }
   },
   "libraries": [
@@ -53,8 +60,10 @@
     "id": "uenspa9s0dhs6ps80kc00",
     "permissions": {
       "can_download": true,
+      "can_play_services": true,
       "can_request": true,
       "can_upload": false,
+      "can_use_speakers": true,
       "legacy_subsonic": false
     },
     "role": "member",

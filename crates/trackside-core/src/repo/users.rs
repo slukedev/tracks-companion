@@ -27,6 +27,9 @@ pub struct User {
     /// The user must pick a new password before doing anything else (set after an admin
     /// reset from the command line); cleared by [`set_password`].
     pub must_change_password: bool,
+    /// The integration a service account belongs to (`music_assistant`). Service accounts
+    /// have no password and cannot sign in.
+    pub service: Option<String>,
 }
 
 /// A user to create. The password is already hashed.
@@ -38,6 +41,8 @@ pub struct NewUser {
     pub role: Role,
     pub permissions: Permissions,
     pub libraries: Vec<LibraryKey>,
+    /// Set for a service account; `password_hash` is then unusable.
+    pub service: Option<String>,
 }
 
 /// `PATCH /admin/users/{id}` and `PATCH /api/v1/me`. `None` leaves a field unchanged.
@@ -51,7 +56,8 @@ pub struct UserPatch {
 
 const SELECT: &str = "SELECT id, pid, username, display_name, role, can_download, can_upload,
         can_request, legacy_subsonic, max_bitrate_kbps, sync_epoch, created_at, updated_at,
-        password_changed_at, disabled_at, must_change_password
+        password_changed_at, disabled_at, must_change_password, can_use_speakers,
+        can_play_services, service
     FROM users";
 
 fn map_row(row: &Row<'_>) -> rusqlite::Result<User> {
@@ -68,6 +74,8 @@ fn map_row(row: &Row<'_>) -> rusqlite::Result<User> {
             can_request: row.get(7)?,
             legacy_subsonic: row.get(8)?,
             max_bitrate_kbps: opt_u32(row.get(9)?),
+            can_use_speakers: row.get(16)?,
+            can_play_services: row.get(17)?,
         },
         sync_epoch: row.get(10)?,
         created_at: row.get(11)?,
@@ -75,6 +83,7 @@ fn map_row(row: &Row<'_>) -> rusqlite::Result<User> {
         password_changed_at: row.get(13)?,
         disabled_at: row.get(14)?,
         must_change_password: row.get(15)?,
+        service: row.get(18)?,
     })
 }
 
@@ -101,13 +110,18 @@ pub fn by_username(c: &Connection, username: &str) -> Result<Option<User>, DbErr
     )
 }
 
-/// The Argon2id PHC string of a user's password.
+/// The Argon2id PHC string of a user's password. Service accounts have none.
 pub fn password_hash(c: &Connection, key: UserKey) -> Result<Option<String>, DbError> {
     Ok(
-        c.prepare_cached("SELECT password_hash FROM users WHERE id = ?1")?
+        c.prepare_cached("SELECT password_hash FROM users WHERE id = ?1 AND service IS NULL")?
             .query_row([key], |row| row.get(0))
             .optional()?,
     )
+}
+
+/// The service account of an integration, if it exists.
+pub fn service_account(c: &Connection, service: &str) -> Result<Option<User>, DbError> {
+    one(c, "WHERE service = ?1", &service)
 }
 
 /// Every user, by username.
@@ -170,8 +184,9 @@ pub fn create(tx: &mut WriteTx<'_>, new: &NewUser) -> Result<User, DbError> {
     tx.prepare_cached(
         "INSERT INTO users (pid, username, username_key, display_name, password_hash, role,
              can_download, can_upload, can_request, legacy_subsonic, max_bitrate_kbps,
-             created_at, updated_at, password_changed_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?12)",
+             can_use_speakers, can_play_services, service, created_at, updated_at,
+             password_changed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15, ?15)",
     )?
     .execute(params![
         id,
@@ -185,6 +200,9 @@ pub fn create(tx: &mut WriteTx<'_>, new: &NewUser) -> Result<User, DbError> {
         p.can_request,
         p.legacy_subsonic,
         p.max_bitrate_kbps,
+        p.can_use_speakers,
+        p.can_play_services,
+        new.service,
         now
     ])
     .map_err(|e| conflict_on_unique(e, "username taken"))?;
@@ -250,7 +268,8 @@ pub fn update(tx: &mut WriteTx<'_>, key: UserKey, patch: &UserPatch) -> Result<U
     tx.prepare_cached(
         "UPDATE users SET display_name = ?2, role = ?3, can_download = ?4, can_upload = ?5,
              can_request = ?6, legacy_subsonic = ?7, max_bitrate_kbps = ?8, disabled_at = ?9,
-             sync_epoch = sync_epoch + ?10, updated_at = ?11
+             sync_epoch = sync_epoch + ?10, updated_at = ?11, can_use_speakers = ?12,
+             can_play_services = ?13
          WHERE id = ?1",
     )?
     .execute(params![
@@ -264,7 +283,9 @@ pub fn update(tx: &mut WriteTx<'_>, key: UserKey, patch: &UserPatch) -> Result<U
         p.max_bitrate_kbps,
         disabled_at,
         epoch_bump,
-        tx.now()
+        tx.now(),
+        p.can_use_speakers,
+        p.can_play_services
     ])?;
     get(tx, key)?.ok_or(DbError::NotFound)
 }
@@ -355,7 +376,7 @@ pub fn count_admins(c: &Connection) -> Result<u32, DbError> {
 
 pub fn count(c: &Connection) -> Result<u64, DbError> {
     let n: i64 = c
-        .prepare_cached("SELECT count(*) FROM users")?
+        .prepare_cached("SELECT count(*) FROM users WHERE service IS NULL")?
         .query_row([], |row| row.get(0))?;
     Ok(to_u64(n))
 }

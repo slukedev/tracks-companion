@@ -75,6 +75,13 @@
       "running": 1
     }
   },
+  "music_assistant": {
+    "registration": "registered",
+    "relays": 1,
+    "services": 2,
+    "speakers": 5,
+    "state": "connected"
+  },
   "problems": [
     {
       "code": "library_unavailable",

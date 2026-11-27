@@ -6,6 +6,8 @@
 //! [`Db::read`] or a [`WriteTx`] from [`Db::write`].
 
 pub mod access;
+pub mod assistant;
+pub mod catalog_ref;
 pub mod config;
 pub mod control;
 pub mod db;
@@ -27,15 +29,17 @@ pub mod time;
 pub mod testing;
 
 pub use access::{Access, LibrarySet, Permissions, Role};
+pub use assistant::{AssistantControl, NoAssistant};
 pub use config::{Config, ConfigReport, ConfigSources};
 pub use control::{AcquireControl, BoxFuture, ScanControl};
 pub use db::{Change, ChangeKind, ChangeOp, Db, DbError, DbOptions, WriteTx};
 pub use enrich::{EnrichControl, NoEnrich};
 pub use events::{Audience, EventBus, ServerEvent};
 pub use ids::{
-    AcquisitionId, AlbumId, ArtistId, ArtworkId, AudioDigest, CandidateToken, DeviceId, DeviceKey,
-    ExternalArtId, FolderId, IdError, ImportId, InviteId, KeyId, LibraryId, LibraryKey, PairingId,
-    PlaylistId, PublicId, ScanRunId, Seq, SongId, UserId, UserKey, random_id,
+    AcquisitionId, AlbumId, ArtistId, ArtworkId, AudioDigest, CandidateToken, CatalogArtId,
+    DeviceId, DeviceKey, ExternalArtId, FolderId, IdError, ImportId, InviteId, KeyId, LibraryId,
+    LibraryKey, PairingId, PlaylistId, PublicId, ScanRunId, Seq, ServiceId, SongId,
+    SpeakerCommandId, SpeakerId, UserId, UserKey, random_id,
 };
 pub use records::Page;
 pub use time::{Clock, Millis, SystemClock, TestClock};

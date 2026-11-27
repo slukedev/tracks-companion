@@ -259,6 +259,28 @@ public_id!(
     InviteId,
     'v'
 );
+public_id!(
+    /// A speaker: a Music Assistant player, derived from the Music Assistant server and the
+    /// player's id there, so it stays the same while Music Assistant keeps the player.
+    SpeakerId,
+    'o'
+);
+public_id!(
+    /// A streaming service: a Music Assistant music provider instance, derived from the
+    /// server and the instance id.
+    ServiceId,
+    'b'
+);
+public_id!(
+    /// A speaker command (random), named in its `202` and its outcome event.
+    SpeakerCommandId,
+    'j'
+);
+public_id!(
+    /// Artwork of a catalog item, derived from the image's address as Music Assistant gave it.
+    CatalogArtId,
+    'm'
+);
 
 impl SongId {
     /// The id a song gets when it is first seen: `BLAKE3("song" ‖ digest)`.
@@ -337,6 +359,36 @@ impl CandidateToken {
     }
 }
 
+impl SpeakerId {
+    /// `BLAKE3("speaker" ‖ ma_server_id ‖ ma_player_id)`.
+    pub fn derive(server_id: &str, player_id: &str) -> Self {
+        Self::from_hash(&hash_parts(&[
+            b"speaker",
+            server_id.as_bytes(),
+            player_id.as_bytes(),
+        ]))
+    }
+}
+
+impl ServiceId {
+    /// `BLAKE3("service" ‖ ma_server_id ‖ provider_instance_id)`.
+    pub fn derive(server_id: &str, instance_id: &str) -> Self {
+        Self::from_hash(&hash_parts(&[
+            b"service",
+            server_id.as_bytes(),
+            instance_id.as_bytes(),
+        ]))
+    }
+}
+
+impl CatalogArtId {
+    /// `BLAKE3("catalog-art" ‖ source)`, where `source` is the image address exactly as Music
+    /// Assistant sent it.
+    pub fn derive(source: &str) -> Self {
+        Self::from_hash(&hash_parts(&[b"catalog-art", source.as_bytes()]))
+    }
+}
+
 /// A new random id of any kind.
 pub fn random_id<T: PublicId>() -> T {
     // A v4 UUID has 122 random bits; hashing it spreads them over the 100 the id keeps.
@@ -384,6 +436,25 @@ internal_key!(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn speaker_and_service_ids_depend_on_the_server_and_the_object() {
+        let kitchen = SpeakerId::derive("8f2e", "ap8c1f2e3d4b5a");
+        assert_eq!(kitchen, SpeakerId::derive("8f2e", "ap8c1f2e3d4b5a"));
+        assert_ne!(kitchen, SpeakerId::derive("9f2e", "ap8c1f2e3d4b5a"));
+        assert!(kitchen.as_str().starts_with('o'));
+        let spotify = ServiceId::derive("8f2e", "spotify--Xb4LkP2q");
+        assert!(spotify.as_str().starts_with('b'));
+        assert_ne!(
+            spotify.as_str()[1..],
+            ServiceId::derive("8f2e", "ap8c1f2e3d4b5a").as_str()[1..]
+        );
+        assert!(
+            CatalogArtId::derive("https://i.scdn.co/image/ab67")
+                .as_str()
+                .starts_with('m')
+        );
+    }
 
     const DIGEST: AudioDigest = AudioDigest([7; 32]);
 

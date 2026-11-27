@@ -3612,12 +3612,32 @@ dependencies = [
  "tower",
  "tracing",
  "tracks-model",
+ "trackside-assistant",
  "trackside-auth",
  "trackside-cloud",
  "trackside-core",
+ "trackside-mass",
  "trackside-media",
  "trackside-subsonic",
  "uuid",
+ "zeroize",
+]
+
+[[package]]
+name = "trackside-assistant"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "http",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracks-model",
+ "trackside-auth",
+ "trackside-core",
+ "trackside-mass",
  "zeroize",
 ]
 
@@ -3831,6 +3851,7 @@ dependencies = [
  "tracing-subscriber",
  "trackside-acquire",
  "trackside-api",
+ "trackside-assistant",
  "trackside-auth",
  "trackside-cloud",
  "trackside-core",

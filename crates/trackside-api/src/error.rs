@@ -7,6 +7,7 @@ use axum::response::{IntoResponse, Response};
 use http::{HeaderValue, StatusCode, header};
 use trackside_auth::{AuthError, LinkError};
 use trackside_core::DbError;
+use trackside_core::assistant::{AssistantError, SpeakerError};
 use trackside_core::control::{AcquireError, ScanControlError};
 use trackside_core::sync::SyncError;
 use trackside_media::MediaError;
@@ -400,6 +401,106 @@ impl From<ScanControlError> for ApiError {
                 "The server is shutting down.",
             ),
             ScanControlError::Db(db) => db.into(),
+            other => Self::internal(&other),
+        }
+    }
+}
+
+impl ApiError {
+    /// `503 speakers_unavailable`: Music Assistant cannot be reached right now.
+    pub fn speakers_unavailable() -> Self {
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "speakers_unavailable",
+            "Speakers aren't reachable right now.",
+        )
+        .with_retry_after(Duration::from_secs(10))
+    }
+
+    /// `503 catalog_unavailable`.
+    pub fn catalog_unavailable() -> Self {
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "catalog_unavailable",
+            "Music services aren't reachable right now.",
+        )
+        .with_retry_after(Duration::from_secs(10))
+    }
+}
+
+impl From<SpeakerError> for ApiError {
+    fn from(error: SpeakerError) -> Self {
+        use serde_json::json;
+        match error {
+            SpeakerError::NotFound => Self::not_found(),
+            SpeakerError::Unavailable => Self::speakers_unavailable(),
+            SpeakerError::Offline => {
+                Self::conflict("speaker_offline", "The speaker is unavailable.")
+            }
+            SpeakerError::PoweredOff => Self::conflict("powered_off", "The speaker is off."),
+            SpeakerError::Unsupported {
+                capability,
+                speaker,
+            } => {
+                let mut details = json!({ "capability": capability });
+                if let Some(speaker) = speaker {
+                    details["speaker_id"] = json!(speaker.to_string());
+                }
+                Self::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "unsupported",
+                    "This speaker can't do that.",
+                )
+                .with_details(details)
+            }
+            SpeakerError::NotPlayable { song, reference } => {
+                let mut details = json!({ "reason": "not_playable" });
+                if let Some(song) = song {
+                    details["song_id"] = json!(song.to_string());
+                }
+                if let Some(reference) = reference {
+                    details["ref"] = json!(reference);
+                }
+                Self::new(
+                    StatusCode::CONFLICT,
+                    "conflict",
+                    "Nothing in the request can play.",
+                )
+                .with_details(details)
+            }
+            SpeakerError::ServiceSignedOut { service } => {
+                let mut details = json!({ "reason": "service_signed_out" });
+                if let Some(service) = service {
+                    details["service_id"] = json!(service.to_string());
+                }
+                Self::new(
+                    StatusCode::CONFLICT,
+                    "conflict",
+                    "The music service is signed out.",
+                )
+                .with_details(details)
+            }
+            SpeakerError::Invalid { field, message } => Self::bad_field(field, message),
+            other => Self::internal(&other),
+        }
+    }
+}
+
+impl From<AssistantError> for ApiError {
+    fn from(error: AssistantError) -> Self {
+        match error {
+            AssistantError::Invalid { field, message } => Self::bad_field(field, message),
+            AssistantError::SetByConfig { field } => Self::new(
+                StatusCode::CONFLICT,
+                "conflict",
+                format!("{field} is set in the configuration file or environment."),
+            )
+            .with_details(serde_json::json!({ "reason": "set_by_config", "field": field })),
+            AssistantError::NotConfigured => {
+                Self::conflict("not_set_up", "Music Assistant is not set up.")
+            }
+            AssistantError::Unavailable => Self::catalog_unavailable(),
+            AssistantError::Failed(message) => Self::conflict("failed", message),
             other => Self::internal(&other),
         }
     }

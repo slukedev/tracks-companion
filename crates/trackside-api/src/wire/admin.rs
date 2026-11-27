@@ -23,6 +23,9 @@ pub struct Overview {
     pub users: OverviewUsers,
     pub backups: OverviewBackups,
     pub problems: Vec<Problem>,
+    /// Always set by the handler; `{"state": "not_set_up"}` before setup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub music_assistant: Option<OverviewMusicAssistant>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,6 +182,10 @@ pub struct AdminUser {
     pub disabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none", flatten)]
     pub counts: Option<UserCounts>,
+    /// The integration a service account belongs to (`music_assistant`): no password, no
+    /// sign-in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -200,6 +207,10 @@ pub struct PermissionsPatch {
     pub legacy_subsonic: Option<bool>,
     #[serde(default, deserialize_with = "present")]
     pub max_bitrate_kbps: Option<Option<u32>>,
+    #[serde(default)]
+    pub can_use_speakers: Option<bool>,
+    #[serde(default)]
+    pub can_play_services: Option<bool>,
 }
 
 /// `Some(None)` for an explicit `null`, `None` for an absent field (with `#[serde(default)]`).
@@ -528,6 +539,9 @@ pub struct AdminKey {
     pub last_used_at: Option<Time>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_used_ip: Option<String>,
+    /// The integration that made and rotates the key (`music_assistant`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_by: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -852,4 +866,276 @@ pub struct StatsRequests {
     pub added: Vec<Option<u32>>,
     pub failed: Vec<Option<u32>>,
     pub cancelled: Vec<Option<u32>>,
+}
+
+/// `{"at", "message"}`: the latest failure.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LastError {
+    pub at: Time,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssistantConnection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<LastError>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<Time>,
+    pub state: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssistantLanUrl {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<Time>,
+    pub reachable: bool,
+    /// `detected` or `configured`.
+    pub source: String,
+    pub url: String,
+    /// Why the address may not work for Music Assistant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssistantRelays {
+    pub active: u32,
+    pub max: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssistantServer {
+    pub compatible: bool,
+    pub min_supported_schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub relay_supported: bool,
+    pub schema_version: u32,
+    pub server_id: String,
+    pub tested: bool,
+    pub version: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssistantSource {
+    pub token: String,
+    pub url: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssistantUser {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    pub username: String,
+}
+
+/// `GET /admin/music-assistant`. The token is never in it: only `token_set`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent flags on the wire"
+)]
+pub struct MusicAssistant {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_register: Option<bool>,
+    pub configured: bool,
+    pub connection: AssistantConnection,
+    /// A certificate authority for `https` is set.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub custom_ca: bool,
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden_services: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lan_url: Option<AssistantLanUrl>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relays: Option<AssistantRelays>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<AssistantServer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub services: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<AssistantSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speakers: Option<u32>,
+    pub token_set: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_set_at: Option<Time>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<AssistantUser>,
+}
+
+/// `PATCH /admin/music-assistant`. `null` clears `url`, `token`, `lan_url` and `ca_pem`.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MusicAssistantPatch {
+    #[serde(default)]
+    pub auto_register: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    pub ca_pem: Option<Option<String>>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub hidden_services: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "present")]
+    pub lan_url: Option<Option<String>>,
+    #[serde(default)]
+    pub relay_max_sessions: Option<u32>,
+    #[serde(default, deserialize_with = "present")]
+    pub token: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    pub url: Option<Option<String>>,
+}
+
+impl std::fmt::Debug for MusicAssistantPatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MusicAssistantPatch")
+            .field("url", &self.url)
+            .field(
+                "token",
+                &self
+                    .token
+                    .as_ref()
+                    .map(|t| t.as_ref().map(|_| "<redacted>")),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+/// `POST /admin/music-assistant/test`.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MusicAssistantTestRequest {
+    #[serde(default)]
+    pub token: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+impl std::fmt::Debug for MusicAssistantTestRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MusicAssistantTestRequest")
+            .field("url", &self.url)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssistantTestServer {
+    pub compatible: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub schema_version: u32,
+    pub tested: bool,
+    pub version: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MusicAssistantTest {
+    pub detail: String,
+    pub elapsed_ms: u64,
+    pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub players: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub providers: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<AssistantTestServer>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegistrationKey {
+    pub created_at: Time,
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<Time>,
+    pub prefix: String,
+    pub scopes: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServiceUser {
+    pub display_name: String,
+    pub id: String,
+    pub username: String,
+}
+
+/// `GET /admin/music-assistant/registration`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MusicAssistantRegistration {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<RegistrationKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<LastError>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_instance_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registered_at: Option<Time>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_user: Option<ServiceUser>,
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_url: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent flags on the wire"
+)]
+pub struct AssistantMusicProvider {
+    pub available: bool,
+    pub domain: String,
+    pub hidden: bool,
+    pub instance_id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_id: Option<String>,
+    pub streaming: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub trackside: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_url: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssistantPlayerProvider {
+    pub available: bool,
+    pub domain: String,
+    pub instance_id: String,
+    pub name: String,
+    pub speakers: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_url: Option<String>,
+}
+
+/// `GET /admin/music-assistant/providers`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MusicAssistantProviders {
+    pub music: Vec<AssistantMusicProvider>,
+    pub players: Vec<AssistantPlayerProvider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_url: Option<String>,
+}
+
+/// `music_assistant` in the overview.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OverviewMusicAssistant {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relays: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub services: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speakers: Option<u32>,
+    pub state: String,
 }

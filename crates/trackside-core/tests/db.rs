@@ -147,14 +147,14 @@ fn opening_a_newer_database_is_refused() -> TestResult {
     let dir = tempfile::tempdir()?;
     let options = options(&dir);
     drop(open(&options)?);
-    Connection::open(&options.path)?.execute_batch("PRAGMA user_version = 7")?;
-    assert_eq!(Db::inspect_schema_version(&options.path)?, Some(7));
+    Connection::open(&options.path)?.execute_batch("PRAGMA user_version = 8")?;
+    assert_eq!(Db::inspect_schema_version(&options.path)?, Some(8));
     let refused = open(&options);
     assert!(
         matches!(
             refused,
             Err(DbError::TooNew {
-                found: 7,
+                found: 8,
                 known: SCHEMA_VERSION
             })
         ),

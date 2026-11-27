@@ -25,6 +25,7 @@ fn filter_for(state: &ApiState, principal: &trackside_auth::Principal) -> EventF
         access: principal.access.clone(),
         device: principal.device.as_ref().map(|(key, _)| *key),
         acquisition: super::account::acquisition_feature(state, principal).is_some(),
+        speakers: super::account::speakers_feature(state, principal).is_some(),
         base_path: state.server.base_path.clone(),
     }
 }

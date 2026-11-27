@@ -1470,6 +1470,8 @@ async fn the_feature_is_offered_only_when_enabled_and_allowed() {
         can_request: true,
         legacy_subsonic: false,
         max_bitrate_kbps: None,
+        can_use_speakers: true,
+        can_play_services: true,
     };
     let acquirer = world.start(vec![FakeProvider::new(ProviderName::Ytdlp, vec![])]);
     acquirer
@@ -2274,6 +2276,8 @@ async fn playing_without_keeping_needs_a_source_that_streams() {
         can_request: true,
         legacy_subsonic: false,
         max_bitrate_kbps: None,
+        can_use_speakers: true,
+        can_play_services: true,
     };
     let acquirer = world.start(vec![files]);
     let search = acquirer

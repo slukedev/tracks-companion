@@ -12,9 +12,11 @@ mod idempotency;
 pub(crate) mod library;
 pub(crate) mod link;
 pub(crate) mod media;
+pub(crate) mod music_assistant;
 pub(crate) mod public;
 pub(crate) mod settings;
 pub(crate) mod social;
+pub(crate) mod speakers;
 pub(crate) mod stats;
 pub(crate) mod sync;
 pub(crate) mod uploads;
@@ -56,12 +58,14 @@ pub(crate) fn router(state: ApiState) -> Router {
         .merge(acquisition::routes())
         .merge(cloud::routes())
         .merge(apple_music::routes())
+        .merge(speakers::routes())
         .nest(
             "/admin",
             admin::routes()
                 .merge(stats::routes())
                 .merge(enrichment::routes())
-                .merge(apple_music::admin_routes()),
+                .merge(apple_music::admin_routes())
+                .merge(music_assistant::admin_routes()),
         )
         .fallback(|| async { ApiError::not_found() })
         .layer(DefaultBodyLimit::max(BODY_LIMIT))

@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "speakers_unavailable",
+    "message": "Speakers aren't reachable right now.",
+    "request_id": "8b2d4f6a0c1e3a5c7e9b1d3f5a7c9e0d"
+  }
+}

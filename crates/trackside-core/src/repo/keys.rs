@@ -35,6 +35,8 @@ pub struct ApiKeyRow {
     pub last_used_ip: Option<String>,
     pub expires_at: Option<Millis>,
     pub revoked_at: Option<Millis>,
+    /// The integration that made the key and rotates it (`music_assistant`).
+    pub managed_by: Option<String>,
 }
 
 /// A key to store.
@@ -51,10 +53,11 @@ pub struct NewKey {
     pub secret_sealed: Option<Vec<u8>>,
     pub scopes: String,
     pub expires_at: Option<Millis>,
+    pub managed_by: Option<String>,
 }
 
 const SELECT: &str = "SELECT pid, user_id, device_id, kind, name, prefix, scopes, created_at,
-        last_used_at, last_used_ip, expires_at, revoked_at
+        last_used_at, last_used_ip, expires_at, revoked_at, managed_by
     FROM api_keys";
 
 fn map_row(row: &Row<'_>) -> rusqlite::Result<ApiKeyRow> {
@@ -72,10 +75,11 @@ fn map_row(row: &Row<'_>) -> rusqlite::Result<ApiKeyRow> {
         last_used_ip: row.get(9)?,
         expires_at: row.get(10)?,
         revoked_at: row.get(11)?,
+        managed_by: row.get(12)?,
     })
 }
 
-fn by_id(c: &Connection, id: &KeyId) -> Result<Option<ApiKeyRow>, DbError> {
+pub fn by_id(c: &Connection, id: &KeyId) -> Result<Option<ApiKeyRow>, DbError> {
     Ok(c.prepare_cached(&format!("{SELECT} WHERE pid = ?1"))?
         .query_row([id], map_row)
         .optional()?)
@@ -85,8 +89,8 @@ pub fn insert(tx: &mut WriteTx<'_>, new: &NewKey) -> Result<ApiKeyRow, DbError> 
     let id: KeyId = random_id();
     tx.prepare_cached(
         "INSERT INTO api_keys (pid, user_id, device_id, kind, name, prefix, secret_hash,
-             secret_sealed, scopes, created_at, expires_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+             secret_sealed, scopes, created_at, expires_at, managed_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
     )?
     .execute(params![
         id,
@@ -99,7 +103,8 @@ pub fn insert(tx: &mut WriteTx<'_>, new: &NewKey) -> Result<ApiKeyRow, DbError> 
         new.secret_sealed,
         new.scopes,
         tx.now(),
-        new.expires_at
+        new.expires_at,
+        new.managed_by
     ])
     .map_err(|e| conflict_on_unique(e, "key already exists"))?;
     by_id(tx, &id)?.ok_or(DbError::NotFound)
@@ -187,14 +192,14 @@ pub fn app_passwords_for(
 ) -> Result<Vec<(ApiKeyRow, Vec<u8>)>, DbError> {
     let mut statement = c.prepare_cached(
         "SELECT pid, user_id, device_id, kind, name, prefix, scopes, created_at, last_used_at,
-                last_used_ip, expires_at, revoked_at, secret_sealed
+                last_used_ip, expires_at, revoked_at, managed_by, secret_sealed
          FROM api_keys
          WHERE user_id = ?1 AND kind = 'app_password' AND revoked_at IS NULL
            AND secret_sealed IS NOT NULL
          ORDER BY id",
     )?;
     let rows = statement.query_map([user], |row| {
-        Ok((map_row(row)?, row.get::<_, Vec<u8>>(12)?))
+        Ok((map_row(row)?, row.get::<_, Vec<u8>>(13)?))
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
@@ -204,11 +209,11 @@ pub fn app_passwords_for(
 pub fn sealed_app_passwords(c: &Connection) -> Result<Vec<(ApiKeyRow, Vec<u8>)>, DbError> {
     let mut statement = c.prepare_cached(
         "SELECT pid, user_id, device_id, kind, name, prefix, scopes, created_at, last_used_at,
-                last_used_ip, expires_at, revoked_at, secret_sealed
+                last_used_ip, expires_at, revoked_at, managed_by, secret_sealed
          FROM api_keys
          WHERE kind = 'app_password' AND revoked_at IS NULL AND secret_sealed IS NOT NULL
          ORDER BY id",
     )?;
-    let rows = statement.query_map([], |row| Ok((map_row(row)?, row.get::<_, Vec<u8>>(12)?)))?;
+    let rows = statement.query_map([], |row| Ok((map_row(row)?, row.get::<_, Vec<u8>>(13)?)))?;
     Ok(rows.collect::<Result<_, _>>()?)
 }

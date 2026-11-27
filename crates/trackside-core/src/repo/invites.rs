@@ -38,7 +38,8 @@ pub struct NewInvite {
 }
 
 const SELECT: &str = "SELECT id, pid, created_by, role, can_request, can_upload, note, created_at,
-        expires_at, used_at, used_by, revoked_at, can_download, legacy_subsonic, max_bitrate_kbps
+        expires_at, used_at, used_by, revoked_at, can_download, legacy_subsonic, max_bitrate_kbps,
+        can_use_speakers, can_play_services
     FROM invites";
 
 fn read(
@@ -62,6 +63,8 @@ fn read(
                         can_request: row.get(4)?,
                         legacy_subsonic: row.get(13)?,
                         max_bitrate_kbps: row.get(14)?,
+                        can_use_speakers: row.get(15)?,
+                        can_play_services: row.get(16)?,
                     },
                     note: row.get(6)?,
                     libraries: Vec::new(),
@@ -91,8 +94,9 @@ pub fn insert(tx: &mut WriteTx<'_>, new: &NewInvite) -> Result<InviteRow, DbErro
     let id: InviteId = random_id();
     tx.prepare_cached(
         "INSERT INTO invites (pid, token_hash, created_by, role, can_request, can_upload, note,
-             created_at, expires_at, can_download, legacy_subsonic, max_bitrate_kbps)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             created_at, expires_at, can_download, legacy_subsonic, max_bitrate_kbps,
+             can_use_speakers, can_play_services)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
     )?
     .execute(params![
         id,
@@ -106,7 +110,9 @@ pub fn insert(tx: &mut WriteTx<'_>, new: &NewInvite) -> Result<InviteRow, DbErro
         new.expires_at,
         new.permissions.can_download,
         new.permissions.legacy_subsonic,
-        new.permissions.max_bitrate_kbps
+        new.permissions.max_bitrate_kbps,
+        new.permissions.can_use_speakers,
+        new.permissions.can_play_services
     ])
     .map_err(|e| conflict_on_unique(e, "invite exists"))?;
     let key = tx.last_insert_rowid();

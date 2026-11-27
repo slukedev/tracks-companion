@@ -43,11 +43,15 @@ pub struct Permissions {
     pub can_request: bool,
     pub legacy_subsonic: bool,
     pub max_bitrate_kbps: Option<u32>,
+    /// See and control speakers (Music Assistant players).
+    pub can_use_speakers: bool,
+    /// Play from streaming services through the owner's Music Assistant accounts.
+    pub can_play_services: bool,
 }
 
 impl Default for Permissions {
-    /// The defaults of the `users` table: downloads and requests on, uploads and legacy
-    /// Subsonic off, no bitrate limit.
+    /// The defaults of the `users` table: downloads, requests, speakers and services on,
+    /// uploads and legacy Subsonic off, no bitrate limit.
     fn default() -> Self {
         Self {
             can_download: true,
@@ -55,6 +59,8 @@ impl Default for Permissions {
             can_request: true,
             legacy_subsonic: false,
             max_bitrate_kbps: None,
+            can_use_speakers: true,
+            can_play_services: true,
         }
     }
 }

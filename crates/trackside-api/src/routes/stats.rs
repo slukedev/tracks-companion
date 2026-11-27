@@ -411,6 +411,7 @@ mod tests {
             password_changed_at: Millis(0),
             disabled_at: None,
             must_change_password: false,
+            service: None,
         };
         let plays = [
             (UserKey(1), at("2026-11-12T05:15:00Z").0, 3),

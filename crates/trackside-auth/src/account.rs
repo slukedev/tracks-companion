@@ -246,6 +246,7 @@ impl Auth {
             role: user.role,
             permissions: user.permissions.clone(),
             libraries: Vec::new(),
+            service: None,
         })
     }
 

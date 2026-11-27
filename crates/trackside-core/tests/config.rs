@@ -121,7 +121,7 @@ fn every_key_has_a_default_and_an_env_name_that_parses() -> TestResult {
 fn secrets_also_come_from_files() -> TestResult {
     let dir = tempfile::tempdir()?;
     let secrets = KEYS.iter().filter(|k| k.secret).collect::<Vec<_>>();
-    assert_eq!(secrets.len(), 2);
+    assert_eq!(secrets.len(), 3);
     let mut pairs = vec![(
         String::from("TRACKSIDE_ADMIN_USERNAME"),
         String::from("admin"),
@@ -158,6 +158,15 @@ fn secrets_also_come_from_files() -> TestResult {
             .as_ref()
             .map(trackside_core::config::Secret::expose),
         Some("from-file-enrichment.lastfm_api_key")
+    );
+    assert_eq!(
+        config
+            .music_assistant
+            .token
+            .as_ref()
+            .map(trackside_core::config::Secret::expose),
+        Some("from-file-music_assistant.token"),
+        "the file's trailing newline is trimmed"
     );
     let missing = load_config(&ConfigSources {
         env: env(&[("TRACKSIDE_ADMIN_PASSWORD_FILE", "/nonexistent/secret")]),

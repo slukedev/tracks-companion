@@ -21,6 +21,8 @@ trackside-enrich = { path = "crates/trackside-enrich" }
 trackside-subsonic = { path = "crates/trackside-subsonic" }
 trackside-api = { path = "crates/trackside-api" }
 trackside-cloud = { path = "crates/trackside-cloud" }
+trackside-mass = { path = "crates/trackside-mass" }
+trackside-assistant = { path = "crates/trackside-assistant" }
 
 # Shared with Tracks
 tracks-model = { git = "https://github.com/slukedev/tracks", rev = "f8f07456fdf118823bccbfbbed49cdd88413ea61" }

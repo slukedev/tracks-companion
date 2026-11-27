@@ -76,6 +76,7 @@ impl TestDb {
             role,
             permissions: Permissions::default(),
             libraries: libraries.to_vec(),
+            service: None,
         };
         self.db
             .write_blocking(move |tx| crate::repo::users::create(tx, &new))

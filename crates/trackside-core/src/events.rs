@@ -74,6 +74,8 @@ pub enum ServerEvent {
         name: String,
         platform: String,
     },
+    /// Speakers changed (contract 1.8). Only for callers with `features.speakers`.
+    Speaker(crate::assistant::SpeakerEvent),
 }
 
 /// A broadcast channel of [`ServerEvent`]s. Cloning shares the channel.

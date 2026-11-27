@@ -91,6 +91,15 @@ impl Auth {
                 tracing::warn!("auth_failure user=- ip={ip} via=key");
             }
         })?;
+        // A service account's key is for Subsonic only (`/rest`, through
+        // `subsonic_api_key`), never the native API.
+        if principal.service {
+            tracing::warn!(
+                "auth_failure user={} ip={ip} via=service_key",
+                principal.username
+            );
+            return Err(AuthError::Unauthenticated);
+        }
         self.key_used(&principal, &key, ip, class).await?;
         Ok(principal)
     }

@@ -112,6 +112,7 @@ pub fn capabilities_body(
             lyrics: true,
             uploads,
             events: true,
+            speakers: true,
             animated_art: false,
             cloud: cloud_epoch.is_some(),
         },

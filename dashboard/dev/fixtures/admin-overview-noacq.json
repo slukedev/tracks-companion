@@ -113,5 +113,8 @@
         "id": "l0a8f2c9e7d1b3k5m6n4"
       }
     }
-  ]
+  ],
+  "music_assistant": {
+    "state": "not_set_up"
+  }
 }

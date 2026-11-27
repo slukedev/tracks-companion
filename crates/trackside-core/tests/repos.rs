@@ -241,6 +241,7 @@ fn device_login_again_revokes_old_keys_and_bumps_media_epoch() -> TestResult {
                 secret_sealed: None,
                 scopes: String::from("library stream"),
                 expires_at: None,
+                managed_by: None,
             },
         )
     })?;

@@ -1,0 +1,53 @@
+{
+  "music": [
+    {
+      "available": true,
+      "domain": "spotify",
+      "hidden": false,
+      "instance_id": "spotify--Xb4LkP2q",
+      "name": "Spotify",
+      "service_id": "bqtyy4kcexcsg6wa0y4w5",
+      "streaming": true,
+      "ui_url": "http://192.168.1.20:8095/#/settings/editprovider/spotify--Xb4LkP2q"
+    },
+    {
+      "available": true,
+      "domain": "tidal",
+      "hidden": true,
+      "instance_id": "tidal--P9wq1Lza",
+      "name": "Tidal",
+      "service_id": "b9j3k7m1q5t8w2x6y0z4c",
+      "streaming": true,
+      "ui_url": "http://192.168.1.20:8095/#/settings/editprovider/tidal--P9wq1Lza"
+    },
+    {
+      "available": true,
+      "domain": "opensubsonic",
+      "hidden": false,
+      "instance_id": "opensubsonic--T7rk2mQa",
+      "name": "Trackside (Home)",
+      "streaming": false,
+      "trackside": true,
+      "ui_url": "http://192.168.1.20:8095/#/settings/editprovider/opensubsonic--T7rk2mQa"
+    }
+  ],
+  "players": [
+    {
+      "available": true,
+      "domain": "sonos",
+      "instance_id": "sonos--Kq2m8VbR",
+      "name": "Sonos",
+      "speakers": 3,
+      "ui_url": "http://192.168.1.20:8095/#/settings/editprovider/sonos--Kq2m8VbR"
+    },
+    {
+      "available": true,
+      "domain": "airplay",
+      "instance_id": "airplay--Lz5n1CwT",
+      "name": "AirPlay",
+      "speakers": 2,
+      "ui_url": "http://192.168.1.20:8095/#/settings/editprovider/airplay--Lz5n1CwT"
+    }
+  ],
+  "ui_url": "http://192.168.1.20:8095/#/settings/providers"
+}

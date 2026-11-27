@@ -43,6 +43,9 @@
       "running": 1
     }
   },
+  "music_assistant": {
+    "state": "not_set_up"
+  },
   "problems": [
     {
       "code": "library_unavailable",

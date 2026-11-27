@@ -9,8 +9,10 @@
   "note": "For Nana",
   "permissions": {
     "can_download": true,
+    "can_play_services": true,
     "can_request": true,
     "can_upload": false,
+    "can_use_speakers": true,
     "legacy_subsonic": false
   },
   "qr_svg_url": "/api/v1/admin/invites/vd5q0azkmcnapwrb59r00/qr.svg",

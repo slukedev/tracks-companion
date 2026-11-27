@@ -1,0 +1,9 @@
+{
+  "command_id": "j8r94fwwwtm0mgm02w6gx",
+  "error": {
+    "code": "command_failed",
+    "message": "The speaker did not accept the command."
+  },
+  "outcome": "failed",
+  "speaker_id": "o0jjvqt740t3wm3jvetx2"
+}

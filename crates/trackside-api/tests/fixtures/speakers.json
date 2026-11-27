@@ -1,0 +1,155 @@
+{
+  "speakers": [
+    {
+      "availability": "available",
+      "can_group_with": [
+        "o0jjvqt740t3wm3jvetx2",
+        "o7sny3kfnvsjbbhx01f2j"
+      ],
+      "capabilities": [
+        "group",
+        "mute",
+        "next_previous",
+        "pause",
+        "play",
+        "power",
+        "queue",
+        "repeat",
+        "seek",
+        "shuffle",
+        "stop",
+        "transfer",
+        "volume"
+      ],
+      "context": {
+        "id": "a3pqh4wnvzkjak75rxbft",
+        "kind": "album",
+        "name": "I Am... Sasha Fierce"
+      },
+      "group": {
+        "leader_id": "o4j8fccgajqsqxancbfcz",
+        "member_ids": [
+          "o4j8fccgajqsqxancbfcz",
+          "o7sny3kfnvsjbbhx01f2j"
+        ],
+        "role": "leader"
+      },
+      "group_volume": 40,
+      "id": "o4j8fccgajqsqxancbfcz",
+      "kind": "speaker",
+      "manufacturer": "Sonos",
+      "model": "Era 100",
+      "muted": false,
+      "name": "Kitchen",
+      "now_playing": {
+        "album": "I Am... Sasha Fierce",
+        "artist": "Beyoncé",
+        "artwork_id": "ca81rcgy3d9pfg6saekwd",
+        "duration_ms": 261640,
+        "item_id": "6f0c3b1e9a2d4c7f8e5b0a1d2c3e4f50",
+        "origin": "queue",
+        "song_id": "sdjcz08vf67h7cx28snq6",
+        "song_key": "halo\u001fbeyonce",
+        "title": "Halo"
+      },
+      "playback": {
+        "position_at": "2026-11-14T09:30:00.000Z",
+        "position_ms": 81000,
+        "repeat": "off",
+        "shuffle": false,
+        "state": "playing"
+      },
+      "powered": true,
+      "protocol": "sonos",
+      "revision": 1042,
+      "volume": 35
+    },
+    {
+      "availability": "available",
+      "can_group_with": [
+        "o0jjvqt740t3wm3jvetx2",
+        "o4j8fccgajqsqxancbfcz"
+      ],
+      "capabilities": [
+        "group",
+        "mute",
+        "next_previous",
+        "pause",
+        "play",
+        "power",
+        "queue",
+        "repeat",
+        "seek",
+        "shuffle",
+        "stop",
+        "transfer",
+        "volume"
+      ],
+      "context": {
+        "id": "a3pqh4wnvzkjak75rxbft",
+        "kind": "album",
+        "name": "I Am... Sasha Fierce"
+      },
+      "group": {
+        "leader_id": "o4j8fccgajqsqxancbfcz",
+        "member_ids": [
+          "o4j8fccgajqsqxancbfcz",
+          "o7sny3kfnvsjbbhx01f2j"
+        ],
+        "role": "member"
+      },
+      "id": "o7sny3kfnvsjbbhx01f2j",
+      "kind": "speaker",
+      "manufacturer": "Sonos",
+      "model": "Five",
+      "muted": false,
+      "name": "Living Room",
+      "now_playing": {
+        "album": "I Am... Sasha Fierce",
+        "artist": "Beyoncé",
+        "artwork_id": "ca81rcgy3d9pfg6saekwd",
+        "duration_ms": 261640,
+        "item_id": "6f0c3b1e9a2d4c7f8e5b0a1d2c3e4f50",
+        "origin": "queue",
+        "song_id": "sdjcz08vf67h7cx28snq6",
+        "song_key": "halo\u001fbeyonce",
+        "title": "Halo"
+      },
+      "playback": {
+        "position_at": "2026-11-14T09:30:00.000Z",
+        "position_ms": 81000,
+        "repeat": "off",
+        "shuffle": false,
+        "state": "playing"
+      },
+      "powered": true,
+      "protocol": "sonos",
+      "revision": 1040,
+      "volume": 45
+    },
+    {
+      "availability": "powered_off",
+      "capabilities": [
+        "play",
+        "power"
+      ],
+      "id": "o0jjvqt740t3wm3jvetx2",
+      "kind": "speaker",
+      "manufacturer": "Google",
+      "model": "Nest Audio",
+      "name": "Bedroom",
+      "powered": false,
+      "protocol": "cast",
+      "revision": 977
+    },
+    {
+      "availability": "unavailable",
+      "id": "osm579gnwm00ysy1hbvhq",
+      "kind": "speaker",
+      "name": "Office",
+      "protocol": "airplay",
+      "revision": 512
+    }
+  ],
+  "state": "ok"
+}

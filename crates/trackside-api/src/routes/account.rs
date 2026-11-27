@@ -232,6 +232,8 @@ fn all_permissions() -> Permissions {
         can_request: true,
         legacy_subsonic: true,
         max_bitrate_kbps: None,
+        can_use_speakers: true,
+        can_play_services: true,
     }
 }
 
@@ -343,6 +345,10 @@ async fn login(
 }
 
 /// The `/me` shape. Pure, for the fixture test.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one argument per part of the shape"
+)]
 pub fn me_body(
     user: &User,
     libraries: &[(Library, bool)],
@@ -350,6 +356,8 @@ pub fn me_body(
     server: ServerSummary,
     feature: Option<AcquireFeature>,
     apple_music: bool,
+    speakers: Option<crate::wire::auth::SpeakersFeature>,
+    catalog: Option<crate::wire::auth::CatalogFeature>,
 ) -> MeResponse {
     MeResponse {
         user: map::user(user),
@@ -370,8 +378,43 @@ pub fn me_body(
             apple_music: apple_music.then_some(crate::wire::auth::AppleMusicFeature {
                 developer_token: true,
             }),
+            catalog,
+            speakers,
         },
     }
+}
+
+/// `features.speakers` for this caller (contract 5.3): Music Assistant is set up, the user
+/// may use speakers and the credential reads the library. Present while it is unreachable.
+pub(crate) fn speakers_feature(
+    state: &ApiState,
+    principal: &Principal,
+) -> Option<crate::wire::auth::SpeakersFeature> {
+    (state.assistant.enabled()
+        && principal.permissions.can_use_speakers
+        && principal.scopes.contains(Scopes::LIBRARY))
+    .then(|| crate::wire::auth::SpeakersFeature {
+        control: principal.scopes.contains(Scopes::WRITE),
+    })
+}
+
+/// `features.catalog` for this caller (contract 5.3).
+pub(crate) fn catalog_feature(
+    state: &ApiState,
+    principal: &Principal,
+) -> Option<crate::wire::auth::CatalogFeature> {
+    (state.assistant.enabled()
+        && principal.permissions.can_play_services
+        && principal.scopes.contains(Scopes::LIBRARY))
+    .then(|| {
+        let relay = principal.via == trackside_auth::Via::DeviceKey
+            && principal.scopes.contains(Scopes::STREAM)
+            && state.assistant.relay_supported();
+        crate::wire::auth::CatalogFeature {
+            relay,
+            relay_cellular: relay && state.media.capabilities().ffmpeg.is_some(),
+        }
+    })
 }
 
 /// `features.acquisition` for this caller, or `None`.
@@ -421,6 +464,8 @@ async fn me(
             server,
             feature,
             apple_music,
+            speakers_feature(&state, &principal),
+            catalog_feature(&state, &principal),
         ),
     ))
 }

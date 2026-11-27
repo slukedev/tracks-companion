@@ -4,6 +4,7 @@ use std::net::IpAddr;
 
 use trackside_core::repo::devices::{self, Device};
 use trackside_core::repo::keys::{self, ApiKeyRow, NewKey};
+use trackside_core::repo::users;
 use trackside_core::{DbError, DeviceId, KeyId, PublicId, Role, UserKey, WriteTx};
 
 use crate::account::{active_user, log};
@@ -120,6 +121,7 @@ impl Auth {
             secret_sealed: sealed,
             scopes: scopes.to_string(),
             expires_at: None,
+            managed_by: None,
         };
         let (row, username) = self
             .write(move |tx| {
@@ -130,6 +132,102 @@ impl Auth {
                 }
                 let row = keys::insert(tx, &new)?;
                 log(tx, Some(&owner), None, "key.create", Some(row.id.as_str()))?;
+                Ok((row, owner.username))
+            })
+            .await?;
+        Ok(IssuedKey {
+            secret: secret.to_string(),
+            key: row,
+            username,
+        })
+    }
+
+    /// The service account of `service` (an integration such as `music_assistant`), made on
+    /// first use: a member with no password who cannot sign in, granted every library, and
+    /// none of the permissions a person needs. Its keys work on `/rest` only.
+    pub async fn ensure_service_user(
+        &self,
+        service: &'static str,
+        username: &str,
+        display_name: &str,
+    ) -> Result<trackside_core::repo::users::User, AuthError> {
+        let username = username.to_owned();
+        let display_name = display_name.to_owned();
+        self.write(move |tx| {
+            if let Some(user) = users::service_account(tx.conn(), service)? {
+                return Ok(user);
+            }
+            let libraries = trackside_core::repo::libraries::list(
+                tx.conn(),
+                &trackside_core::Access::system(),
+            )?
+            .into_iter()
+            .map(|l| l.key)
+            .collect();
+            let mut new = users::NewUser {
+                username: username.clone(),
+                display_name,
+                password_hash: String::from("!"),
+                role: Role::Member,
+                permissions: trackside_core::Permissions {
+                    can_download: false,
+                    can_upload: false,
+                    can_request: false,
+                    legacy_subsonic: false,
+                    max_bitrate_kbps: None,
+                    can_use_speakers: false,
+                    can_play_services: false,
+                },
+                libraries,
+                service: Some(service.to_owned()),
+            };
+            // A person may already have the name; the service account then takes the next
+            // free one.
+            for attempt in 1..=20 {
+                if attempt > 1 {
+                    new.username = format!("{username}-{attempt}");
+                }
+                match users::create(tx, &new) {
+                    Ok(user) => {
+                        log(tx, None, None, "user.create", Some(user.id.as_str()))?;
+                        return Ok(user);
+                    }
+                    Err(DbError::Conflict(_)) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            Err(DbError::Conflict(String::from("username taken")))
+        })
+        .await
+    }
+
+    /// An API key for a service account, marked as managed by `service`. The secret is
+    /// returned once and goes only to the integration.
+    pub async fn create_managed_key(
+        &self,
+        user: UserKey,
+        service: &'static str,
+        name: &str,
+        scopes: Scopes,
+    ) -> Result<IssuedKey, AuthError> {
+        let secret = token::api_key()?;
+        let new = NewKey {
+            user,
+            device: None,
+            kind: KeyKind::ApiKey,
+            name: name.to_owned(),
+            prefix: shown_prefix(&secret),
+            secret_hash: sha256(secret.as_bytes()),
+            secret_sealed: None,
+            scopes: scopes.to_string(),
+            expires_at: None,
+            managed_by: Some(service.to_owned()),
+        };
+        let (row, username) = self
+            .write(move |tx| {
+                let owner = users::get(tx.conn(), user)?.ok_or(DbError::NotFound)?;
+                let row = keys::insert(tx, &new)?;
+                log(tx, None, None, "key.create", Some(row.id.as_str()))?;
                 Ok((row, owner.username))
             })
             .await?;
@@ -200,6 +298,7 @@ pub(crate) fn issue_in_tx(
             prefix: shown_prefix(secret),
             secret_hash: sha256(secret.as_bytes()),
             secret_sealed: None,
+            managed_by: None,
             scopes: scopes.to_string(),
             expires_at: None,
         },

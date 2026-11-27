@@ -240,6 +240,7 @@ pub struct Config {
     pub uploads: UploadsConfig,
     pub acquire: AcquireConfig,
     pub enrichment: EnrichmentConfig,
+    pub music_assistant: MusicAssistantConfig,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -566,6 +567,42 @@ pub struct EnrichmentConfig {
     pub lastfm_api_key: Option<Secret>,
 }
 
+/// Music Assistant (ADR 0013). Every key is also editable in the dashboard unless set here.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MusicAssistantConfig {
+    /// Music Assistant's web address, such as `http://192.168.1.20:8095`.
+    pub url: Option<String>,
+    /// A long-lived Music Assistant token.
+    pub token: Option<Secret>,
+    pub enabled: bool,
+    /// Add Trackside to Music Assistant as an `OpenSubsonic` source on its own.
+    pub auto_register: bool,
+    /// The address Music Assistant uses to reach Trackside; detected when unset.
+    pub lan_url: Option<String>,
+    /// A PEM file of the certificate authority that signed Music Assistant's certificate,
+    /// for `https` with a private CA or a self-signed certificate.
+    pub ca_file: Option<PathBuf>,
+    /// Music provider instance ids not offered as streaming services.
+    pub hidden_services: Vec<String>,
+    pub relay_max_sessions: u32,
+}
+
+impl Default for MusicAssistantConfig {
+    /// Not set up; once it is, enabled, with Trackside registering itself.
+    fn default() -> Self {
+        Self {
+            url: None,
+            token: None,
+            enabled: true,
+            auto_register: true,
+            lan_url: None,
+            ca_file: None,
+            hidden_services: Vec::new(),
+            relay_max_sessions: 4,
+        }
+    }
+}
+
 const DEFAULT_PORT: u16 = 4747;
 
 const REJECT_WORDS: &[&str] = &[
@@ -700,6 +737,7 @@ impl Config {
                 musicbrainz: false,
                 lastfm_api_key: None,
             },
+            music_assistant: MusicAssistantConfig::default(),
             data_dir,
         }
     }

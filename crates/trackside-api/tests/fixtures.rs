@@ -288,6 +288,7 @@ fn seed() -> Seed {
         password_changed_at: at(-86_400 * 70),
         disabled_at: None,
         must_change_password: false,
+        service: None,
     };
     let device = Device {
         key: DeviceKey(4),
@@ -364,6 +365,7 @@ fn principal(seed: &Seed) -> Principal {
         device: Some((seed.device.key, seed.device.id.clone())),
         key: Some(id("key iphone")),
         session: None,
+        service: false,
     }
 }
 
@@ -602,6 +604,11 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             server_summary(true),
             feature,
             true,
+            Some(wire::auth::SpeakersFeature { control: true }),
+            Some(wire::auth::CatalogFeature {
+                relay: true,
+                relay_cellular: true,
+            }),
         ),
     )?;
     put(
@@ -613,6 +620,8 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             server_summary(true),
             None,
             false,
+            None,
+            None,
         ),
     )?;
 
@@ -862,6 +871,7 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
         last_used_ip: Some(String::from("192.168.1.41")),
         expires_at: None,
         revoked_at: None,
+        managed_by: None,
     };
     put(
         "api-keys.json",
@@ -1434,6 +1444,7 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             },
             transcode_cache_bytes: 2_100_000_000,
         },
+        music_assistant: None,
         acquisition: Some(wire::admin::OverviewAcquisition {
             enabled: true,
             providers: vec![map::provider(&provider())],
@@ -1462,8 +1473,10 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
         },
         problems: build::library_problems_for(std::slice::from_ref(&s.library), &[], |_| false),
     };
+    overview.music_assistant = Some(speakers::overview());
     put("admin/overview.json", &overview)?;
     overview.acquisition = None;
+    overview.music_assistant = Some(speakers::overview_unset());
     put("admin/overview-no-acquisition.json", &overview)?;
     let mut admin_user = s.user.clone();
     admin_user.role = Role::Admin;
@@ -1647,6 +1660,9 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
     for (name, value) in cloud::fixtures()? {
         out.insert(name, value);
     }
+    for (name, value) in speakers::fixtures(&principal(&s).access, s.library.key)? {
+        out.insert(name, value);
+    }
     Ok(out)
 }
 
@@ -1668,6 +1684,7 @@ fn admin_extras(s: &Seed) -> Result<Vec<(&'static str, serde_json::Value)>, serd
         last_used_ip: Some(String::from("100.90.41.5")),
         expires_at: None,
         revoked_at: None,
+        managed_by: None,
     };
     let record = map::key_record(&key);
     let mut app_password = record.clone();
@@ -1735,6 +1752,7 @@ fn admin_extras(s: &Seed) -> Result<Vec<(&'static str, serde_json::Value)>, serd
                     created_at: record.created_at,
                     last_used_at: record.last_used_at,
                     last_used_ip: record.last_used_ip.clone(),
+                    managed_by: None,
                 }],
             })?,
         ),
@@ -1915,6 +1933,8 @@ fn uuid_of(text: &str) -> uuid::Uuid {
 
 #[path = "support/cloud_fixtures.rs"]
 mod cloud;
+#[path = "support/speaker_fixtures.rs"]
+mod speakers;
 
 mod erased {
     pub trait Json {
@@ -2145,7 +2165,7 @@ fn provider_names_appear_only_in_admin_fixtures() -> TestResult {
             continue;
         }
         let text = value.to_string().to_ascii_lowercase();
-        for word in ["ytdlp", "yt-dlp", "youtube"] {
+        for word in ["ytdlp", "yt-dlp", "youtube", "soulseek", "slskd"] {
             assert!(!text.contains(word), "{name} names {word}");
         }
     }

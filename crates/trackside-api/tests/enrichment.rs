@@ -276,6 +276,7 @@ async fn start(
         scan: Arc::new(FakeScanControl::new()),
         acquire,
         enrich: enrich.clone(),
+        assistant: std::sync::Arc::new(trackside_core::NoAssistant),
         events: test.events.clone(),
         config: Arc::new(config),
         server,

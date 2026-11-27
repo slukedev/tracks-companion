@@ -251,6 +251,8 @@ pub fn permissions(role: Role, permissions: &Permissions) -> wire::auth::Permiss
         can_upload: admin || permissions.can_upload,
         can_request: admin || permissions.can_request,
         legacy_subsonic: admin || permissions.legacy_subsonic,
+        can_use_speakers: admin || permissions.can_use_speakers,
+        can_play_services: admin || permissions.can_play_services,
         max_bitrate_kbps: if admin {
             None
         } else {
@@ -619,6 +621,8 @@ mod tests {
             can_request: false,
             legacy_subsonic: false,
             max_bitrate_kbps: Some(128),
+            can_use_speakers: false,
+            can_play_services: false,
         };
         let admin = permissions(Role::Admin, &none);
         assert!(admin.can_download && admin.can_upload && admin.can_request);

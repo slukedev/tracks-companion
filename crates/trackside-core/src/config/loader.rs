@@ -353,6 +353,45 @@ pub const KEYS: &[KeyInfo] = &[
             "TRACKSIDE_ENRICHMENT__LASTFM_API_KEY",
         )
     },
+    dash(
+        "music_assistant.url",
+        "TRACKSIDE_MUSIC_ASSISTANT__URL",
+        Text,
+    ),
+    KeyInfo {
+        dashboard: true,
+        ..secret("music_assistant.token", "TRACKSIDE_MUSIC_ASSISTANT__TOKEN")
+    },
+    dash(
+        "music_assistant.enabled",
+        "TRACKSIDE_MUSIC_ASSISTANT__ENABLED",
+        Bool,
+    ),
+    dash(
+        "music_assistant.auto_register",
+        "TRACKSIDE_MUSIC_ASSISTANT__AUTO_REGISTER",
+        Bool,
+    ),
+    dash(
+        "music_assistant.lan_url",
+        "TRACKSIDE_MUSIC_ASSISTANT__LAN_URL",
+        Text,
+    ),
+    dash(
+        "music_assistant.ca_file",
+        "TRACKSIDE_MUSIC_ASSISTANT__CA_FILE",
+        Text,
+    ),
+    dash(
+        "music_assistant.hidden_services",
+        "TRACKSIDE_MUSIC_ASSISTANT__HIDDEN_SERVICES",
+        CommaList,
+    ),
+    dash(
+        "music_assistant.relay_max_sessions",
+        "TRACKSIDE_MUSIC_ASSISTANT__RELAY_MAX_SESSIONS",
+        Integer,
+    ),
 ];
 
 /// A key an earlier version read. It is accepted and ignored with a warning, or its value

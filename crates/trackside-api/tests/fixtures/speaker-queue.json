@@ -1,0 +1,34 @@
+{
+  "current_index": 0,
+  "id": "o4j8fccgajqsqxancbfcz",
+  "items": [
+    {
+      "album": "I Am... Sasha Fierce",
+      "artist": "Beyoncé",
+      "artwork_id": "ca81rcgy3d9pfg6saekwd",
+      "duration_ms": 261640,
+      "index": 0,
+      "item_id": "6f0c3b1e9a2d4c7f8e5b0a1d2c3e4f50",
+      "song_id": "sdjcz08vf67h7cx28snq6",
+      "song_key": "halo\u001fbeyonce",
+      "title": "Halo"
+    },
+    {
+      "album": "Jazz (2011 Remaster)",
+      "artist": "Queen",
+      "artwork_id": "mkem33c2vrhyyrdj08jqc",
+      "duration_ms": 209000,
+      "index": 1,
+      "item_id": "0b1c2d3e4f5061728394a5b6c7d8e9f0",
+      "ref": "mc1.dHJhY2sfc3BvdGlmeR81VDhFRFVEcUtjczZPU093RXNmcUc3",
+      "service_id": "bqtyy4kcexcsg6wa0y4w5",
+      "song_key": "don't stop me now\u001fqueen",
+      "title": "Don't Stop Me Now"
+    }
+  ],
+  "next_cursor": "eyJvIjoyfQ",
+  "repeat": "off",
+  "revision": 1042,
+  "shuffle": false,
+  "total": 12
+}

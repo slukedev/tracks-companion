@@ -1,0 +1,10 @@
+{
+  "error": {
+    "code": "unsupported",
+    "details": {
+      "capability": "seek"
+    },
+    "message": "This speaker can't do that.",
+    "request_id": "3c9a1e7b5d2f4a8c6e0b1d3f5a7c9e2b"
+  }
+}
