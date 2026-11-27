@@ -71,10 +71,6 @@ jobs:
       - name: Compose files
         working-directory: packaging
         env:
-          SLSKD_API_KEY: ci-check-0123456789abcdef
-          SLSKD_WEB_PASSWORD: ci-check
-          SOULSEEK_USERNAME: ci-check
-          SOULSEEK_PASSWORD: ci-check
           TS_AUTHKEY: ci-check
           TRACKSIDE_TAILNET_URL: https://trackside.example.ts.net
         run: |
