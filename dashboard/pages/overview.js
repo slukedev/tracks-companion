@@ -124,7 +124,7 @@ function explain(p, ctx, overview) {
         fix: h('a.btn', { href: '#/settings' }, 'Lower cache limits'),
       };
     default: {
-      const page = /^(acquire|provider)/.test(p.code || '') && ctx.acquisition ? ['requests/setup', 'Check sources']
+      const page = /^(acquire|provider)/.test(p.code || '') && ctx.acquisition ? ['requests/setup', 'Check the source']
         : /^backup/.test(p.code || '') ? ['backups', 'Check backups']
           : /^(library|scan)/.test(p.code || '') ? ['libraries', 'Check libraries'] : null;
       return {

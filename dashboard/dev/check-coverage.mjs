@@ -94,7 +94,7 @@ for (const f of shipped) {
 }
 
 // 5. Provider names.
-const PROVIDER = /yt-?dlp|soulseek|slskd/i;
+const PROVIDER = /yt-?dlp/i;
 for (const f of shipped) {
   const rel = relative(root, f);
   if (rel === join('pages', 'acquisition.js')) continue;

@@ -18,24 +18,6 @@
         "fetches_today": 12,
         "failures_today": 1
       }
-    },
-    {
-      "name": "soulseek",
-      "enabled": true,
-      "configured": false,
-      "health": "setup",
-      "detail": "Missing: API key, downloads folder",
-      "settings": {
-        "concurrency": 3,
-        "search_rate": "1/3s",
-        "url": "http://slskd:5030",
-        "api_key_set": false
-      },
-      "stats": {
-        "searches_today": 0,
-        "fetches_today": 0,
-        "failures_today": 0
-      }
     }
   ]
 }

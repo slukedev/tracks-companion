@@ -18,7 +18,7 @@ do" before anything else; every other job is one or two clicks from the sidebar.
 | Invite family | Invites, Create an invite | Who it is for, how long it works, access. The whole link and a QR are shown once, with Share (the device's share sheet, where there is one) and Copy link. The invite page says who invited them and what happens next. |
 | Connect a new phone, often on the couch on a phone | My account, Connect a device | One button shows a QR and a typed code with a live countdown; on a phone, Open in Tracks on this device opens the pairing link directly. The page notices the new device by itself. A 6-digit code from the app can be approved in the same box. |
 | "Music stopped working, what's wrong?" | Overview | Needs attention names each problem in plain words with its fix inline: a button named after the action, or the command or setting to copy. Playback shows failed plays and when they started next to Recent activity, which explains them (a NAS went offline at 08:00). |
-| Approve or check requests | Requests | The list filtered to In progress, with Details, Try again and Cancel, and a chart of added, cancelled and failed. Sources and limits is its own tab. |
+| Approve or check requests | Requests | The list filtered to In progress, with Details, Try again and Cancel, and a chart of added, cancelled and failed. Source and limits is its own tab. |
 | Free disk space | Overview Storage, Settings | Free space of the volume's size, a trend with an honest projection and the month it fills, database and cache sizes; cache limits in Settings. |
 | Check a backup exists before an upgrade | Overview Server, Backups | Last and next backup on the overview; Back up now and Download (asks for the password again) on Backups. |
 | A family member locked out | People, a person | Make a reset link, shown once, with Share and Copy link. |
@@ -123,7 +123,7 @@ across files.
 2. a page calls a GET route that has no preview fixture,
 3. any `.html`, `.js` or `.css` file contains `http`,
 4. a page has an inline script, style or event handler, or a module uses `innerHTML` and the like,
-5. yt-dlp, Soulseek or slskd appear anywhere but `pages/acquisition.js`,
+5. yt-dlp appears anywhere but `pages/acquisition.js`,
 6. a module uses browser storage, cookies, `window.open`, `javascript:` URLs, or the network
    outside `api.js`; `api.js` loses the CSRF header, same-origin credentials or Retry-After; a
    destructive `DELETE` has no confirm dialog beside it,
@@ -138,7 +138,7 @@ across files.
 | `#/people`, `#/people/<id>`, `#/people/new` | Everyone with an account; one person's devices, app keys, web sessions, role and access, and sign-in; add a person. A 6-digit code from Tracks is approved at the bottom of the list |
 | `#/invites`, `#/invites/new` | Invites waiting and earlier ones; create one |
 | `#/libraries`, `#/libraries/<id>`, `#/libraries/add` | Folders, where new songs go, recent uploads (filter and paging), duplicates; one library's scans, problems and settings |
-| `#/requests`, `#/requests/<filter>`, `#/requests/setup` | Requests in progress, failed, finished or all; Sources and limits on its own tab, with the limits for songs played without keeping them |
+| `#/requests`, `#/requests/<filter>`, `#/requests/setup` | Requests in progress, failed, finished or all; Source and limits on its own tab, with the limits for songs played without keeping them |
 | `#/backups`, `#/settings`, `#/activity`, `#/account` | Backups; settings, with the addresses for Tracks first; the audit log; your own account |
 
 A member sees only My account, with no tab bar or menu. On phones (860 px and narrower) an admin
@@ -222,7 +222,7 @@ one pass.
       A pasted text that is not a key says so under the field.
 - [ ] People: change a member's libraries; make a reset link and use it; try to delete the last
       admin and read the refusal. Old `#/users` and `#/devices` links land on People.
-- [ ] Requests: on Sources and limits enable a source and run Test search; on Requests view a
+- [ ] Requests: on Source and limits enable the source and run Test search; on Requests view a
       failed request's details and Try again.
 - [ ] With acquisition unavailable, Requests is not in the sidebar and `#/requests` goes to the
       overview.

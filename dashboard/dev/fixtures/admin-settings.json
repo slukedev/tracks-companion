@@ -83,7 +83,6 @@
   },
   "acquire.prefer": {
     "value": [
-      "soulseek",
       "ytdlp"
     ],
     "source": "default",
@@ -123,16 +122,6 @@
     "value": true,
     "source": "dashboard",
     "editable": true
-  },
-  "acquire.soulseek.enabled": {
-    "value": true,
-    "source": "dashboard",
-    "editable": true
-  },
-  "acquire.soulseek.url": {
-    "value": "http://slskd:5030",
-    "source": "config",
-    "editable": false
   },
   "enrichment.musicbrainz": {
     "value": false,

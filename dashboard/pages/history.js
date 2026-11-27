@@ -31,7 +31,7 @@ const SENTENCES = {
 
 /**
  * One audit entry as a sentence. Actions about requests never show their target or detail,
- * because those can name the sources, which only the Requests page shows.
+ * because those can name the source, which only the Requests page shows.
  */
 export function sentence(entry, names) {
   const actor = entry.actor === 'system' || !entry.actor ? 'Trackside' : names.get(entry.actor) || entry.actor;

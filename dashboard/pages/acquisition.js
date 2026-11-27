@@ -1,5 +1,5 @@
-// Requests: songs people asked the server to find, and the sources it finds them with.
-// This is the only page that names the sources (yt-dlp, Soulseek through slskd).
+// Requests: songs people asked the server to find, and the source it finds them with.
+// This is the only page that names the source (yt-dlp).
 
 import { call, describe } from '../api.js';
 import { requestsChart } from './stats.js';
@@ -10,9 +10,9 @@ import {
 
 const PROVIDERS = {
   ytdlp: { title: 'yt-dlp', about: 'Finds songs on YouTube Music and YouTube.' },
-  soulseek: { title: 'Soulseek', about: 'Finds files shared by other people, through slskd.' },
 };
-const providerTitle = (name) => PROVIDERS[name]?.title || name;
+// Requests from before a source was removed still name it; they read as a removed source.
+const providerTitle = (name) => PROVIDERS[name]?.title || 'A removed source';
 const SETUP_DOCS = 'https://github.com/slukedev/tracks-companion/blob/main/docs/ops/acquisition.md';
 
 const HEALTH = {
@@ -56,7 +56,7 @@ function tabs(current, providers) {
   const needsSetup = providers?.some((p) => p.enabled && !['ok', 'disabled'].includes(p.health));
   return h('nav.tabs', { 'aria-label': 'Requests views' },
     h('a', { href: '#/requests', 'aria-current': current === 'list' ? 'page' : undefined }, 'Requests'),
-    h('a', { href: '#/requests/setup', 'aria-current': current === 'setup' ? 'page' : undefined }, 'Sources and limits', needsSetup ? icon('warning', 'sm tint-warn') : null));
+    h('a', { href: '#/requests/setup', 'aria-current': current === 'setup' ? 'page' : undefined }, 'Source and limits', needsSetup ? icon('warning', 'sm tint-warn') : null));
 }
 
 export async function render(ctx) {
@@ -72,7 +72,7 @@ export async function render(ctx) {
     if (node && ctx.isCurrent()) trendSlot.replaceWith(section('Outcomes', h('div.list', node)));
   }).catch(() => {});
   const acq = overview?.acquisition;
-  const lede = acq ? (acq.enabled ? `${num(acq.active ?? 0)} in progress, ${num(acq.today ?? 0)} today` : 'Requests are turned off. Turn them on under Sources and limits.') : null;
+  const lede = acq ? (acq.enabled ? `${num(acq.active ?? 0)} in progress, ${num(acq.today ?? 0)} today` : 'Requests are turned off. Turn them on under Source and limits.') : null;
   const page = h('div.page',
     pageHead('Requests', { lede }),
     tabs('list', providers),
@@ -259,7 +259,7 @@ function requestDetail(ctx, a, reload) {
 /* ---------- Sources ---------- */
 
 function sourcesSection(ctx, providers) {
-  return section('Sources', h('div.form', providers.map((p) => providerPanel(ctx, p))));
+  return section('Source', h('div.form', providers.map((p) => providerPanel(ctx, p))));
 }
 
 function providerPanel(ctx, p) {
@@ -285,13 +285,6 @@ function providerPanel(ctx, p) {
 
   const concurrency = select([1, 2, 3, 4, 6, 8].map((n) => [String(n), String(n)]), String(p.settings?.concurrency ?? 2), { id: nextId('c') });
   const fields = [field('Downloads at the same time', concurrency)];
-  let url;
-  let apiKey;
-  if (p.name === 'soulseek') {
-    url = input({ value: p.settings?.url || '', mono: true, spellcheck: 'false', placeholder: 'slskd:5030' });
-    apiKey = input({ type: 'password', autocomplete: 'off', placeholder: p.settings?.api_key_set ? 'Saved. Type to replace it.' : 'Paste the key from slskd', mono: true });
-    fields.push(field('slskd address', url), field('slskd API key', apiKey));
-  }
   const error = formError();
   const save = button('Save', { type: 'submit' });
   const form = h('form.form', {
@@ -300,12 +293,9 @@ function providerPanel(ctx, p) {
         event.preventDefault();
         error.hide();
         const body = { concurrency: Number(concurrency.value) };
-        if (url) body.url = url.value.trim();
-        if (apiKey?.value) body.api_key = apiKey.value;
         await busy(save, async () => {
           try {
             await call('PATCH /admin/acquire/providers/{name}', { values: { name: p.name }, body });
-            if (apiKey) apiKey.value = '';
             toast('Saved');
           } catch (err) { error.show(describe(err)); }
         });
@@ -363,8 +353,6 @@ function rulesSection(ctx, settings) {
   const memberActive = input({ type: 'number', min: '1', value: String(value('member_active', 5)), disabled: locked('member_active') });
   const globalDaily = input({ type: 'number', min: '0', value: String(value('global_daily', 500)), disabled: locked('global_daily') });
   [memberDaily, memberActive, globalDaily].forEach((i) => i.classList.add('short'));
-  const prefer = value('prefer', ['soulseek', 'ytdlp']);
-  const preferSelect = select([['soulseek,ytdlp', 'Soulseek first'], ['ytdlp,soulseek', 'yt-dlp first']], prefer.join(','), { disabled: locked('prefer') });
   const tags = toggle(Boolean(settings['enrichment.musicbrainz']?.value), { disabled: settings['enrichment.musicbrainz'] && !settings['enrichment.musicbrainz'].editable, 'aria-label': 'Look up tags on MusicBrainz' });
 
   const patch = async (body, revert) => {
@@ -378,7 +366,6 @@ function rulesSection(ctx, settings) {
   for (const [el, key] of [[memberDaily, 'member_daily'], [memberActive, 'member_active'], [globalDaily, 'global_daily']]) {
     el.addEventListener('change', () => { if (el.value !== '' && Number(el.value) >= 0) patch({ [key]: Number(el.value) }); });
   }
-  preferSelect.addEventListener('change', () => patch({ prefer: preferSelect.value.split(',') }));
   tags.addEventListener('change', async () => {
     try {
       await call('PATCH /admin/settings', { body: { 'enrichment.musicbrainz': tags.checked } });
@@ -394,7 +381,6 @@ function rulesSection(ctx, settings) {
   return section('Limits', h('div.list',
     setting('Requests', 'Lets people with the request permission ask for songs in Tracks', on),
     setting('Play while downloading', 'A requested song starts playing before it has finished downloading', instant),
-    setting('Search first in', null, preferSelect),
     setting('Requests per person each day', null, memberDaily),
     setting('Requests per person at once', null, memberActive),
     setting('Requests for the whole server each day', null, globalDaily),

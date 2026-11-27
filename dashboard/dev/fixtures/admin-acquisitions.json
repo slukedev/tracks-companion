@@ -1,7 +1,7 @@
 {
   "acquisitions": [
     {
-      "quality": "lossless",
+      "quality": "high",
       "existing": false,
       "created_at": "2026-11-14T09:52:00.000Z",
       "updated_at": "2026-11-14T09:59:41.000Z",
@@ -11,27 +11,26 @@
       "artist": "Kate Bush",
       "album": "Hounds of Love",
       "progress": {
-        "bytes": 12000000,
-        "total": 33000000
+        "bytes": 3400000,
+        "total": 9400000
       },
       "user": {
         "id": "u2e5f8a1b4c7d0e3f6a9",
         "username": "mum",
         "display_name": "Mum"
       },
-      "provider": "soulseek",
+      "provider": "ytdlp",
       "candidate": {
-        "provider": "soulseek",
-        "source": "peer vinylwitch: Kate Bush/1985 Hounds of Love [FLAC]",
-        "quality": "lossless",
+        "provider": "ytdlp",
+        "source": "video wp43OdtAAkM from Kate Bush - Topic",
+        "quality": "high",
         "format": {
-          "container": "flac",
-          "codec": "flac",
-          "bitrate_kbps": 980,
-          "sample_rate": 44100,
-          "bit_depth": 16
+          "container": "m4a",
+          "codec": "aac",
+          "bitrate_kbps": 256,
+          "sample_rate": 44100
         },
-        "size": 33000000
+        "size": 9400000
       },
       "attempts": []
     },
@@ -68,10 +67,10 @@
       },
       "attempts": [
         {
-          "provider": "soulseek",
-          "source": "peer 70sgroove: Shuggie Otis/Freedom Flight/04.flac",
+          "provider": "ytdlp",
+          "source": "video Xq1cY8pQf3E from 70sGrooveArchive",
           "at": "2026-11-14T08:12:00.000Z",
-          "error": "Transfer stalled at 41% for 5 minutes."
+          "error": "Stalled at 41% for 2 minutes."
         },
         {
           "provider": "ytdlp",

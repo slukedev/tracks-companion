@@ -33,7 +33,6 @@ const scanAcq = { id: 'n8z2x6c0v4b8n2m6q0w4', library_id: LIB.acquired.id, kind:
 
 const providers = [
   { name: 'ytdlp', enabled: true, configured: true, health: 'ok', detail: 'yt-dlp 2026.10.22', version: '2026.10.22', latest_known: '2026.11.03', settings: { concurrency: 2, search_rate: '10/1m', cookies_file: '/data/cookies.txt' }, stats: { searches_today: 31, fetches_today: 12, failures_today: 1 } },
-  { name: 'soulseek', enabled: true, configured: false, health: 'setup', detail: 'Missing: API key, downloads folder', settings: { concurrency: 3, search_rate: '1/3s', url: 'http://slskd:5030', api_key_set: false }, stats: { searches_today: 0, fetches_today: 0, failures_today: 0 } },
 ];
 
 const overview = {
@@ -191,7 +190,7 @@ w('admin-settings', {
   'uploads.enabled': s(false),
   'acquire.enabled': s(true, 'dashboard'),
   'acquire.library': s(LIB.acquired.id, 'dashboard'),
-  'acquire.prefer': s(['soulseek', 'ytdlp']),
+  'acquire.prefer': s(['ytdlp']),
   'acquire.member_daily': s(50),
   'acquire.member_active': s(5),
   'acquire.global_daily': s(500),
@@ -199,8 +198,6 @@ w('admin-settings', {
   'acquire.fetched_keep': s(500),
   'acquire.fetched_max_bytes': s('20GiB'),
   'acquire.ytdlp.enabled': s(true, 'dashboard'),
-  'acquire.soulseek.enabled': s(true, 'dashboard'),
-  'acquire.soulseek.url': s('http://slskd:5030', 'config', false),
   'enrichment.musicbrainz': s(false),
   'cloud.enabled': s(true),
   'cloud.quota_items': s(2000000),
@@ -230,7 +227,7 @@ w('admin-audit', { entries: [
   { at: '2026-11-13T21:10:44.000Z', actor: 'sam', ip: '100.90.41.5', action: 'device.create', target: "Sam's iPhone", detail: 'ios' },
   { at: '2026-11-13T18:05:02.000Z', actor: 'luke', ip: '192.168.1.41', action: 'library.scan', target: 'Music', detail: 'full' },
   { at: '2026-11-13T14:00:31.000Z', actor: 'luke', ip: '192.168.1.41', action: 'user.update', target: 'mum', detail: 'can_request on' },
-  { at: '2026-11-13T12:31:09.000Z', actor: 'luke', ip: '192.168.1.41', action: 'acquire.provider.update', target: 'soulseek', detail: 'enabled' },
+  { at: '2026-11-13T12:31:09.000Z', actor: 'luke', ip: '192.168.1.41', action: 'acquire.provider.update', target: 'ytdlp', detail: 'enabled' },
   { at: '2026-11-12T21:45:00.000Z', actor: 'luke', ip: '192.168.1.41', action: 'backup.create', target: 'trackside-20261112T214500Z.db', detail: 'manual' },
   { at: '2026-11-12T20:02:44.000Z', actor: 'luke', ip: '192.168.1.41', action: 'settings.update', target: 'server.public_urls', detail: '' },
   { at: '2026-11-11T08:00:00.000Z', actor: 'system', ip: '', action: 'server.upgrade', target: '1.0.0', detail: 'schema 2' },
@@ -238,10 +235,10 @@ w('admin-audit', { entries: [
 
 const acq = (o) => ({ quality: 'lossless', existing: false, created_at: '2026-11-14T09:30:00.000Z', updated_at: '2026-11-14T09:30:07.000Z', ...o });
 w('admin-acquisitions', { acquisitions: [
-  acq({ id: 'q8w1e4r7t0y3u6i9o2p5', state: 'downloading', title: 'Running Up That Hill', artist: 'Kate Bush', album: 'Hounds of Love', progress: { bytes: 12000000, total: 33000000 }, user: ref(mum), provider: 'soulseek', candidate: { provider: 'soulseek', source: 'peer vinylwitch: Kate Bush/1985 Hounds of Love [FLAC]', quality: 'lossless', format: { container: 'flac', codec: 'flac', bitrate_kbps: 980, sample_rate: 44100, bit_depth: 16 }, size: 33000000 }, attempts: [], created_at: '2026-11-14T09:52:00.000Z', updated_at: '2026-11-14T09:59:41.000Z' }),
+  acq({ id: 'q8w1e4r7t0y3u6i9o2p5', state: 'downloading', title: 'Running Up That Hill', artist: 'Kate Bush', album: 'Hounds of Love', progress: { bytes: 3400000, total: 9400000 }, user: ref(mum), provider: 'ytdlp', quality: 'high', candidate: { provider: 'ytdlp', source: 'video wp43OdtAAkM from Kate Bush - Topic', quality: 'high', format: { container: 'm4a', codec: 'aac', bitrate_kbps: 256, sample_rate: 44100 }, size: 9400000 }, attempts: [], created_at: '2026-11-14T09:52:00.000Z', updated_at: '2026-11-14T09:59:41.000Z' }),
   acq({ id: 'q2e5r8t1y4u7i0o3p6a9', state: 'queued', title: 'Teardrop', artist: 'Massive Attack', album: 'Mezzanine', quality: undefined, user: ref(luke), attempts: [], created_at: '2026-11-14T09:58:30.000Z', updated_at: '2026-11-14T09:58:30.000Z' }),
   acq({ id: 'q5t8y1u4i7o0p3a6s9d2', state: 'failed', title: 'Strawberry Letter 23', artist: 'Shuggie Otis', album: 'Freedom Flight', quality: undefined, failure: 'all_candidates_failed', user: ref(mum), attempts: [
-    { provider: 'soulseek', source: 'peer 70sgroove: Shuggie Otis/Freedom Flight/04.flac', at: '2026-11-14T08:12:00.000Z', error: 'Transfer stalled at 41% for 5 minutes.' },
+    { provider: 'ytdlp', source: 'video Xq1cY8pQf3E from 70sGrooveArchive', at: '2026-11-14T08:12:00.000Z', error: 'Stalled at 41% for 2 minutes.' },
     { provider: 'ytdlp', source: 'video kD7Vb0qQ1xI from Shuggie Otis - Topic', at: '2026-11-14T08:18:30.000Z', error: 'Duration 2:41 does not match 3:58.' },
   ], created_at: '2026-11-14T08:10:00.000Z', updated_at: '2026-11-14T08:18:31.000Z' }),
   acq({ id: 'q9u2i5o8p1a4s7d0f3g6', state: 'done', title: 'Halo', artist: 'Beyoncé', album: 'I Am... Sasha Fierce', song_id: 's2f4g6h8j0k2l4z6x8c0', user: ref(luke), provider: 'ytdlp', candidate: { provider: 'ytdlp', source: 'video bnVUHWCynig from Beyoncé - Topic', quality: 'high', format: { container: 'm4a', codec: 'aac', bitrate_kbps: 256, sample_rate: 44100 }, size: 8400000 }, quality: 'high', attempts: [], created_at: '2026-11-14T09:30:00.000Z', updated_at: '2026-11-14T09:31:13.000Z' }),
