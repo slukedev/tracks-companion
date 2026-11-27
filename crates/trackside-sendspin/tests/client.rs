@@ -626,11 +626,15 @@ async fn a_dropped_connection_comes_back_warm_with_the_same_client_id() {
 }
 
 #[tokio::test]
-async fn a_drop_during_a_stream_ends_it() {
+async fn a_drop_during_a_stream_is_reported_once_as_disconnected() {
     let mut s = start().await;
     let conn = streaming(&mut s).await;
     conn.drop_connection();
-    next_event(&mut s.events, |e| matches!(e, Event::End)).await;
+    let event = next_event(&mut s.events, |e| {
+        matches!(e, Event::End | Event::Disconnected { .. })
+    })
+    .await;
+    assert!(matches!(event, Event::Disconnected { .. }), "{event:?}");
     s.cancel.cancel();
 }
 

@@ -50,7 +50,16 @@ pub struct Client {
 impl Client {
     /// Starts connecting at once. `cancel` stops the client with goodbye `shutdown`.
     pub fn start(config: Config, handler: Arc<dyn Handler>, cancel: CancellationToken) -> Self {
-        let clock = Clock::new();
+        Self::start_with_clock(config, handler, Clock::new(), cancel)
+    }
+
+    /// [`Client::start`] with a clock the caller already shares (for example with the handler).
+    pub fn start_with_clock(
+        config: Config,
+        handler: Arc<dyn Handler>,
+        clock: Clock,
+        cancel: CancellationToken,
+    ) -> Self {
         let client_id = config.identity.client_id();
         let (commands, receiver) = mpsc::channel(4);
         let task = tokio::spawn(supervise(config, handler, clock.clone(), receiver, cancel));
@@ -504,7 +513,7 @@ impl<'a> Connection<'a> {
         commands: &mut mpsc::Receiver<Command>,
         cancel: &CancellationToken,
     ) -> Ended {
-        let ended = loop {
+        loop {
             let wake = self.next_wake();
             let flow = tokio::select! {
                 biased;
@@ -530,11 +539,7 @@ impl<'a> Connection<'a> {
                 Flow::Continue => {}
                 Flow::Stop(ended) => break ended,
             }
-        };
-        if self.streaming {
-            self.handler.handle(Event::End);
         }
-        ended
     }
 
     fn next_wake(&self) -> Instant {

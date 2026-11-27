@@ -110,12 +110,14 @@ pub enum Event {
     /// `stream/end` for the player, or the player role went away during a stream.
     End,
     Group(GroupUpdate),
-    /// The connection dropped; the client tries again after `retry_in`.
+    /// The connection dropped, which also ends any stream; the client tries again after
+    /// `retry_in`. Music Assistant stops the player's playback when its connection drops.
     Disconnected {
         error: Error,
         retry_in: Duration,
     },
-    /// The client stopped for good: shut down, said goodbye, or gave up (`error`).
+    /// The client stopped for good, which also ends any stream: shut down, said goodbye, or
+    /// gave up (`error`).
     Stopped {
         error: Option<Error>,
     },
