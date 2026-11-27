@@ -113,12 +113,22 @@ impl Shared {
             detail: inner.ended.as_ref().and_then(|(_, d)| d.clone()),
             generation: inner.generation,
             tier: inner.tier,
-            hls: (inner.generation > 0).then(|| {
-                format!(
-                    "{}/{}/{}/master.m3u8",
-                    self.settings.path_prefix, self.id, inner.generation
-                )
-            }),
+            hls: Some(format!(
+                "{}/{}/{}/master.m3u8",
+                self.settings.path_prefix,
+                self.id,
+                Self::playable_generation(inner)
+            )),
+        }
+    }
+
+    /// Where the audio is: the live epoch, or the next one when none is live, whose URL works
+    /// before it starts (fetches wait for it).
+    fn playable_generation(inner: &Inner) -> u32 {
+        if inner.current.as_ref().is_some_and(|e| !e.ended) {
+            inner.generation
+        } else {
+            inner.generation + 1
         }
     }
 
@@ -408,7 +418,7 @@ impl RelaySession {
             detail: None,
             generation: 0,
             tier,
-            hls: None,
+            hls: Some(format!("{}/{id}/1/master.m3u8", settings.path_prefix)),
         };
         let (info, _) = watch::channel(placeholder);
         let clock = Clock::new();
@@ -536,14 +546,20 @@ impl RelaySession {
             let mut changes = self.shared.changed.subscribe();
             {
                 let inner = self.shared.lock();
+                let late = Instant::now() >= deadline;
                 let found = [inner.current.as_ref(), inner.previous.as_ref()]
                     .into_iter()
                     .flatten()
-                    .find(|e| e.number == epoch)
-                    .ok_or(FetchError::NotFound)?;
-                let late = Instant::now() >= deadline;
-                if let Some(result) = ready(found, late) {
-                    return result;
+                    .find(|e| e.number == epoch);
+                match found {
+                    Some(found) => {
+                        if let Some(result) = ready(found, late) {
+                            return result;
+                        }
+                    }
+                    // The next epoch: wait for it to start.
+                    None if epoch == inner.generation + 1 && inner.ended.is_none() && !late => {}
+                    None => return Err(FetchError::NotFound),
                 }
             }
             // On a timeout the next look has `late` set and answers.
@@ -563,19 +579,19 @@ impl RelaySession {
     }
 
     /// The multivariant playlist of an epoch. `query` (the media token) is appended to URLs.
-    pub fn master_playlist(&self, epoch: u32, query: Option<&str>) -> Result<String, FetchError> {
-        self.touch();
-        let inner = self.shared.lock();
-        let found = [inner.current.as_ref(), inner.previous.as_ref()]
-            .into_iter()
-            .flatten()
-            .find(|e| e.number == epoch)
-            .ok_or(FetchError::NotFound)?;
-        Ok(crate::hls::multivariant(
-            found.codecs(),
-            found.bandwidth(),
-            query,
-        ))
+    pub async fn master_playlist(
+        &self,
+        epoch: u32,
+        query: Option<&str>,
+    ) -> Result<String, FetchError> {
+        self.wait_for(epoch, self.shared.settings.first_segment_wait, |e, _| {
+            Some(Ok(crate::hls::multivariant(
+                e.codecs(),
+                e.bandwidth(),
+                query,
+            )))
+        })
+        .await
     }
 
     /// The live media playlist. Waits for the first segment of a new epoch, then answers

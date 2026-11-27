@@ -153,7 +153,7 @@ async fn the_cellular_tier_is_aac_in_fmp4_and_plays_as_hls() {
             .is_ok_and(|p| p.matches("#EXTINF").count() >= 4)
     })
     .await;
-    let master = session.master_playlist(1, None).expect("master");
+    let master = session.master_playlist(1, None).await.expect("master");
     assert!(master.contains("CODECS=\"mp4a.40.2\""), "{master}");
     let init = session.init_segment(1).await.expect("init");
     let mut segments = Vec::new();

@@ -11,7 +11,7 @@ use trackside_relay::{EndReason, FetchError, RelayError, SessionState, Tier};
 
 #[tokio::test]
 async fn segments_appear_only_once_their_end_minus_the_output_delay_has_passed() {
-    let mut rig = rig(|c| c.first_segment_wait = Duration::from_millis(50)).await;
+    let mut rig = rig(|c| c.first_segment_wait = Duration::from_millis(300)).await;
     let opened = rig
         .manager
         .open(request("phone", Tier::Lossless))
@@ -19,9 +19,19 @@ async fn segments_appear_only_once_their_end_minus_the_output_delay_has_passed()
         .expect("open");
     assert!(opened.created);
     let session = opened.session;
+    assert_eq!(
+        session.info().hls.as_deref(),
+        Some("/api/v1/relay/h-phone/1/master.m3u8"),
+        "the first epoch's URL works before any audio"
+    );
     let mut conn = connect(&mut rig.server).await;
+    let early_master = {
+        let session = std::sync::Arc::clone(&session);
+        tokio::spawn(async move { session.master_playlist(1, None).await })
+    };
     let (header, frames) = tone();
     conn.start_stream(&header).await;
+    assert!(early_master.await.expect("task").is_ok());
     // The first segment (ten frames, 1.045 s) is audible 5 s from now: published at about 2 s.
     let start = conn.server_now_us() + 1_000_000 + 4_000_000 - 1_044_897 + 1_000_000;
     send_frames(&mut conn, start, &frames[..30]).await;
@@ -52,7 +62,10 @@ async fn segments_appear_only_once_their_end_minus_the_output_delay_has_passed()
     assert!(playlist.contains("0.m4s?mt=x"), "{playlist}");
     assert!(playlist.contains("#EXT-X-PROGRAM-DATE-TIME:"), "{playlist}");
 
-    let master = session.master_playlist(1, Some("mt=x")).expect("master");
+    let master = session
+        .master_playlist(1, Some("mt=x"))
+        .await
+        .expect("master");
     assert!(master.contains("CODECS=\"fLaC\""), "{master}");
     let init = session.init_segment(1).await.expect("init");
     assert_eq!(&init[4..8], b"ftyp");
@@ -146,6 +159,11 @@ async fn a_stream_end_pauses_and_ends_the_playlist() {
     let (session, mut conn) = playing(&mut rig).await;
     conn.send("stream/end", json!({})).await;
     eventually(|| session.info().state == SessionState::Paused).await;
+    assert_eq!(
+        session.info().hls.as_deref(),
+        Some("/api/v1/relay/h-phone/2/master.m3u8"),
+        "paused, the URL is where the resume will play"
+    );
     let playlist = session.media_playlist(1, None).await.expect("playlist");
     assert!(playlist.ends_with("#EXT-X-ENDLIST\n"), "{playlist}");
     assert_eq!(session.segment(1, 0).await, Err(FetchError::NotFound));
@@ -238,7 +256,7 @@ async fn fetching_keeps_a_playing_session_going() {
     let (session, _conn) = playing(&mut rig).await;
     for _ in 0..8 {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let _ = session.master_playlist(1, None);
+        let _ = session.master_playlist(1, None).await;
     }
     assert!(rig.control.calls().is_empty(), "{:?}", rig.control.calls());
     rig.cancel.cancel();
