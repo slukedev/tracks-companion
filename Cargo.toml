@@ -48,6 +48,14 @@ rustls-acme = { version = "0.15", default-features = false, features = ["ring", 
 rcgen = "0.14"
 # No default provider: the binary installs ring once, as rustls and axum-server do.
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "stream"] }
+# The Music Assistant WebSocket client. TLS through the workspace rustls (ring), with the
+# connector built from the same platform verifier reqwest uses.
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+rustls-platform-verifier = "0.7"
+# tungstenite logs whole frames (the auth frame holds the Music Assistant token) through `log`
+# at trace level, and tracing-subscriber bridges `log` into the server's logs. Compiling `log`
+# records above debug out keeps the token out of logs even at RUST_LOG=trace.
+log = { version = "0.4", features = ["max_level_debug", "release_max_level_debug"] }
 
 # Storage and serialization
 rusqlite = { version = "0.43", features = ["bundled", "functions", "blob"] }
@@ -77,6 +85,8 @@ base64 = "0.23"
 subtle = "2.6"
 zeroize = "1.9"
 governor = "0.10"
+# Jitter for reconnect backoff.
+fastrand = "2.5"
 # Signs Apple Music developer tokens (ES256); already here through rustls.
 ring = "0.17"
 ipnet = { version = "2.12", features = ["serde"] }

@@ -1,0 +1,65 @@
+use std::time::Duration;
+
+use crate::backoff::Backoff;
+use crate::endpoint::Endpoint;
+use crate::token::Token;
+
+/// How to reach Music Assistant and how patient to be. Start from [`Options::new`] and adjust
+/// the fields; the defaults suit a server on the same LAN.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct Options {
+    pub endpoint: Endpoint,
+    pub token: Token,
+    /// TCP, TLS and the WebSocket upgrade.
+    pub connect_timeout: Duration,
+    /// The greeting and the answer to `auth`, each.
+    pub handshake_timeout: Duration,
+    /// The default for a command, from the call until its last chunk.
+    pub request_timeout: Duration,
+    /// Commands sent and not yet answered. Music Assistant drops clients that let more than
+    /// 512 messages queue, so keep this well below that.
+    pub max_in_flight: usize,
+    /// How often to ping. Music Assistant pings every 25 s itself.
+    pub ping_interval: Duration,
+    /// A connection that delivers nothing, not even a pong, for this long is dead.
+    pub dead_after: Duration,
+    /// How long a single write may take before the connection counts as dead.
+    pub write_timeout: Duration,
+    pub backoff: Backoff,
+    /// The wait before trying again after the token was refused.
+    pub auth_retry: Duration,
+    /// The wait before trying again with a server of an incompatible schema.
+    pub incompatible_retry: Duration,
+    /// A connection that stays up this long resets the backoff.
+    pub stable_after: Duration,
+    /// Updates buffered per subscriber before it lags and gets a resync.
+    pub event_capacity: usize,
+    /// The largest single WebSocket message accepted.
+    pub max_message_bytes: usize,
+    /// The most items a chunked answer may assemble.
+    pub max_result_items: usize,
+}
+
+impl Options {
+    pub fn new(endpoint: Endpoint, token: Token) -> Self {
+        Self {
+            endpoint,
+            token,
+            connect_timeout: Duration::from_secs(10),
+            handshake_timeout: Duration::from_secs(10),
+            request_timeout: Duration::from_secs(30),
+            max_in_flight: 64,
+            ping_interval: Duration::from_secs(20),
+            dead_after: Duration::from_secs(50),
+            write_timeout: Duration::from_secs(10),
+            backoff: Backoff::default(),
+            auth_retry: Duration::from_mins(5),
+            incompatible_retry: Duration::from_mins(15),
+            stable_after: Duration::from_secs(30),
+            event_capacity: 1024,
+            max_message_bytes: 64 << 20,
+            max_result_items: 1_000_000,
+        }
+    }
+}
