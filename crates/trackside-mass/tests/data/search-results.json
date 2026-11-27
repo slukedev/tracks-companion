@@ -1,0 +1,14 @@
+{
+  "artists": [{"item_id": "88", "provider": "library", "name": "Daft Punk", "media_type": "artist", "uri": "library://artist/88", "provider_mappings": [], "metadata": {"images": []}}],
+  "albums": [],
+  "genres": [],
+  "tracks": [
+    {"item_id": "2VEZx7NWsZ1D0eJ4uv5Fym", "provider": "spotify--Pq3Rs", "name": "Digital Love", "media_type": "track", "uri": "spotify--Pq3Rs://track/2VEZx7NWsZ1D0eJ4uv5Fym", "duration": 301.0, "provider_mappings": [{"item_id": "2VEZx7NWsZ1D0eJ4uv5Fym", "provider_domain": "spotify", "provider_instance": "spotify--Pq3Rs"}], "artists": [{"item_id": "4tZwfgrHOc3mvqYlEYSvVi", "provider": "spotify--Pq3Rs", "name": "Daft Punk", "media_type": "artist"}]},
+    "not a track"
+  ],
+  "playlists": [],
+  "radio": [{"item_id": "s24939", "provider": "tunein", "name": "FIP", "media_type": "radio", "duration": null, "provider_mappings": []}],
+  "audiobooks": [],
+  "podcasts": [],
+  "sound_effects": []
+}

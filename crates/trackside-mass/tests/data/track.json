@@ -1,0 +1,50 @@
+{
+  "item_id": "412",
+  "provider": "library",
+  "name": "Digital Love",
+  "version": "",
+  "sort_name": "digital love",
+  "uri": "library://track/412",
+  "external_ids": [["isrc", "GBDUW0000059"], ["musicbrainz_recordingid", "a1d9c1f5-3d60-4b5e-9a6f-6f3f8b0d4c11"], ["broken"]],
+  "is_playable": true,
+  "media_type": "track",
+  "provider_mappings": [
+    {"item_id": "5", "provider_domain": "opensubsonic", "provider_instance": "opensubsonic--T5ks", "available": true, "in_library": true, "is_unique": null,
+     "audio_format": {"content_type": "flac", "codec_type": "?", "sample_rate": 44100, "bit_depth": 16, "channels": 2, "output_format_str": "flac", "bit_rate": 0},
+     "url": null, "details": null},
+    {"item_id": "2VEZx7NWsZ1D0eJ4uv5Fym", "provider_domain": "spotify", "provider_instance": "spotify--Pq3Rs", "available": false, "in_library": false, "is_unique": null,
+     "audio_format": {"content_type": "ogg", "sample_rate": 44100, "bit_depth": 16, "channels": 2, "bit_rate": 320},
+     "url": "https://open.spotify.com/track/2VEZx7NWsZ1D0eJ4uv5Fym", "details": null}
+  ],
+  "metadata": {
+    "description": null,
+    "review": null,
+    "explicit": false,
+    "images": [
+      {"type": "thumb", "path": "https://i.scdn.co/image/ab67616d0000b273", "provider": "spotify", "remotely_accessible": true, "proxy_id": "3f8a2c9b1d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8"},
+      {"type": "fanart", "path": "/music/Daft Punk/fanart.jpg", "provider": "opensubsonic--T5ks", "remotely_accessible": false, "proxy_id": null}
+    ],
+    "genres": ["electronic", "french house"],
+    "mood": null,
+    "label": "Virgin",
+    "links": null,
+    "popularity": 71,
+    "release_date": "2001-03-12T00:00:00",
+    "languages": null,
+    "chapters": null,
+    "last_refresh": 1764200000
+  },
+  "favorite": true,
+  "position": null,
+  "date_added": "2026-10-02T18:44:12.512000+00:00",
+  "duration": 301,
+  "artists": [
+    {"item_id": "88", "provider": "library", "name": "Daft Punk", "version": "", "sort_name": "daft punk", "uri": "library://artist/88", "external_ids": [], "is_playable": true, "media_type": "artist", "available": true, "image": null, "year": null}
+  ],
+  "last_played": 1764279000,
+  "album": {"item_id": "31", "provider": "library", "name": "Discovery", "version": "", "sort_name": "discovery", "uri": "library://album/31", "external_ids": [], "is_playable": true, "media_type": "album", "available": true,
+            "image": {"type": "thumb", "path": "/music/Daft Punk/Discovery/cover.jpg", "provider": "opensubsonic--T5ks", "remotely_accessible": false, "proxy_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "year": 2001},
+  "disc_number": 1,
+  "track_number": 4,
+  "audio_metadata": null
+}

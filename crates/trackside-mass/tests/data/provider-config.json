@@ -1,0 +1,14 @@
+{
+  "values": {
+    "log_level": {"key": "log_level", "type": "string", "default_value": "GLOBAL", "required": false, "label": "Log level", "value": null},
+    "recommendation_count": {"key": "recommendation_count", "type": "integer", "default_value": 10, "required": true, "label": "Recommendations", "value": 20}
+  },
+  "type": "music",
+  "domain": "opensubsonic",
+  "instance_id": "opensubsonic--T5ks",
+  "enabled": true,
+  "name": "Trackside",
+  "default_name": "Open Subsonic",
+  "last_error": "Could not connect",
+  "status": "loaded"
+}

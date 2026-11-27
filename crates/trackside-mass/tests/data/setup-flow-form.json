@@ -1,0 +1,21 @@
+{
+  "flow_id": "c0ffee00c0ffee00c0ffee00c0ffee00",
+  "step_id": "user",
+  "type": "form",
+  "title": "Connect to an Open Subsonic server",
+  "description": null,
+  "entries": [
+    {"key": "baseURL", "type": "string", "required": true, "value": null},
+    {"key": "api_key", "type": "secure_string", "required": false, "value": null}
+  ],
+  "errors": {"base": "Could not connect to http://192.168.1.10"},
+  "last_step": true,
+  "url": null,
+  "copy_text": null,
+  "progress_text": null,
+  "progress": null,
+  "image": null,
+  "expires_at": 1764281000.0,
+  "result": null,
+  "reason": null
+}

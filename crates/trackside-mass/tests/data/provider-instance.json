@@ -1,0 +1,9 @@
+{
+  "type": "music",
+  "domain": "audiobookshelf",
+  "name": "Audiobookshelf",
+  "instance_id": "audiobookshelf_1",
+  "supported_features": [],
+  "available": true,
+  "supported_artist_types": ["author", "narrator"]
+}

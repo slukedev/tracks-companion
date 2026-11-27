@@ -1,0 +1,16 @@
+{
+  "server_id": "6a1c2f0e9b8d4c7a8e5f3b2d1c0a9e8f",
+  "server_version": "2.11.0b11",
+  "schema_version": 128,
+  "min_supported_schema_version": 28,
+  "base_url": "http://192.168.1.20:8095",
+  "homeassistant_addon": true,
+  "onboard_done": true,
+  "name": "Music Assistant",
+  "status": "running",
+  "internal_url": "http://192.168.1.20:8095",
+  "external_url": "https://ma.example.net",
+  "has_remote_access": true,
+  "unsupported_install": false,
+  "dev_mode": false
+}
