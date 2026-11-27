@@ -288,10 +288,17 @@ pub struct ApiVersions {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent flags on the wire"
+)]
 pub struct AuthFeatures {
     pub password_login: bool,
     pub pairing: bool,
     pub pair_requests: bool,
+    /// Device-code linking for TVs (`/link/*`, section 6).
+    #[serde(default)]
+    pub device_link: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

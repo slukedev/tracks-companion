@@ -14,7 +14,8 @@
   "auth": {
     "password_login": true,
     "pairing": true,
-    "pair_requests": true
+    "pair_requests": true,
+    "device_link": true
   },
   "media": {
     "transcoding": true,

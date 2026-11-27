@@ -1,0 +1,12 @@
+{
+  "state": "denied",
+  "device": {
+    "name": "Living Room TV",
+    "platform": "android_tv",
+    "model": "Chromecast with Google TV",
+    "app_name": "Tracks"
+  },
+  "nearby": true,
+  "requested_at": "2026-11-14T09:58:40.000Z",
+  "expires_at": "2026-11-14T10:08:40.000Z"
+}

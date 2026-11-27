@@ -47,6 +47,7 @@ pub mod build {
         record_body, setting_results_body, settings_body, usage_body,
     };
     pub use crate::routes::enrichment::status_body as enrichment_status_body;
+    pub use crate::routes::link::{link_info_body, link_start_body};
     pub use crate::routes::media::{decision_body, download_name, reason_text};
     pub use crate::routes::public::capabilities_body;
     pub use crate::routes::settings::{LASTFM_API_KEY, apply_stored_auth, stored_secret};
@@ -58,7 +59,7 @@ pub mod build {
     pub use crate::routes::uploads::CHUNK_MAX;
 }
 
-pub use error::{ApiError, ApiResult, ErrorCode};
+pub use error::{ApiError, ApiResult, ErrorCode, device_link_error};
 pub use extract::{RequestId, X_REQUEST_ID};
 pub use qr::qr_svg;
 pub use routes::Https;

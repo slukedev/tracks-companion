@@ -3,6 +3,13 @@ import { h, clear, icon, button, busy, field, input, formError, skeleton, errorS
 
 const root = document.getElementById('app');
 
+// A TV's verification_url is <server>/link?code=XXXX-XXXX: open the Connect a TV page with the
+// code, and keep the code out of the address bar and history.
+if (/\/link$/.test(location.pathname)) {
+  const code = new URLSearchParams(location.search).get('code') || '';
+  history.replaceState(null, '', `./#/link/${encodeURIComponent(code)}`);
+}
+
 const pages = {
   overview: { title: 'Overview', icon: 'overview', load: () => import('./pages/overview.js'), admin: true },
   people: { title: 'People', icon: 'users', load: () => import('./pages/people.js'), admin: true },
@@ -13,6 +20,7 @@ const pages = {
   settings: { title: 'Settings', icon: 'settings', load: () => import('./pages/settings.js'), admin: true },
   activity: { title: 'Activity', icon: 'activity', load: () => import('./pages/audit.js'), admin: true },
   account: { title: 'My account', icon: 'account', load: () => import('./pages/account.js') },
+  link: { title: 'Connect a TV', icon: 'tv', load: () => import('./pages/link.js'), nav: 'account' },
 };
 
 // Old links keep working: Users and Devices became People.
@@ -321,8 +329,9 @@ async function route() {
     key = fallback;
     args = [];
   }
+  const navKey = pages[key].nav || key;
   for (const [k, els] of state.nav) {
-    for (const a of els) if (k === key) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    for (const a of els) if (k === navKey) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   }
   const token = ++state.renderToken;
   if (state.cleanup) { state.cleanup(); state.cleanup = null; }

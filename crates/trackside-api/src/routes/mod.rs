@@ -10,6 +10,7 @@ pub(crate) mod enrichment;
 mod events;
 mod idempotency;
 pub(crate) mod library;
+pub(crate) mod link;
 pub(crate) mod media;
 pub(crate) mod public;
 pub(crate) mod settings;
@@ -44,6 +45,7 @@ pub(crate) fn router(state: ApiState) -> Router {
     let api = Router::new()
         .merge(public::routes())
         .merge(account::routes())
+        .merge(link::routes())
         .merge(addresses::routes())
         .merge(library::routes())
         .merge(sync::routes())

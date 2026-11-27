@@ -14,7 +14,7 @@ pub struct Device {
     pub user: UserKey,
     pub client_device_id: String,
     pub name: String,
-    /// `ios`, `macos`, `android`, `web` or `other`.
+    /// `ios`, `macos`, `android`, `android_tv`, `web` or `other`.
     pub platform: String,
     pub model: Option<String>,
     pub app_name: Option<String>,
@@ -75,7 +75,7 @@ pub fn by_pid(c: &Connection, id: &DeviceId) -> Result<Option<Device>, DbError> 
     one(c, "WHERE pid = ?1", id)
 }
 
-const PLATFORMS: [&str; 5] = ["ios", "macos", "android", "web", "other"];
+const PLATFORMS: [&str; 6] = ["ios", "macos", "android", "android_tv", "web", "other"];
 
 fn platform(value: &str) -> &'static str {
     let lower = value.trim().to_ascii_lowercase();

@@ -10,7 +10,8 @@ use tokio::sync::broadcast::error::RecvError;
 use trackside_core::{Access, Audience, DeviceKey, LibraryKey, ServerEvent};
 
 use crate::wire::events::{
-    Changed, Hello, LibraryEvent, ScanEvent, ServerUrlsEvent, SessionEvent, UploadEvent,
+    Changed, DeviceLinkedEvent, Hello, LibraryEvent, ScanEvent, ServerUrlsEvent, SessionEvent,
+    UploadEvent,
 };
 
 /// Who is listening, and what they may hear.
@@ -118,6 +119,19 @@ pub fn visible_event(event: &ServerEvent, filter: &EventFilter) -> Outgoing {
             event: "cloud",
             data: data(&crate::wire::cloud::CloudEvent {
                 entity: (*entity).to_owned(),
+            }),
+        },
+        ServerEvent::DeviceLinked {
+            user,
+            device,
+            name,
+            platform,
+        } if *user == access.user => Outgoing::Send {
+            event: "device_linked",
+            data: data(&DeviceLinkedEvent {
+                id: device.to_string(),
+                name: name.clone(),
+                platform: platform.clone(),
             }),
         },
         ServerEvent::ServerUrls { version } => Outgoing::Send {
@@ -461,6 +475,24 @@ mod tests {
                 data: String::from("{\"version\":\"a746df40\"}"),
             }
         );
+    }
+
+    #[test]
+    fn linked_devices_reach_only_their_owner() {
+        let event = ServerEvent::DeviceLinked {
+            user: UserKey(1),
+            device: random_id(),
+            name: String::from("Living Room TV"),
+            platform: String::from("android_tv"),
+        };
+        assert!(matches!(
+            visible_event(&event, &member(1, &[])),
+            Outgoing::Send {
+                event: "device_linked",
+                ..
+            }
+        ));
+        assert_eq!(visible_event(&event, &member(2, &[])), Outgoing::Skip);
     }
 
     #[test]

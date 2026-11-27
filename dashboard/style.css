@@ -219,6 +219,7 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; }
 .i-table { --icon: url(icons/table.svg); }
 .i-phone { --icon: url(icons/phone.svg); }
 .i-tablet { --icon: url(icons/tablet.svg); }
+.i-tv { --icon: url(icons/tv.svg); }
 .i-laptop { --icon: url(icons/laptop.svg); }
 .i-share { --icon: url(icons/share.svg); }
 .i-more { --icon: url(icons/more.svg); }
@@ -708,6 +709,32 @@ input.switch:checked:active:not(:disabled)::before { transform: translateX(16px)
   .pairing .qr { order: 2; width: 168px; height: 168px; }
 }
 
+/* ---------- Connect a TV ---------- */
+
+.code-input { flex: 0 1 14ch; min-width: 0; font-size: var(--t-xl); letter-spacing: 0.08em; text-transform: uppercase; }
+.code-input::placeholder { letter-spacing: 0.08em; color: var(--ink-3); }
+.link-confirm { gap: var(--s4); }
+.link-device { display: flex; align-items: center; gap: var(--s3); min-width: 0; }
+.link-device-icon { display: grid; place-items: center; width: 48px; height: 48px; flex: none; border-radius: var(--r); background: var(--field); color: var(--ink-2); }
+.link-device-icon .icon { width: 26px; height: 26px; }
+.link-device-text { min-width: 0; }
+.link-device-text h2 { font-size: var(--t-xl); overflow-wrap: anywhere; }
+.link-device-text p { font-size: var(--t-sm); }
+.link-code { color: var(--ink); }
+.link-other { margin-left: auto; }
+.link-where { display: flex; align-items: center; gap: var(--s2); font-size: var(--t-sm); color: var(--ink-2); }
+.link-done { align-items: flex-start; }
+.link-done h2 { font-size: var(--t-xl); }
+.link-done p { max-width: 60ch; }
+.link-done-mark { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; }
+.link-done-mark .icon { width: 20px; height: 20px; }
+.link-done-mark.good { color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent); }
+.link-done-mark.muted { color: var(--ink-2); background: var(--field); }
+/* The one authored moment: the mark settles in as the result arrives. */
+.link-done-mark { transition: opacity var(--t-base) var(--ease-out), transform 320ms var(--ease-out); }
+@starting-style { .link-done-mark { opacity: 0; transform: scale(0.6); } }
+@media (pointer: coarse) { .code-input { font-size: var(--t-xl); } }
+
 /* ---------- Dialog: centred, so it scales from the centre, and leaves faster than it came. ---------- */
 
 dialog {
@@ -805,7 +832,7 @@ dialog[open]::backdrop { opacity: 1; transition-duration: var(--t-base); }
 /* Reduced motion: keep the fades that explain a change, drop the movement. */
 @media (prefers-reduced-motion: reduce) {
   .btn:active:not(:disabled), .tabbar a:active .icon, .tabbar button:active .icon { transform: none; }
-  @starting-style { .reveal, .detail:not([hidden]), dialog[open], .toast, .page.enter, .save-bar { opacity: 0; transform: none; } }
+  @starting-style { .reveal, .detail:not([hidden]), dialog[open], .toast, .page.enter, .save-bar, .link-done-mark { opacity: 0; transform: none; } }
   dialog, dialog[open] { transform: none; }
   .toast.leaving { transform: none; }
   .sidebar { transition-property: opacity, visibility !important; }
