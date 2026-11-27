@@ -10,7 +10,7 @@ Versions follow [semantic versioning](https://semver.org). Release tags are
 ## 0.1.0 (unreleased)
 
 The first release of Trackside, a music server for Tracks that you run yourself. The database
-starts at schema 5; there is nothing to upgrade from.
+starts at schema 6; there is nothing to upgrade from.
 
 - Indexes your music and keeps song ids stable through retags, moves and renames, even across
   a rebuilt database.
@@ -20,6 +20,11 @@ starts at schema 5; there is nothing to upgrade from.
   typed code or password. Invites carry every permission, including downloads, Subsonic app
   passwords and a bitrate limit.
 - Pairing from the app: Tracks can show a 6-digit code to approve in the dashboard.
+- Linking a TV: a TV that cannot scan a QR code shows a short code (and a QR for a phone).
+  Approve it in Tracks on a phone or Mac, or in the dashboard under My account, Connect a TV,
+  which also opens from the link the TV shows. The TV gets its own key under your account,
+  never with more access than the phone or session that approved it, and appears in your
+  devices. Codes last 10 minutes, are single use, and lock after 5 wrong tries.
 - Every address proves it is your server before Tracks sends it a key, code or password
   (`/api/v1/ping` with a challenge). Tracks uses plain HTTP only for addresses on your own
   network or tailnet. A reverse proxy must pass `/api/v1/ping` through with its query string.

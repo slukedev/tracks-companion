@@ -7,7 +7,7 @@ Two APIs share one listener:
   section 17.
 
 Plus `/healthz`, `/readyz`, `/metrics` (opt-in) and the dashboard pages at `/`, `/setup`,
-`/invite/<token>` and `/reset/<token>`.
+`/invite/<token>`, `/reset/<token>` and `/link` (a TV's `verification_url`, section 6).
 
 Architecture, data model and the reasons behind these choices are in
 [architecture.md](architecture.md).
@@ -81,7 +81,8 @@ Contents:
   the request is refused with `403 https_required` before the credential is looked at. This covers
   `POST /setup`, `/auth/session`, `/auth/login`, `/auth/reauth`, `/me/password`,
   `/me/api-keys`, `/invites/{token}/accept`, `/password-resets/{token}`, `/pair/claim`,
-  `/pair/requests` and `GET /pair/requests/{id}`, every route reached with a bearer key, and
+  `/pair/requests` and `GET /pair/requests/{id}`, `/link/start` and `/link/poll`, every route
+  reached with a bearer key, and
   Subsonic `apiKey`, `u`+`p` and `u`+`t`+`s` (error 50, HTTP `403` on media endpoints). The
   plain `trackside_session` cookie follows the same rule: from a client that isn't nearby it is
   refused with `https_required`, and that response clears it (`Set-Cookie` with `Max-Age=0`).
@@ -153,11 +154,13 @@ display in Tracks. `details` is optional and code-specific.
 | 403 | `reauth_required` | a sensitive change from a session whose last password check is over 10 minutes old; `POST /auth/reauth` and retry (section 6) |
 | 404 | `not_found` | unknown id, or an id the caller cannot see (never `403`, to avoid leaking existence) |
 | 405 | `method_not_allowed` | |
-| 409 | `conflict` | uniqueness or a state conflict; `details.reason` is one of `username_taken`, `last_admin`, `running`, `set_by_config`, `not_writable`, `rejected`, `not_ready`, or `conflict` |
+| 409 | `conflict` | uniqueness or a state conflict; `details.reason` is one of `username_taken`, `last_admin`, `running`, `set_by_config`, `not_writable`, `rejected`, `not_ready`, `link_used`, or `conflict` |
 | 409 | `content_changed` | the file changed on disk since it was indexed; retry shortly |
 | 409 | `idempotency_mismatch` | an `Idempotency-Key` reused with a different request |
 | 410 | `sync_reset` | the cursor can no longer be served; take a snapshot |
 | 410 | `candidate_expired` | an acquisition candidate token is no longer known; search again |
+| 410 | `link_expired`, `link_locked` | a device link's code expired, or locked after 5 wrong tries (section 6, Linking a TV) |
+| 403, 410, 428, 429 | `access_denied`, `expired_token`, `authorization_pending`, `slow_down` | a TV polling `POST /link/poll` (section 6, Linking a TV) |
 | 412 | `precondition_failed` | `If-Match` did not match |
 | 413 | `too_large` | body or upload over the limit |
 | 415 | `unsupported_media_type` | upload is not an allowed audio file |
@@ -396,7 +399,7 @@ No auth. Lets a client tell Trackside from other servers and decide what to call
   "version": "1.0.0",
   "api": {"versions": ["v1"], "current": "v1", "deprecated": []},
   "setup_required": false,
-  "auth": {"password_login": true, "pairing": true, "pair_requests": true},
+  "auth": {"password_login": true, "pairing": true, "pair_requests": true, "device_link": true},
   "media": {
     "transcoding": true,
     "profiles": ["aac-256", "aac-128", "mp3-320", "mp3-128", "opus-128", "flac"],
@@ -412,6 +415,7 @@ No auth. Lets a client tell Trackside from other servers and decide what to call
 }
 ```
 
+`auth.device_link` says the server links TVs with a short code (`/link/*`, section 6).
 `features.cloud` and `cloud` say Trackside Cloud is on (section 19); `cloud` is left out when the
 admin turned it off. `cloud.epoch` is the sync epoch: it changes when the server's database is
 restored or replaced, and every cloud cursor from before is then refused.
@@ -607,6 +611,131 @@ confirm it:
 
 Five wrong codes per session per 10 minutes, then `429`.
 
+### Linking a TV
+
+For a device that cannot scan a QR code or comfortably type a long code: a TV. It follows the
+shape of RFC 8628 (device authorization grant). The TV starts a link and shows a short code and
+a QR code; someone signed in approves it in Tracks (iPhone, Mac, Android phone) or in the
+dashboard; the TV polls and receives a device key. Fixtures: `link-start.json`,
+`link-lookup.json`, `link-approved.json`, `link-denied.json`, `link-poll-result.json`,
+`device-linked-event.json` and the `error-*.json` named below.
+
+`POST /api/v1/link/start` (no auth, HTTPS or nearby only):
+
+```json
+{"device": {"client_device_id": "5b1f...", "name": "Living Room TV", "platform": "android_tv",
+            "model": "Chromecast with Google TV", "app_name": "Tracks", "app_version": "3.2"}}
+```
+
+`device` is the same object as in `/auth/login`; linking again from the same `client_device_id`
+replaces that device's key. `platform` is one of `ios`, `macos`, `android`, `android_tv`, `web`
+or `other`. `201`:
+
+```json
+{
+  "device_code": "Hx4tQ9vLm2Rk7pW3zN8cB5yF1dJ6gS0aTe4uVq2iKo8",
+  "user_code": "WDJB-MJHT",
+  "verification_url": "https://music.example.com/link?code=WDJB-MJHT",
+  "link_url": "tracks://link?server=5f0c2b9e-8a3d-4c1e-9b7a-2d6e4f8a1c3b&code=WDJB-MJHT",
+  "interval_s": 5,
+  "expires_at": "2026-11-14T09:40:00.000Z"
+}
+```
+
+- `device_code`: 256 random bits, base64url. The TV keeps it to itself; it is the only way to
+  collect the key. The server stores only a hash of it.
+- `user_code`: 8 characters of Crockford base32 (`0-9 A-Z` without `I L O U`), shown as
+  `XXXX-XXXX`. On input, case and the dash (or spaces) don't matter, and `O`, `I` and `L` are
+  read as `0`, `1` and `1`.
+- `verification_url`: the dashboard's Connect a TV page with the code filled in, on the
+  server's own address a phone is most likely to reach and trust (a `public` HTTPS address,
+  then the tailnet's, then any HTTPS address, then the first address; a server-relative path
+  when the server knows none). It never comes from the request.
+- `link_url`: for the TV's QR code. Tracks opens it, finds the server it is signed in to by
+  `server` (the `server_id`), shows what it would link (`/link/lookup`) and asks to approve.
+- `interval_s`: how long to wait between polls. `expires_at`: 10 minutes after the start.
+- `429 rate_limited` with `Retry-After`: 5 starts per address at once, then one a minute
+  (IPv6 by /64); 60 at once server-wide, then 30 a minute; and while 100 links are waiting for
+  a decision.
+
+`POST /api/v1/link/poll` (no auth, HTTPS or nearby only): `{"device_code": "Hx4t..."}`.
+
+| HTTP | `error.code` | Meaning, and what the TV does |
+|---|---|---|
+| 200 | | **PairResult** (section 6, `/auth/login`), exactly as pairing returns it, once. Store it the same way |
+| 428 | `authorization_pending` | nobody has decided yet; poll again after `interval_s` (`error-authorization-pending.json`) |
+| 429 | `slow_down` | polled sooner than the interval (a second's grace); the interval grows by 5 s, up to 60 s. `details.interval_s` and `Retry-After` give the new interval; keep it from now on (`error-slow-down.json`) |
+| 403 | `access_denied` | the person denied it; show that, and offer a new code (`error-access-denied.json`) |
+| 410 | `expired_token` | expired, already collected, locked after wrong tries, or an unknown `device_code`; start again (`error-expired-token.json`) |
+| 429 | `rate_limited` | over 120 polls a minute from one address |
+
+The key is made when the TV collects it, not when it is approved, so an approval that is never
+collected leaves no device behind. A second poll after the `200` is `expired_token`.
+
+The approver, with a device key (Tracks) or a dashboard session (with `X-Trackside-CSRF`). API
+keys and app passwords are refused with `403 forbidden`: they belong to other apps. Each takes
+`{"user_code": "wdjb mjht"}`.
+
+- `POST /api/v1/link/lookup` (scope: library): what the code would link. `200`:
+
+  ```json
+  {
+    "state": "pending",
+    "device": {"name": "Living Room TV", "platform": "android_tv",
+               "model": "Chromecast with Google TV", "app_name": "Tracks"},
+    "nearby": true,
+    "requested_at": "2026-11-14T09:29:30.000Z",
+    "expires_at": "2026-11-14T09:39:30.000Z"
+  }
+  ```
+
+  `nearby` says the TV started the link from an address that counts as nearby (section 1:
+  the home network, loopback, the tailnet). When it is false, clients say so before approving:
+  someone may be asking the person to approve a TV of their own. `model` and `app_name` are left
+  out when the TV did not send them.
+- `POST /api/v1/link/approve` (scope: write): the same shape with `"state": "approved"`. The TV
+  becomes a device of the approving user. Its key gets the scopes of the credential that
+  approved it and never more: a device key or a session gives all five. Admin rights cannot be
+  granted this way: no key reaches `/admin`, whatever its user's role.
+- `POST /api/v1/link/deny` (scope: write): the same shape with `"state": "denied"`; the TV's next
+  poll is `access_denied`.
+
+Errors for the approver, in order of checking:
+
+| HTTP | `error.code` | When |
+|---|---|---|
+| 403 | `forbidden` | an API key or app password, or a scope the route needs is missing |
+| 429 | `rate_limited` | this person entered 5 wrong codes in 10 minutes, or the server saw 200 wrong codes in the last hour from everyone; `Retry-After`. While limited, even a right code waits |
+| 404 | `not_found` | no link has this code, or it is malformed |
+| 410 | `link_expired` | the code was right but the link expired (`error-link-expired.json`) |
+| 410 | `link_locked` | the code was right but 5 wrong codes reached this link first; the TV must show a new one (`error-link-locked.json`) |
+| 409 | `conflict` | `details.reason: "link_used"`: approved or denied already (`error-link-used.json`) |
+
+An expired link answers `link_expired` for an hour after it expires; after that it is swept and
+its code is `not_found`.
+
+Every start, decision and completion is logged without codes; decisions and completions are in
+the audit log as `device.link.approve`, `device.link.deny` and `device.link.complete`. When the
+TV collects its key, the approver's event streams get `device_linked` (section 13).
+
+**How hard the code is to guess.** Only someone signed in can try a code, and a wrong guess
+gains them nothing but a stranger's TV bound to their own account (the TV would show the
+guesser's music), so the risk is small; the numbers still keep it negligible:
+
+- There are 32^8 = 2^40, about 1.1 × 10^12, codes. At most 100 links wait at once, so one guess
+  hits some waiting link with probability at most 100 / 2^40, about 9.1 × 10^-11.
+- One person gets 5 wrong guesses in 10 minutes (a burst of 4, then one every 2 minutes), at most
+  about 724 a day. Everyone together gets 200 an hour (a burst of 50), at most 4,850 a day.
+- With the server-wide limit used up all day and 100 links always waiting, the chance of any hit
+  in a day is at most 4,850 × 9.1 × 10^-11, about 4.4 × 10^-7, and about 1.6 × 10^-4 over a year
+  of doing nothing else. With one TV waiting, as in normal use, it is 100 times smaller.
+- Against one TV: its first 4 characters find it and the whole code is checked in constant time
+  against a second hash. A guess that gets the first half right (probability at most 100 / 2^20
+  per guess) counts against that link, which locks after 5. So the second half, 2^20 values,
+  gets at most 4 tries: a chance of at most 4 / 2^20, about 3.8 × 10^-6, for each link a guesser
+  reaches. Any wrong code gets the same `404` whether or not it found a link.
+- A link lives 10 minutes, and the device code is 256 bits, so it is never guessed.
+
 ### Invites and resets
 
 - `GET /api/v1/invites/{token}` (no auth): `404` for an unknown, used, revoked or expired
@@ -742,7 +871,8 @@ keys, API keys and sessions, members as well as admins. Fixture:
 ### Devices
 
 - `GET /api/v1/me/devices`: `{"devices": [{"id", "name", "platform", "model", "app_name",
-  "app_version", "created_at", "last_seen_at", "last_ip", "current": true}]}`
+  "app_version", "created_at", "last_seen_at", "last_ip", "current": true}]}`. `platform` is
+  `ios`, `macos`, `android`, `android_tv`, `web` or `other`.
 - `PATCH /api/v1/me/devices/{id}` `{"name"}`.
 - `DELETE /api/v1/me/devices/{id}`: revokes its key and media tokens. `204`.
 
@@ -1192,6 +1322,7 @@ caller can see, in sync as well.
 | `upload` | `{"id", "state", "song_id"?}` | the caller's uploads |
 | `server_urls` | `{"version"}` | the server's addresses changed; call `GET /server/urls` (section 7) |
 | `session` | `{"reason": "revoked"}` | the credential was revoked; the stream ends |
+| `device_linked` | `{"id", "name", "platform"}` | a TV the caller approved with a code (section 6, Linking a TV) collected its key; it is now in `GET /me/devices` |
 | `cloud` | `{"entity": "plays"}` | the caller's Trackside Cloud data for `entity` (or `devices`) changed; pull it (section 19). Never carries the data |
 
 `id` of each event is the seq at the time. Each event type is sent only to callers allowed to see
