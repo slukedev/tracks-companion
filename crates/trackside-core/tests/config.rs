@@ -289,7 +289,7 @@ fn retired_keys_are_not_keys() {
 #[test]
 fn retired_keys_in_the_file_are_ignored_with_one_warning_each() -> TestResult {
     let (_dir, sources) = file_sources(
-        "[acquire.soulseek]\nenabled = true\nurl = \"http://slskd:5030\"\napi_key = \"secret\"\n",
+        "[acquire.soulseek]\nenabled = true\nurl = \"http://old-host:5030\"\napi_key = \"secret\"\n",
     )?;
     let (_, report) = load_config(&sources)?;
     assert_eq!(report.warnings.len(), 3, "{:?}", report.warnings);
@@ -311,7 +311,7 @@ fn retired_keys_in_the_file_are_ignored_with_one_warning_each() -> TestResult {
 
 #[test]
 fn a_retired_key_set_in_the_file_and_the_environment_warns_once() -> TestResult {
-    let (_dir, mut sources) = file_sources("[acquire.soulseek]\nurl = \"http://slskd:5030\"\n")?;
+    let (_dir, mut sources) = file_sources("[acquire.soulseek]\nurl = \"http://old-host:5030\"\n")?;
     sources.env.push((
         String::from("TRACKSIDE_ACQUIRE__SOULSEEK__URL"),
         String::from("http://other:5030"),

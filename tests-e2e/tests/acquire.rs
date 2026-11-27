@@ -195,7 +195,7 @@ async fn soulseek_settings_from_an_older_version_are_ignored_and_ytdlp_still_acq
     let src = source(tmp.path(), &ffmpeg, Format::M4a)?;
     let fake = FakeYtdlp::write(&tmp.path().join("bin"), &src, ARTIST, TITLE, 3.0)?;
     let script = fake.script.display().to_string();
-    let key_file = tmp.path().join("slskd-key");
+    let key_file = tmp.path().join("old-key");
     std::fs::write(&key_file, "old-key-0123456789")?;
     let key_file = key_file.display().to_string();
     let Some(env) = boot(move |s| {
