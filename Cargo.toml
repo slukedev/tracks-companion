@@ -52,6 +52,10 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 # connector built from the same platform verifier reqwest uses.
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 rustls-platform-verifier = "0.7"
+# Sendspin's Noise_KKpsk2 handshake and transport, with only the primitives the
+# 25519_ChaChaPoly_SHA256 suite needs.
+snow = { version = "0.10", default-features = false, features = ["use-chacha20poly1305", "use-sha2", "use-curve25519", "use-getrandom"] }
+bytes = "1.12"
 # tungstenite logs whole frames (the auth frame holds the Music Assistant token) through `log`
 # at trace level, and tracing-subscriber bridges `log` into the server's logs. Compiling `log`
 # records above debug out keeps the token out of logs even at RUST_LOG=trace.

@@ -1,0 +1,40 @@
+[package]
+name = "trackside-sendspin"
+description = "Sendspin player client: Music Assistant's authenticated proxy, the Noise KKpsk2 handshake, time sync and audio streams."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# A scripted fake Sendspin server, for this crate's tests and the relay's.
+testing = ["tokio-tungstenite/handshake"]
+
+[dependencies]
+tokio.workspace = true
+tokio-util.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+rustls.workspace = true
+rustls-platform-verifier.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+zeroize.workspace = true
+fastrand.workspace = true
+log.workspace = true
+snow.workspace = true
+base64.workspace = true
+sha2.workspace = true
+bytes.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+trackside-sendspin = { path = ".", features = ["testing"] }
+proptest.workspace = true
+
+[lints]
+workspace = true
