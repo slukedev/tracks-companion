@@ -104,6 +104,10 @@ It reuses `tracks-model` as a git dependency pinned to an exact revision of the 
     trackside-api/            /api/v1 router (native and admin), wire types, SSE
     trackside-cloud/          Trackside Cloud: per-user sync of the apps' own data, its
                               merge rules, storage and paging (ADR 0012)
+    trackside-sendspin/       Sendspin player client: Music Assistant's /sendspin proxy, the
+                              Noise KKpsk2 handshake, time sync, the player stream
+    trackside-relay/          the phone playback relay: a Sendspin player per phone served as
+                              live HLS (FLAC remuxed, or AAC through ffmpeg), in memory only
     trackside-server/         the `trackside` binary: CLI, wiring, TLS, mDNS, scheduler,
                               backups, shutdown, embedded dashboard
   dashboard/                  static HTML, CSS and JavaScript modules, embedded at build time
@@ -112,8 +116,9 @@ It reuses `tracks-model` as a git dependency pinned to an exact revision of the 
   docs/
 ```
 
-Ten shipped crates. Acquisition is its own crate rather than part of `trackside-scan` so that
-its code can be owned by one work package, reviewed on its own, and compiled out with the
+Ten core crates, and the two of the phone relay (section 8, Phone relay). Acquisition is its
+own crate rather than part of `trackside-scan` so that its code can be owned by one work
+package, reviewed on its own, and compiled out with the
 `acquire` cargo feature of `trackside-server` (on by default) by anyone who builds without it.
 
 ### Dependency graph
@@ -128,6 +133,8 @@ its code can be owned by one work package, reviewed on its own, and compiled out
 | trackside-enrich | core |
 | trackside-subsonic | core, auth, media |
 | trackside-cloud | core |
+| trackside-sendspin | none |
+| trackside-relay | sendspin |
 | trackside-api | core, auth, media, cloud |
 | trackside-server | all of the above |
 
@@ -160,6 +167,8 @@ Rules:
 | subsonic | `/rest/*` parsing (GET and formPost), XML and JSON envelopes, error codes, mapping records to Subsonic shapes | domain logic beyond mapping |
 | api | `/api/v1/*` handlers, wire types (serde), admin endpoints, SSE, fixtures for Tracks | domain logic beyond mapping |
 | cloud | the apps' synced records: merge rules, the per-user change seq, chunked writes, pruning, quotas, the device registry | HTTP, anything outside the `cloud_*` tables |
+| sendspin | the Sendspin wire as a player: proxy auth, init exchange, Noise handshake and transport, framing, time filter, hello and activation, stream events, reconnects | anything after an audio chunk is handed on, keys at rest (an `IdentityStore` the server provides) |
+| relay | FLAC frame splitting, the fMP4 muxer (`fLaC`/`dfLa`, `mp4a`/`esds`), live playlists, epochs, the publication rule, byte caps, the cellular ffmpeg child, idle teardown, session limits | routes and auth (the API calls its fetch methods), Music Assistant's API (a `PlayerControl` the server provides) |
 | server | CLI, wiring, listeners, TLS, mDNS, scheduler, backups, health endpoints, dashboard asset serving, metrics text | domain logic |
 
 ### Shared code with Tracks
@@ -1577,6 +1586,49 @@ content-addressed. Missing artwork is a `404`, never a placeholder image. Covers
 suggestions (`e...` ids, section 5, Suggestions and enrichment) are served by the same route and
 resized the same way; unlike scanned originals they count toward the cache limit and can be
 evicted.
+
+### Phone relay
+
+Catalog items from Music Assistant (MA) play on a phone through a relay, because MA offers no
+audio URL for them (contract section 3). `trackside-relay` joins MA as one Sendspin player per
+phone, with `trackside-sendspin`, and serves that player's audio as live HLS.
+
+- **Joining MA.** Through MA's authenticated `/sendspin` proxy on its web port (an `auth`
+  message with the MA token and the player's `client_id`), then the encrypted Sendspin wire:
+  Noise `KKpsk2` as responder with the published Sentinel PSK. The player offers only
+  `player@v1` and unpaired access, which MA grants to playback-only guests without pairing.
+  `product_name: "Mobile Application"` makes MA treat it as a private, session-only app
+  player. Each phone keeps one X25519 identity (sealed at rest by the server), so the same MA
+  player and queue come back for it.
+- **Format.** One format is offered, FLAC 44.1 kHz/16 bit/stereo, so MA never switches
+  mid-stream. The lossless tier remuxes the FLAC frames into fMP4 without decoding. The
+  cellular tier pipes the frames, as fMP4 fragments, into an ffmpeg child that writes ADTS
+  AAC-LC 256k, and the same muxer packages that as `mp4a`. Without ffmpeg only lossless is
+  offered.
+- **Epochs.** Each `stream/start`, `stream/clear` without `from_timestamp`, resume and tier
+  change opens an epoch with its own playlist URL, init segment and media sequence from 0; the
+  previous playlist gets `#EXT-X-ENDLIST`. The app swaps to the new URL, so audio buffered from
+  before a seek or skip never plays. Natural track changes send nothing (MA streams gaplessly).
+- **Publication rule.** A segment (about 1 s, at most 1.4 s) is published once it is complete
+  and its end, MA's timestamp mapped to the local clock by the Sendspin time filter, minus the
+  reported `output_delay_ms` (4000) has passed. The phone therefore holds at most about the
+  output delay of audio, and audio a `stream/clear` with `from_timestamp` replaces was never
+  published (the spec puts `from_timestamp` at least the lead plus the output delay ahead). The
+  cellular tier encodes 0.8 s ahead of publication, below MA's 1 s minimum lead.
+- **Memory.** MA never has more than `buffer_capacity` (1 MiB) outstanding. Pending audio is
+  capped at 1.25 MiB and published segments at 1.5 MiB per session (oldest dropped, counted as
+  a violation); the playlist window is six segments with three more kept for a player a little
+  behind. Nothing touches disk: segments live in memory and go with their epoch, ffmpeg reads
+  and writes pipes, and nothing is cached or added to the library.
+- **Backpressure.** The Sendspin connection task hands each message to the relay under a short
+  lock and never waits on an HTTP client; readers wait on a `watch`. A slow phone falls out of
+  the window and gets `404`, and reloads the live edge.
+- **Lifecycle.** Playing with no playlist or segment fetch for 30 s asks MA to pause; paused or
+  idle for 10 minutes ends the session with `client/goodbye` `user_request`. A dropped
+  connection reconnects with backoff within MA's 180 s retention, and the relay asks MA to
+  resume, since MA stops a player whose connection drops. Shutdown says goodbye `shutdown`.
+  At most one session per phone, three per user and four per server (each is its own stream
+  pipeline inside MA).
 
 ---
 
