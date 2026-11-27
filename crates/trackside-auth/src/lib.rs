@@ -28,6 +28,7 @@ mod cache;
 mod credentials;
 pub mod extract;
 mod limit;
+mod link;
 mod media_token;
 mod pairing;
 mod password;
@@ -39,6 +40,10 @@ mod setup;
 mod subsonic;
 mod token;
 
+pub use link::{
+    KEEP_EXPIRED, LINK_ATTEMPTS, LINK_INTERVAL, LINK_LIFETIME, MAX_INTERVAL, MAX_PENDING_LINKS,
+    SLOW_DOWN_STEP,
+};
 pub use password::PASSWORD_BYTES;
 pub use proxy::is_local_address;
 pub use request::{
@@ -155,6 +160,11 @@ impl Scopes {
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
+    }
+
+    #[must_use]
+    pub const fn intersection(self, other: Self) -> Self {
+        Self(self.0 & other.0)
     }
 
     /// Parses scope names separated by spaces or commas, as stored and sent. `None` for an
@@ -567,6 +577,75 @@ pub enum PairPoll {
     Expired,
 }
 
+/// A device link just started: what the device shows, and the device code it polls with.
+#[derive(Clone, PartialEq, Eq)]
+pub struct DeviceLinkStart {
+    /// 256 random bits, base64url. Only the device knows it.
+    pub device_code: String,
+    /// `XXXX-XXXX`, for the device to show.
+    pub user_code: String,
+    pub interval: Duration,
+    pub expires_at: Millis,
+}
+
+impl std::fmt::Debug for DeviceLinkStart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceLinkStart")
+            .field("expires_at", &self.expires_at)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A device waiting to be linked, as the approver sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkRequest {
+    pub device_name: String,
+    pub platform: String,
+    pub model: Option<String>,
+    pub app_name: Option<String>,
+    /// Started from a nearby address: the home network, loopback or the tailnet.
+    pub nearby: bool,
+    pub requested_at: Millis,
+    pub expires_at: Millis,
+}
+
+/// Approve or deny a device link.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkDecision {
+    Approve,
+    Deny,
+}
+
+/// Why a device link call did not go ahead. The approver's answers come first, then the
+/// device's (RFC 8628 names).
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum LinkError {
+    /// No link has this code (or it was mistyped).
+    #[error("That code is wrong.")]
+    NotFound,
+    /// Approver: the code was right but the link has expired. Device: start again.
+    #[error("That code has expired.")]
+    Expired,
+    /// Approver: the link was approved or denied already.
+    #[error("That code has been used.")]
+    Used,
+    /// Approver: too many wrong codes reached this link; the device must show a new one.
+    #[error("That code was locked after too many wrong tries.")]
+    Locked,
+    /// Device: nobody has decided yet.
+    #[error("Waiting for approval.")]
+    Pending,
+    /// Device: polled sooner than `interval`; wait `interval` from now on.
+    #[error("Polling too often.")]
+    SlowDown { interval: Duration },
+    /// Device: the link was denied.
+    #[error("The link was denied.")]
+    Denied,
+    #[error(transparent)]
+    Auth(#[from] AuthError),
+}
+
 /// Authentication and credential management. One per server, shared as `Arc<Auth>`.
 pub struct Auth {
     db: Db,
@@ -586,6 +665,11 @@ pub struct Auth {
     approvals: limit::FailureLimiter<UserKey>,
     key_requests: limit::RequestLimiter<KeyId>,
     developer_tokens: limit::RequestLimiter<UserKey>,
+    link_starts: limit::RequestLimiter<limit::IpKey>,
+    link_starts_global: limit::RequestLimiter<()>,
+    link_polls: limit::RequestLimiter<limit::IpKey>,
+    link_guesses: limit::FailureLimiter<UserKey>,
+    link_guesses_global: limit::FailureLimiter<()>,
     cache: Arc<cache::CredentialCache>,
     /// Media epochs of devices seen authenticating, so a media token can be minted without
     /// a database read. The epoch is checked against the database when the token is used.
@@ -653,6 +737,33 @@ impl Auth {
             developer_tokens: limit::RequestLimiter::per_minute(
                 DEVELOPER_TOKENS_PER_MINUTE,
                 DEVELOPER_TOKENS_PER_MINUTE,
+                Arc::clone(&clock),
+            ),
+            link_starts: limit::RequestLimiter::per_minute(
+                link::STARTS_PER_IP.0,
+                link::STARTS_PER_IP.1,
+                Arc::clone(&clock),
+            ),
+            link_starts_global: limit::RequestLimiter::per_minute(
+                link::STARTS_GLOBAL.0,
+                link::STARTS_GLOBAL.1,
+                Arc::clone(&clock),
+            ),
+            link_polls: limit::RequestLimiter::per_minute(
+                link::POLLS_PER_IP.0,
+                link::POLLS_PER_IP.1,
+                Arc::clone(&clock),
+            ),
+            link_guesses: limit::FailureLimiter::per(
+                link::GUESSES_PER_USER,
+                Duration::from_mins(10),
+                link::GUESSES_PER_USER - 1,
+                Arc::clone(&clock),
+            ),
+            link_guesses_global: limit::FailureLimiter::per(
+                link::GUESSES_GLOBAL_PER_HOUR,
+                Duration::from_hours(1),
+                link::GUESSES_GLOBAL_PER_HOUR / 4,
                 Arc::clone(&clock),
             ),
             cache,
