@@ -15,6 +15,7 @@ Guides for people hosting the server. New here? Start with the
 | [troubleshooting.md](troubleshooting.md) | when something doesn't work |
 | [configuration.md](configuration.md) | every setting |
 | [acquisition.md](acquisition.md) | the optional request feature and yt-dlp |
+| [music-assistant.md](music-assistant.md) | speakers and streaming services through Music Assistant, Trackside as a source there |
 | [relay.md](relay.md) | playing streaming services on phones through Music Assistant |
 
 For contributors and maintainers: [contributing.md](contributing.md) and

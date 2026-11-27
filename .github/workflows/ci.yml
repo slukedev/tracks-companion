@@ -77,6 +77,7 @@ jobs:
           docker compose -f compose.yaml config -q
           docker compose -f compose.yaml -f compose.acquire.yaml config -q
           docker compose -f compose.yaml -f compose.tailscale.yaml config -q
+          docker compose -f compose.yaml -f compose.music-assistant.yaml config -q
           docker compose -f compose.yaml -f compose.build.yaml config -q
           TRACKSIDE_BUILD_TARGET=acquire docker compose -f compose.yaml -f compose.acquire.yaml -f compose.build.yaml config -q
           for f in nas/truenas/compose.yaml nas/synology/compose.yaml nas/casaos/docker-compose.yml; do

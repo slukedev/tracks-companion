@@ -61,12 +61,18 @@ Contents:
 - **Optional acquisition.** An admin-enabled provider (yt-dlp) behind a durable job
   queue, replacing the previous proxy's "star, then poll for twenty minutes" flow with a request
   that reports its own status and ends with a stable song id (section 9).
+- **Speakers and streaming services through Music Assistant.** An optional Music Assistant
+  server gives Tracks the house's speakers and the owner's streaming services, always through
+  Trackside's accounts and limits; Trackside registers itself there so the library plays on
+  every speaker (section 8, Speakers; ADR 0013).
 
 ### Non-goals
 
-- Ripping or decrypting streaming services (Tidal, Qobuz, Amazon, Deezer, Spotify), or
-  gateways that do (SpotiFLAC, Mornye and similar). There is no provider interface aimed at
-  them and none will be accepted.
+- Downloading, recording, caching to disk or exporting anything from a streaming or DRM
+  service (Tidal, Qobuz, Amazon, Deezer, Spotify and the rest), or gateways that do (SpotiFLAC,
+  Mornye and similar). Streaming services are played only through Music Assistant, in real
+  time, with the owner's own accounts: on speakers by Music Assistant, on phones through the
+  in-memory relay (ADR 0013). Acquisition never takes them as a source.
 - Being a proxy in front of another server. Trackside owns its scanner, database and users.
 - Video, podcasts, internet radio management, jukebox mode, chat, and the Jellyfin API in v1.
   The Subsonic endpoints for them answer with an empty result or "not implemented" (api.md).
@@ -104,6 +110,10 @@ It reuses `tracks-model` as a git dependency pinned to an exact revision of the 
     trackside-api/            /api/v1 router (native and admin), wire types, SSE
     trackside-cloud/          Trackside Cloud: per-user sync of the apps' own data, its
                               merge rules, storage and paging (ADR 0012)
+    trackside-mass/           Music Assistant WebSocket client: one supervised connection,
+                              typed commands and events, the testing fake
+    trackside-assistant/      speakers, the Music Assistant admin connection and Trackside's
+                              registration in it, behind core's AssistantControl
     trackside-sendspin/       Sendspin player client: Music Assistant's /sendspin proxy, the
                               Noise KKpsk2 handshake, time sync, the player stream
     trackside-relay/          the phone playback relay: a Sendspin player per phone served as
@@ -133,6 +143,8 @@ package, reviewed on its own, and compiled out with the
 | trackside-enrich | core |
 | trackside-subsonic | core, auth, media |
 | trackside-cloud | core |
+| trackside-mass | none |
+| trackside-assistant | core, auth, mass |
 | trackside-sendspin | none |
 | trackside-relay | sendspin |
 | trackside-api | core, auth, media, cloud |
@@ -141,8 +153,9 @@ package, reviewed on its own, and compiled out with the
 Rules:
 
 - `trackside-core` depends on nothing else in the workspace. Every other crate depends on it.
-- `trackside-subsonic` and `trackside-api` do **not** depend on `scan`, `acquire` or `enrich`;
-  they reach those through the `ScanControl`, `AcquireControl` and `EnrichControl` traits
+- `trackside-subsonic` and `trackside-api` do **not** depend on `scan`, `acquire`, `enrich` or
+  `assistant`; they reach those through the `ScanControl`, `AcquireControl`, `EnrichControl`
+  and `AssistantControl` traits
   declared in `core`, which `server`
   wires to the real implementations. This keeps the HTTP crates testable with fakes and the graph
   acyclic.
@@ -167,6 +180,8 @@ Rules:
 | subsonic | `/rest/*` parsing (GET and formPost), XML and JSON envelopes, error codes, mapping records to Subsonic shapes | domain logic beyond mapping |
 | api | `/api/v1/*` handlers, wire types (serde), admin endpoints, SSE, fixtures for Tracks | domain logic beyond mapping |
 | cloud | the apps' synced records: merge rules, the per-user change seq, chunked writes, pruning, quotas, the device registry | HTTP, anything outside the `cloud_*` tables |
+| mass | the Music Assistant WebSocket API: connect, schema check, auth, reconnect, requests and chunked answers, events and snapshots, tolerant models | anything Trackside-specific |
+| assistant | speakers from players and queues, revisions, coalescing, commands and their outcomes, the connection settings (sealed token), registration as an OpenSubsonic source | HTTP, the relay, the catalog routes |
 | sendspin | the Sendspin wire as a player: proxy auth, init exchange, Noise handshake and transport, framing, time filter, hello and activation, stream events, reconnects | anything after an audio chunk is handed on, keys at rest (an `IdentityStore` the server provides) |
 | relay | FLAC frame splitting, the fMP4 muxer (`fLaC`/`dfLa`, `mp4a`/`esds`), live playlists, epochs, the publication rule, byte caps, the cellular ffmpeg child, idle teardown, session limits | routes and auth (the API calls its fetch methods), Music Assistant's API (a `PlayerControl` the server provides) |
 | server | CLI, wiring, listeners, TLS, mDNS, scheduler, backups, health endpoints, dashboard asset serving, metrics text | domain logic |
@@ -1587,6 +1602,37 @@ suggestions (`e...` ids, section 5, Suggestions and enrichment) are served by th
 resized the same way; unlike scanned originals they count toward the cache limit and can be
 evicted.
 
+### Speakers
+
+Music Assistant's players are speakers in Tracks (api.md section 20). `trackside-assistant`
+keeps one `trackside_mass::Client`, and replaces it whenever the admin changes the address,
+token or certificate authority, so no change needs a restart.
+
+- **State.** A pump task per connection reads the client's feed: a snapshot of every player and
+  queue after each connect, then events. Each is applied to a store of players and queues held
+  under a plain mutex for microseconds, and every visible player becomes a speaker: stable `o`
+  id (`BLAKE3("speaker" ‖ ma_server_id ‖ player_id)`), capabilities from MA's features and
+  queue, group roles, the playback position at a server time, and what plays (a library song
+  when the item comes from Trackside's own source, a catalog ref when it comes from a streaming
+  service). A change other than the position gives the speaker a new revision.
+- **Events.** `speaker_updated` goes out at most four times a second per speaker, always with
+  the latest state; `speaker_progress` only when the position moves unpredictably (play, pause,
+  seek, item change, drift over 1.5 s) and every 30 s while playing. They are published on the
+  event bus, a broadcast channel: a slow event-stream client lags and resyncs on its own and
+  never holds up the MA connection. The MA client resyncs a snapshot itself when its own
+  subscriber lags.
+- **Commands** are checked against the speaker's capabilities and answered `202` with the
+  expected state; the MA calls run in their own task with a timeout and the outcome is an event
+  to the sender. Volume and seek are coalesced per speaker to one call per 100 ms with the latest
+  value. A lost connection fails every pending command.
+- **Connection.** `connecting` at once when the connection drops, `unavailable` after 30 s or at
+  once when the token is refused; on return, every speaker is announced again.
+- **Registration.** Trackside adds itself to MA as an OpenSubsonic source through MA's setup
+  flow, with the service account `music-assistant` (no password, `/rest` only) and a key scoped
+  `library stream`. It checks the registration on every connect and repairs it when MA lost
+  the source or the key was revoked; registering again replaces the source and revokes the old
+  key. A non-admin MA token reports `needs_admin`.
+
 ### Phone relay
 
 Catalog items from Music Assistant (MA) play on a phone through a relay, because MA offers no
@@ -1646,8 +1692,10 @@ fails `provider_unavailable` at once with a detail saying the source was removed
 retired candidate is marked tried and skipped, and a retired candidate token is answered as
 expired.
 
-There is no provider for streaming services and the `Provider` trait is not public API for
-third-party code. ADR 0006 records the decision.
+There is no acquisition provider for streaming services, and Music Assistant is never a
+source: streaming services are only played, through Music Assistant (section 8, Speakers; ADR
+0013). The `Provider` trait is not public API for third-party code. ADR 0006 records the
+decision.
 
 ### The provider interface
 
@@ -2122,6 +2170,14 @@ The server starts with no file at all: data in the platform default directory, l
 | `acquire.ytdlp.max_age_days` | `TRACKSIDE_ACQUIRE__YTDLP__MAX_AGE_DAYS` | `60` | outdated warning |
 | `enrichment.musicbrainz` **D** | `TRACKSIDE_ENRICHMENT__MUSICBRAINZ` | `false` | tag lookups for acquired files |
 | `enrichment.lastfm_api_key` **D** | `TRACKSIDE_ENRICHMENT__LASTFM_API_KEY` / `_FILE` | unset | one server-wide Last.fm key for suggestions (section 5, Suggestions and enrichment); secret, write-only in the dashboard |
+| `music_assistant.url` **D** | `TRACKSIDE_MUSIC_ASSISTANT__URL` | unset | Music Assistant's web address, such as `http://192.168.1.20:8095`; `ws` paths are derived |
+| `music_assistant.token` **D** | `TRACKSIDE_MUSIC_ASSISTANT__TOKEN` / `_FILE` | unset | a long-lived Music Assistant token; secret, write-only in the dashboard, sealed at rest |
+| `music_assistant.enabled` **D** | `TRACKSIDE_MUSIC_ASSISTANT__ENABLED` | `true` | use Music Assistant once an address and token are set |
+| `music_assistant.auto_register` **D** | `TRACKSIDE_MUSIC_ASSISTANT__AUTO_REGISTER` | `true` | add Trackside to Music Assistant as an OpenSubsonic source and keep it there |
+| `music_assistant.lan_url` **D** | `TRACKSIDE_MUSIC_ASSISTANT__LAN_URL` | the first LAN address | the address Music Assistant reaches Trackside at |
+| `music_assistant.ca_file` **D** | `TRACKSIDE_MUSIC_ASSISTANT__CA_FILE` | unset | a PEM file of the CA (or self-signed certificate) Music Assistant's `https` uses; trusted instead of the system store |
+| `music_assistant.hidden_services` **D** | `TRACKSIDE_MUSIC_ASSISTANT__HIDDEN_SERVICES` | empty | Music Assistant music provider instance ids not offered as streaming services |
+| `music_assistant.relay_max_sessions` **D** | `TRACKSIDE_MUSIC_ASSISTANT__RELAY_MAX_SESSIONS` | `4` | phone relays at once, server-wide |
 
 `trackside config show` prints one `key = value  # source` line per key in this table's order,
 values as TOML with durations and sizes in their largest whole unit and secrets as `<redacted>`,

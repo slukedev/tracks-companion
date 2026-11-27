@@ -1,0 +1,36 @@
+# Speakers and streaming services through Music Assistant. Layer it on top of compose.yaml:
+#
+#   docker compose -f compose.yaml -f compose.music-assistant.yaml up -d
+#
+# Music Assistant needs the host's network to find speakers (mDNS, UPnP) and for AirPlay,
+# Cast, Sonos and DLNA, so it runs with host networking, and Trackside joins the host network
+# too: Music Assistant then reaches Trackside at the machine's LAN address, and Trackside
+# reaches Music Assistant at http://127.0.0.1:8095. Then:
+#
+#   1. Open http://<this machine>:8095, create Music Assistant's first user (an admin) and,
+#      under Settings, Profile, a long-lived token.
+#   2. In Trackside's dashboard, Speakers: address http://127.0.0.1:8095 and the token.
+#      Trackside adds itself to Music Assistant as a source by itself.
+#   3. Sign in to your streaming services in Music Assistant.
+#
+# docs/ops/music-assistant.md has the details and troubleshooting.
+
+services:
+  music-assistant:
+    # 2.10.13, the stable release Trackside is tested with. Keep stable and beta databases
+    # apart: switching the tag between them is not supported by Music Assistant.
+    image: ghcr.io/music-assistant/server:2.10.13@sha256:7510aaa7ee5fc85b34fd0de17992bd14473895b23ce3eb9b310092743f4dbb84
+    container_name: music-assistant
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - music-assistant-data:/data
+    environment:
+      LOG_LEVEL: ${MA_LOG_LEVEL:-info}
+
+  trackside:
+    ports: !reset []
+    network_mode: host
+
+volumes:
+  music-assistant-data:

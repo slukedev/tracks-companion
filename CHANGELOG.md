@@ -10,7 +10,7 @@ Versions follow [semantic versioning](https://semver.org). Release tags are
 ## 0.1.0 (unreleased)
 
 The first release of Trackside, a music server for Tracks that you run yourself. The database
-starts at schema 6; there is nothing to upgrade from.
+starts at schema 7; there is nothing to upgrade from.
 
 - Indexes your music and keeps song ids stable through retags, moves and renames, even across
   a rebuilt database.
@@ -53,6 +53,14 @@ starts at schema 6; there is nothing to upgrade from.
   source on your machine; no images are published between releases. Release images are
   signed by `images.yml` and carry SBOM and provenance attestations; release binaries and
   packages carry build provenance.
+- Speakers through Music Assistant (optional, off until you connect one under Speakers or
+  `music_assistant.*`): the speakers Music Assistant reaches (Sonos, AirPlay, Chromecast, DLNA
+  and more) appear in Tracks with play, pause, volume, grouping and power, and update live.
+  Trackside adds itself to Music Assistant as a source, with its own account and a key that can
+  only browse and stream, so your library plays on every speaker. The Music Assistant token is
+  sealed at rest and never shown again. Two new permissions per person, on by default: use
+  speakers, and play music services. `compose.music-assistant.yaml` runs Music Assistant beside
+  Trackside. See [music-assistant.md](docs/ops/music-assistant.md).
 - Optional acquisition through yt-dlp, off unless an admin turns it on. Playing a song the
   server doesn't have streams it through yt-dlp without keeping it; only Get adds a song to the
   library.

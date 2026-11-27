@@ -23,8 +23,8 @@ The command line has two options, both also usable as environment variables:
 Environment names are `TRACKSIDE_` and the key in capitals with `__` between levels:
 `scanner.quick_interval` is `TRACKSIDE_SCANNER__QUICK_INTERVAL`. The exceptions are
 `TRACKSIDE_DATA_DIR`, `TRACKSIDE_MUSIC_DIR`, `TRACKSIDE_CACHE_DIR`, `TRACKSIDE_ADMIN_USERNAME`
-and `TRACKSIDE_ADMIN_PASSWORD`. The two keys that hold a secret (`auth.admin_password` and
-`enrichment.lastfm_api_key`) also accept `<NAME>_FILE`, a path to read the value from, which is
+and `TRACKSIDE_ADMIN_PASSWORD`. The three keys that hold a secret (`auth.admin_password`,
+`enrichment.lastfm_api_key` and `music_assistant.token`) also accept `<NAME>_FILE`, a path to read the value from, which is
 how Docker secrets work. If both are set, the plain variable wins and the log warns.
 
 Value formats, in the file and the environment:
@@ -277,6 +277,22 @@ keep = 14
 With a Last.fm API key, similar songs, similar artists, top songs and artist biographies also use
 Last.fm's data. Get a key at <https://www.last.fm/api/account/create> and paste it in the
 dashboard under Settings, Last.fm (Test checks it), or set it here.
+
+### music_assistant
+
+| Key | Environment | Default | Meaning |
+|---|---|---|---|
+| `music_assistant.url` **D** | `TRACKSIDE_MUSIC_ASSISTANT__URL` | unset | Music Assistant's web address, such as `http://192.168.1.20:8095`; `ws` paths are derived |
+| `music_assistant.token` **D** | `TRACKSIDE_MUSIC_ASSISTANT__TOKEN` / `_FILE` | unset | a long-lived Music Assistant token; secret, write-only in the dashboard, sealed at rest |
+| `music_assistant.enabled` **D** | `TRACKSIDE_MUSIC_ASSISTANT__ENABLED` | `true` | use Music Assistant once an address and token are set |
+| `music_assistant.auto_register` **D** | `TRACKSIDE_MUSIC_ASSISTANT__AUTO_REGISTER` | `true` | add Trackside to Music Assistant as an OpenSubsonic source and keep it there |
+| `music_assistant.lan_url` **D** | `TRACKSIDE_MUSIC_ASSISTANT__LAN_URL` | the first LAN address | the address Music Assistant reaches Trackside at |
+| `music_assistant.ca_file` **D** | `TRACKSIDE_MUSIC_ASSISTANT__CA_FILE` | unset | a PEM file of the CA (or self-signed certificate) Music Assistant's `https` uses; trusted instead of the system store |
+| `music_assistant.hidden_services` **D** | `TRACKSIDE_MUSIC_ASSISTANT__HIDDEN_SERVICES` | empty | Music Assistant music provider instance ids not offered as streaming services |
+| `music_assistant.relay_max_sessions` **D** | `TRACKSIDE_MUSIC_ASSISTANT__RELAY_MAX_SESSIONS` | `4` | phone relays at once, server-wide |
+
+Speakers and streaming services through Music Assistant: see [music-assistant.md](music-assistant.md).
+A key set here is read-only in the dashboard.
 
 It is one key for the whole server, set by an admin. It powers suggestions for every user, and
 nobody needs a Last.fm account or connects one. The server only calls Last.fm's public read

@@ -2,6 +2,8 @@
 
 **Status:** Accepted (supersedes the earlier draft decision to exclude external acquisition)
 **Amended:** 2026-11-27, the slskd provider was removed; yt-dlp is the only provider.
+**Partly superseded:** 2026-11-27 by ADR-0013: streaming services are now played (never
+acquired) through Music Assistant. The ban on getting music from them as files stands.
 **Date:** 2026-11-14
 **Deciders:** Tracks maintainer
 
@@ -30,7 +32,8 @@ SpotiFLAC, Mornye or similar gateways) stays out.
 - A `can_request` permission (admins always; members default on, configurable).
 - The native API never names providers; Tracks sees acquisition only through
   `features.acquisition` in `/api/v1/me`, present only when enabled and allowed for the user.
-- No provider for streaming services, ever; no plugin loading.
+- No acquisition provider for streaming services, ever; no plugin loading. (Playing them in
+  real time through Music Assistant, without keeping anything, is ADR-0013.)
 - The shipped compose file shares only the acquired folder through slskd, read-only.
 
 ## Options Considered

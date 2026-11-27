@@ -4,7 +4,9 @@ Trackside is a music server you run yourself, made for the
 [Tracks](https://github.com/slukedev/tracks) app. It indexes the music you own and serves it to
 Tracks on your iPhone and Mac, at home and away, and to any app that speaks Subsonic or
 OpenSubsonic (Amperfy, Symfonium, Feishin, Supersonic and others). Everyone in the house gets
-their own account, with their own listens, favourites and playlists.
+their own account, with their own listens, favourites and playlists. With
+[Music Assistant](docs/ops/music-assistant.md) beside it, Tracks also plays on the speakers in
+your home and from your streaming services.
 
 It's one program with a web dashboard built in. It starts with no configuration at all,
 keeps everything in one data folder, backs itself up every night, and never touches your
@@ -115,6 +117,8 @@ changes and may break.
 - [Troubleshooting](docs/ops/troubleshooting.md)
 - [Configuration reference](docs/ops/configuration.md)
 - [Acquisition](docs/ops/acquisition.md), off unless an admin turns it on
+- [Speakers and streaming services](docs/ops/music-assistant.md) through Music Assistant, and
+  the [phone relay](docs/ops/relay.md)
 
 ## Other music apps
 

@@ -154,7 +154,7 @@ display in Tracks. `details` is optional and code-specific.
 | 403 | `reauth_required` | a sensitive change from a session whose last password check is over 10 minutes old; `POST /auth/reauth` and retry (section 6) |
 | 404 | `not_found` | unknown id, or an id the caller cannot see (never `403`, to avoid leaking existence) |
 | 405 | `method_not_allowed` | |
-| 409 | `conflict` | uniqueness or a state conflict; `details.reason` is one of `username_taken`, `last_admin`, `running`, `set_by_config`, `not_writable`, `rejected`, `not_ready`, `link_used`, or `conflict` |
+| 409 | `conflict` | uniqueness or a state conflict; `details.reason` is one of `username_taken`, `last_admin`, `running`, `set_by_config`, `not_writable`, `rejected`, `not_ready`, `link_used`, `service_account`, `not_set_up`, `failed`, or, for speakers (section 20), `speaker_offline`, `powered_off`, `service_signed_out` (`details.service_id`), `not_playable` (`details.song_id` or `details.ref`), or `conflict` |
 | 409 | `content_changed` | the file changed on disk since it was indexed; retry shortly |
 | 409 | `idempotency_mismatch` | an `Idempotency-Key` reused with a different request |
 | 410 | `sync_reset` | the cursor can no longer be served; take a snapshot |
@@ -166,12 +166,15 @@ display in Tracks. `details` is optional and code-specific.
 | 415 | `unsupported_media_type` | upload is not an allowed audio file |
 | 416 | `range_not_satisfiable` | |
 | 422 | `invalid_state` | e.g. cancelling a finished acquisition |
+| 422 | `unsupported` | the speaker lacks the capability a command needs; `details.capability`, and `details.speaker_id` when it is another speaker than the one in the path (section 20) |
 | 429 | `rate_limited` | `Retry-After` says when |
 | 429 | `quota_exceeded` | acquisition quota; `details.resets_at` |
 | 500 | `internal` | a bug; logged with the request id |
 | 503 | `library_unavailable` | the song's library is offline; `Retry-After: 30` |
 | 503 | `transcoder_busy` | no transcode slot and no fallback allowed |
 | 503 | `unavailable` | migrating, shutting down, or the request took longer than `server.request_timeout` |
+| 503 | `speakers_unavailable` | Trackside cannot reach Music Assistant right now; `Retry-After: 10`. Never from `GET /speakers` (section 20) |
+| 503 | `catalog_unavailable` | the same for the streaming catalog and `GET /admin/music-assistant/providers`; `Retry-After: 10` |
 | 507 | `insufficient_storage` | the data volume is full; writes are refused |
 
 ---
@@ -407,7 +410,7 @@ No auth. Lets a client tell Trackside from other servers and decide what to call
     "suggested_cellular_profile": "aac-256"
   },
   "features": {"lyrics": true, "uploads": false, "events": true, "animated_art": false,
-               "cloud": true},
+               "cloud": true, "speakers": true},
   "subsonic": {"enabled": true, "path": "/rest"},
   "cloud": {"version": 1, "epoch": "3f9a0c1d7e2b4a65", "max_batch": 1000, "max_page": 2000,
             "entities": ["plays", "sessions", "stations", "forgotten-songs", "blocked-artists",
@@ -416,6 +419,9 @@ No auth. Lets a client tell Trackside from other servers and decide what to call
 ```
 
 `auth.device_link` says the server links TVs with a short code (`/link/*`, section 6).
+`features.speakers` says this server has the speakers routes (section 20) and the Music
+Assistant catalog and relay; whether this user may use them now is `/me` `features.speakers`
+and `features.catalog`. Old servers leave it out.
 `features.cloud` and `cloud` say Trackside Cloud is on (section 19); `cloud` is left out when the
 admin turned it off. `cloud.epoch` is the sync epoch: it changes when the server's database is
 restored or replaced, and every cloud cursor from before is then refused.
@@ -767,13 +773,16 @@ guesser's music), so the risk is small; the numbers still keep it negligible:
 {
   "user": {"id": "u8b1...", "username": "luke", "display_name": "Luke", "role": "member",
            "permissions": {"can_download": true, "can_upload": false, "can_request": true,
-                           "legacy_subsonic": false, "max_bitrate_kbps": 320}},
+                           "legacy_subsonic": false, "max_bitrate_kbps": 320,
+                           "can_use_speakers": true, "can_play_services": true}},
   "libraries": [{"id": "l0a8...", "name": "Music", "state": "ok", "song_count": 48211}],
   "device": {"id": "d2c4...", "name": "Luke's iPhone"},
   "server": {"server_id": "5f0c...", "name": "Home", "version": "1.0.0",
              "urls": [{"url": "http://192.168.1.20:4747", "kind": "lan", "tls": false}]},
   "features": {"acquisition": {"instant_play": true, "external_play": true},
-               "apple_music": {"developer_token": true}}
+               "apple_music": {"developer_token": true},
+               "catalog": {"relay": true, "relay_cellular": true},
+               "speakers": {"control": true}}
 }
 ```
 
@@ -786,6 +795,15 @@ keeping it (section 15.6). `features.apple_music` is present, with `developer_to
 when an admin has saved a MusicKit key that this server can use (section 16, Apple Music); it is
 absent otherwise, never `false`. `max_bitrate_kbps` is left out when unlimited. `device`
 is left out for a session or an API key.
+
+`features.speakers` is present when Music Assistant is set up and enabled (section 16, Music
+Assistant), the user has `can_use_speakers` (admins always) and the credential has `library`;
+`control` is whether it also has `write`. `features.catalog` is present on the same terms with
+`can_play_services`; `relay` when the credential is a device key with `stream` and the server
+can relay to phones, `relay_cellular` when it can also encode for cellular. Both stay while
+Music Assistant is only unreachable, so apps show a calm empty state rather than a section that
+comes and goes. `can_use_speakers` and `can_play_services` default to on; older servers leave
+them out, which means on.
 
 `PATCH /api/v1/me` (scope: write) `{"display_name"}` returns the user. `POST /api/v1/me/password`
 `{"current_password", "new_password", "sign_out_devices": false}`: `204`; from a session it needs
@@ -1322,6 +1340,12 @@ caller can see, in sync as well.
 | `upload` | `{"id", "state", "song_id"?}` | the caller's uploads |
 | `server_urls` | `{"version"}` | the server's addresses changed; call `GET /server/urls` (section 7) |
 | `session` | `{"reason": "revoked"}` | the credential was revoked; the stream ends |
+| `speaker_added`, `speaker_updated` | Speaker (20.1) | a speaker became visible, or anything but its position changed; updates at most 4 a second per speaker |
+| `speaker_removed` | `{"id"}` | removed or hidden in Music Assistant |
+| `speaker_progress` | `{"id", "position_ms", "position_at", "revision", "state"}` | play, pause, seek, item change, drift over 1.5 s, and every 30 s while playing |
+| `speaker_queue` | `{"id", "revision"}` | the speaker's queue items changed |
+| `speaker_command` | `{"command_id", "speaker_id", "outcome", "error"?}` | the outcome of the caller's own `202` command |
+| `speakers` | `{"state", "since"?}` | the speakers list state changed (`ok`, `connecting`, `unavailable`) |
 | `device_linked` | `{"id", "name", "platform"}` | a TV the caller approved with a code (section 6, Linking a TV) collected its key; it is now in `GET /me/devices` |
 | `cloud` | `{"entity": "plays"}` | the caller's Trackside Cloud data for `entity` (or `devices`) changed; pull it (section 19). Never carries the data |
 
@@ -1608,7 +1632,7 @@ fixtures in `dashboard/dev/fixtures/` use the same shapes.
 | `GET /admin/users` | `{"users": [AdminUser]}` |
 | `POST /admin/users` | `{"username", "display_name"?, "password", "role"?, "permissions"?, "library_ids"}` → `201` AdminUser. `role` defaults to `member`; `role: admin` needs a recent password |
 | `GET /admin/users/{id}` | AdminUser plus integer `devices`, `api_keys` and `sessions`, and `cloud: {"items", "bytes"}` when the user keeps anything in Trackside Cloud (counts only, never the content) |
-| `PATCH /admin/users/{id}` | any of `display_name`, `role`, `permissions` (`can_download`, `can_upload`, `can_request`, `legacy_subsonic`, `max_bitrate_kbps`; `null` removes the limit), `disabled`. Changing `role` or `disabled` needs a recent password |
+| `PATCH /admin/users/{id}` | any of `display_name`, `role`, `permissions` (`can_download`, `can_upload`, `can_request`, `legacy_subsonic`, `max_bitrate_kbps`; `null` removes the limit; `can_use_speakers`, `can_play_services`), `disabled`. Changing `role` or `disabled` needs a recent password |
 | `PUT /admin/users/{id}/libraries` | `{"library_ids": [...]}`; bumps the user's sync epoch |
 | `POST /admin/users/{id}/password-reset` | `201 {"url": "https://.../reset/<token>", "expires_at"}`; recent password |
 | `POST /admin/users/{id}/sign-out` | ends sessions; `{"devices": true}` also revokes device keys |
@@ -1630,6 +1654,13 @@ AdminUser:
   "disabled": false
 }
 ```
+
+A service account Trackside made for an integration carries `"service": "music_assistant"`: it
+has no password, cannot sign in (`password-reset` is `409`, `details.reason =
+"service_account"`), and its keys work on `/rest` only. It is not counted in
+`overview.users.count`. Its key appears in `GET /admin/api-keys` with `"managed_by":
+"music_assistant"`; revoking it there stops speakers playing the library until Trackside
+registers again.
 
 ### Invites
 
@@ -1754,6 +1785,106 @@ the settings in `GET /admin/settings`: it has its own write-only endpoints.
 - The key is sealed with the server's secret key, like the other secret settings, in the
   `settings` table, so backups carry it sealed and it opens only with the same `secret.key`.
   Audit actions: `apple_music.update` (target: the key id) and `apple_music.remove`.
+
+### Music Assistant (provider names appear here)
+
+The connection to Music Assistant (ADR 0013), Trackside's own registration in it as an
+OpenSubsonic source, and its providers, read only. Every route needs an admin session; changes
+need the CSRF header and are audited (`music_assistant.update`, `music_assistant.token`,
+`music_assistant.remove`, `music_assistant.register`, `music_assistant.unregister`). **The
+token is never returned** by any endpoint, in logs or in errors: only `token_set` and
+`token_set_at`.
+
+| Method and path | Body or result |
+|---|---|
+| `GET /admin/music-assistant` | the connection, below |
+| `PATCH /admin/music-assistant` | any of `url`, `token`, `enabled`, `auto_register`, `lan_url`, `ca_pem`, `hidden_services`, `relay_max_sessions` → `200` with the `GET` shape. `token`, and `url` while a token is set, need a recent password. `null` clears `url`, `token`, `lan_url` and `ca_pem`. Unknown fields are `400`. A field set in the configuration is `409`, `details.reason = "set_by_config"`. Trackside reconnects in the background |
+| `DELETE /admin/music-assistant` | recent password; unregisters, forgets the address and token, disconnects. `204` |
+| `POST /admin/music-assistant/test` | `{"url"?, "token"?}` (the saved values otherwise): connects once, reads the server info, authenticates, counts players and providers. `200` with `{"ok", "detail", "elapsed_ms", "players"?, "providers"?, "server"?}`; 6 a minute per admin |
+| `GET /admin/music-assistant/registration` | the registration, below |
+| `POST /admin/music-assistant/registration` | recent password; registers again in the background with a new key, then revokes the old one. `202` with the registration in `registering` |
+| `DELETE /admin/music-assistant/registration` | recent password; removes the source from Music Assistant and revokes the key. `204` |
+| `GET /admin/music-assistant/providers` | `{"music": [...], "players": [...], "ui_url"}`; `503 catalog_unavailable` when Music Assistant is unreachable |
+
+`GET /admin/music-assistant` (fixture `admin/music-assistant.json`):
+
+```json
+{
+  "auto_register": true,
+  "configured": true,
+  "connection": {"since": "2026-11-14T08:00:00.000Z", "state": "connected"},
+  "enabled": true,
+  "hidden_services": [],
+  "lan_url": {"checked_at": "2026-11-14T09:30:00.000Z", "reachable": true,
+              "source": "detected", "url": "http://192.168.1.20:4747"},
+  "relays": {"active": 1, "max": 4},
+  "server": {"compatible": true, "min_supported_schema_version": 28, "name": "Music Assistant",
+             "relay_supported": true, "schema_version": 65,
+             "server_id": "8f2e4b6a1c3d5e7f9a0b2c4d6e8f0a1b", "tested": true, "version": "2.10.13"},
+  "services": 2,
+  "source": {"token": "dashboard", "url": "dashboard"},
+  "speakers": 5,
+  "token_set": true,
+  "token_set_at": "2026-11-12T18:00:00.000Z",
+  "ui_url": "http://192.168.1.20:8095",
+  "url": "http://192.168.1.20:8095",
+  "user": {"display_name": "Trackside", "role": "admin", "username": "trackside"}
+}
+```
+
+Before setup: `{"configured": false, "connection": {"state": "not_set_up"}, "enabled": false,
+"token_set": false}` (`admin/music-assistant-unset.json`).
+
+- `connection.state`: `not_set_up`, `disabled`, `connecting`, `connected`, `unreachable`,
+  `auth_failed` (Music Assistant refused the token), `incompatible`, `setup_required` (Music
+  Assistant has no users yet). `last_error` `{"at", "message"}` while there is one.
+- `server.compatible`: schema 65 (2.10) or newer, and Music Assistant still supports clients of
+  schema 65. `tested` is false above schema 128 (2.11 beta), a warning only.
+- `lan_url`: where Music Assistant reaches Trackside, `source` `detected` (the first LAN address
+  of `/server/urls`) or `configured`; `reachable` once Music Assistant reports Trackside's source
+  as available; `warning` when the address is loopback while Music Assistant runs elsewhere.
+- `custom_ca: true` when a certificate authority for `https` is set (`ca_pem`, or
+  `music_assistant.ca_file` in the configuration). With it, only that CA is trusted for Music
+  Assistant.
+- `source`: `default`, `dashboard` or `config` for `url` and `token`; config-set fields are
+  read-only.
+
+Registration (`admin/music-assistant-registration.json`, and
+`admin/music-assistant-registration-needs-admin.json` for a token that is not an admin's):
+
+```json
+{
+  "base_url": "http://192.168.1.20:4747",
+  "key": {"created_at": "2026-11-12T18:00:05.000Z", "id": "kwd5w7vf6ptaf3cwd1xbt",
+          "last_used_at": "2026-11-14T09:29:00.000Z", "prefix": "tsk_Qm3vXa",
+          "scopes": ["library", "stream"]},
+  "provider_instance_id": "opensubsonic--T7rk2mQa",
+  "registered_at": "2026-11-12T18:00:06.000Z",
+  "service_user": {"display_name": "Music Assistant", "id": "uvxvacxf5ak9afxq4qdjj",
+                   "username": "music-assistant"},
+  "state": "registered",
+  "ui_url": "http://192.168.1.20:8095/#/settings/editprovider/opensubsonic--T7rk2mQa"
+}
+```
+
+- `state`: `not_registered`, `registering`, `registered`, `needs_admin`, `failed` (with
+  `last_error`), `stale` (Music Assistant no longer has the source, or its key was revoked).
+  With `auto_register` on, Trackside registers on the first connection and repairs `stale` on
+  its own; a reconnect never registers twice.
+- The key belongs to the service account `music-assistant`, scoped `library stream` only: it
+  browses and streams over `/rest` and is refused on `/api/v1`. It cannot write (no stars,
+  playlists or scrobbles: Subsonic error 50), download or request. Which libraries Music
+  Assistant sees is the service account's library access (`PUT /admin/users/{id}/libraries`;
+  all libraries at first). The secret goes only to Music Assistant's provider setup.
+
+Providers (`admin/music-assistant-providers.json`): music providers with `instance_id`,
+`domain`, `name`, `available`, `streaming`, `hidden` (in `hidden_services`), `service_id` for
+streaming services, `trackside: true` for Trackside's own source, and `ui_url`; player providers
+with `speakers` (how many speakers they have). Providers are added and signed in to in Music
+Assistant's own interface; `ui_url` links there. The overview gains `music_assistant`
+(`{"state", "registration"?, "relays"?, "services"?, "speakers"?}`, `{"state": "not_set_up"}`
+before setup) and the problems `music_assistant_unreachable`, `music_assistant_auth_failed`,
+`music_assistant_incompatible` and `music_assistant_registration`.
 
 ### Suggestions
 
@@ -2270,3 +2401,143 @@ restored backup, or on a database file put in place by hand, it takes a new sync
 missing what the restore lost; the clients pull again and push what the server no longer has.
 Deleting a user deletes their cloud data with them, in short transactions before the account
 itself.
+
+---
+
+## 20. Speakers
+
+Music Assistant's players (AirPlay, Cast, Sonos, DLNA, Snapcast, squeezelite and the rest),
+which Tracks lists in Devices under Play On. Trackside holds the Music Assistant connection; apps
+only talk to Trackside, and nothing on the wire names Music Assistant. The routes exist when
+`capabilities.features.speakers` is true and answer only callers whose `/me` has
+`features.speakers` (`404` otherwise). Raw Music Assistant player ids never appear: a speaker's
+`o` id is derived from Music Assistant's server id and player id, so it is stable while Music
+Assistant keeps the player.
+
+### 20.1 Speaker (fixtures `speakers.json`, `speaker.json`)
+
+```json
+{
+  "availability": "available",
+  "can_group_with": ["o0jjvqt740t3wm3jvetx2", "o7sny3kfnvsjbbhx01f2j"],
+  "capabilities": ["group", "mute", "next_previous", "pause", "play", "power", "queue",
+                   "repeat", "seek", "shuffle", "stop", "transfer", "volume"],
+  "context": {"id": "a3pqh4wnvzkjak75rxbft", "kind": "album", "name": "I Am... Sasha Fierce"},
+  "group": {"leader_id": "o4j8fccgajqsqxancbfcz",
+            "member_ids": ["o4j8fccgajqsqxancbfcz", "o7sny3kfnvsjbbhx01f2j"], "role": "leader"},
+  "group_volume": 40,
+  "id": "o4j8fccgajqsqxancbfcz",
+  "kind": "speaker",
+  "manufacturer": "Sonos",
+  "model": "Era 100",
+  "muted": false,
+  "name": "Kitchen",
+  "now_playing": {"album": "I Am... Sasha Fierce", "artist": "Beyoncé",
+                  "artwork_id": "ca81rcgy3d9pfg6saekwd", "duration_ms": 261640,
+                  "item_id": "6f0c3b1e9a2d4c7f8e5b0a1d2c3e4f50", "origin": "queue",
+                  "song_id": "sdjcz08vf67h7cx28snq6", "song_key": "halo\u001fbeyonce",
+                  "title": "Halo"},
+  "playback": {"position_at": "2026-11-14T09:30:00.000Z", "position_ms": 81000,
+               "repeat": "off", "shuffle": false, "state": "playing"},
+  "powered": true,
+  "protocol": "sonos",
+  "revision": 1042,
+  "volume": 35
+}
+```
+
+- `kind`: `speaker`, `group`, `stereo_pair`, `phone` (a relay's speaker), `unknown`.
+  `protocol`: `airplay`, `cast`, `sonos`, `dlna`, `snapcast`, `squeezelite`, `sendspin`,
+  `home_assistant`, `relay`, `other`. `availability`: `available`, `unavailable`,
+  `powered_off`. All open enums.
+- `capabilities` (sorted, open): `group`, `mute`, `next_previous`, `pause`, `play`, `power`,
+  `queue`, `repeat`, `seek`, `shuffle`, `stop`, `transfer`, `volume`. Show a control only when
+  its capability is listed. An `unavailable` speaker lists none (the key is left out), a
+  `powered_off` one only `play` and `power`. When something other than Music Assistant's queue
+  plays (`now_playing.origin: other`), `seek`, `next_previous`, `queue`, `shuffle`, `repeat` and
+  `transfer` are left out.
+- `powered`, `volume` (0 to 100) and `muted` only with `power`, `volume` and `mute`;
+  `group_volume` on a group leader with `volume`; `group` only while grouped (`role` `leader`
+  or `member`, `member_ids` leader first, `static: true` when Music Assistant fixes the
+  members). Members mirror their leader's `playback`, `now_playing` and `context`; playback
+  commands to a member go to the leader, `volume` and `mute` stay with the member.
+- `playback` and `now_playing` are left out when nothing is loaded. While `playing`, the
+  position now is `position_ms + (now - position_at)` in server time, capped at
+  `now_playing.duration_ms`; clients interpolate and never poll.
+- `now_playing`: `title` always; `song_id` and a `c` `artwork_id` when the item is a library
+  song the caller can see (played from Trackside's own source in Music Assistant); `ref`,
+  `service_id` and an `m` `artwork_id` for a streaming-service item; `song_key` as Tracks
+  computes it; `item_id` for `jump`. `context` is what the last `play` through Trackside named,
+  until the queue is replaced another way.
+- `revision` grows with every change but the position, within one server run.
+
+### 20.2 `GET /api/v1/speakers` (scope: library)
+
+`{"speakers": [Speaker], "state": "ok"}`. `state`: `ok`, `connecting` (Trackside is
+reconnecting; the last known list), `unavailable` (Music Assistant unreachable for over 30 s or
+the token was refused; `speakers` empty, `since` set; fixture `speakers-unavailable.json`). Never
+an error for Music Assistant being away. Groups come first, each leader followed by its
+members, then the rest by folded name. Disabled, hidden and protocol-only players are left out.
+Weak `ETag`; `If-None-Match` gives `304`.
+
+`GET /api/v1/speakers/{id}` (scope: library): one Speaker; `404` unknown, `503
+speakers_unavailable` while Music Assistant is unreachable.
+
+`GET /api/v1/speakers/{id}/queue?cursor&limit&history` (scope: library, needs `queue`): the
+first page starts at the current item minus `history` (0 to 50, default 0); `limit` 1 to 500,
+default 100. `{"current_index"?, "id", "items": [QueueItem], "next_cursor"?, "repeat",
+"revision", "shuffle", "total"}`; QueueItem is `{"index", "item_id", "title", "artist"?,
+"album"?, "duration_ms"?, "artwork_id"?, "song_id"?, "ref"?, "service_id"?, "song_key"?}`
+(fixture `speaker-queue.json`). A cursor from before the queue changed is `400`,
+`details.field = "cursor"`: start again.
+
+### 20.3 Commands (scope: write, needs `features.speakers.control`)
+
+| Method and path | Body | Needs |
+|---|---|---|
+| `POST /speakers/{id}/playback` | `{"action": "play" \| "pause" \| "toggle" \| "stop" \| "next" \| "previous"}` | `pause`, `stop`, `next_previous` |
+| `POST /speakers/{id}/playback` | `{"action": "seek", "position_ms"}` | `seek`, something loaded |
+| `POST /speakers/{id}/playback` | `{"action": "jump", "item_id"}` | `queue` |
+| `PATCH /speakers/{id}` | any of `volume`, `muted`, `powered`, `shuffle`, `repeat`, `group_volume` | each field its capability; one command |
+| `PUT /speakers/{id}/members` | `{"member_ids": [...]}`: every other speaker to group with `{id}` as leader; `[]` ungroups | `group`, each id in `can_group_with` |
+| `DELETE /speakers/{id}/group` | none: leaves its group | `group` |
+| `POST /speakers/{id}/play` | below (fixture `speaker-play-request.json`) | `play` |
+| `POST /speakers/{id}/transfer` | `{"to": "o...", "keep_playing_here": false}` | `transfer` here, `play` there |
+
+Every command answers **`202`** without waiting (fixture `speaker-command.json`): `{"action",
+"command_id", "settle_by", "speaker"}`, where `speaker` is the state Trackside expects after the
+command, at the revision it is based on; show it at once. The outcome follows as SSE
+`speaker_command` to the sender (`done`, or `failed` with `error.code`: `command_failed`,
+`timed_out`, `speakers_unavailable`, `conflict`; fixture `speaker-command-event.json`). Without
+either by `settle_by` (5 s; 15 s for `play` and `transfer`) re-read the speaker. Refusals before
+anything is sent are answered directly and never produce an event: `400`, `404`, `409`
+(`speaker_offline`, `powered_off`), `422 unsupported` (fixture `error-speaker-unsupported.json`),
+`429`, `503 speakers_unavailable` (fixture `error-speakers-unavailable.json`). A PATCH of only
+`volume` (or only `group_volume`) and a seek are coalesced per speaker: the latest value is sent
+at most every 100 ms, and every coalesced command gets the same outcome.
+
+`play`: `{"items": [{"song_id"} | {"ref"}], "mode": "replace" | "next" | "add", "start_index",
+"position_ms", "shuffle"?, "repeat"?, "context"?}`. 1 to 1000 items, each exactly one of
+`song_id` (a library song the caller can see; it plays from Trackside's own source, so without a
+working registration it is `409 not_playable` with `details.song_id`) or `ref` (a catalog item,
+which needs `can_play_services`). Items the caller cannot play are skipped; with none left,
+`409` `not_playable` or `service_signed_out`. `next` and `add` need `queue` and ignore the start
+fields. A start after an album or playlist ref starts at the first item, since those expand
+inside Music Assistant.
+
+`transfer` moves the queue, position, shuffle and repeat to `to` and stops this speaker unless
+`keep_playing_here`. `"to": "this_device"` is `422 unsupported`, `details.capability = "relay"`
+until the relay is offered. The `202` `speaker` is the target's expected state.
+
+Rate limits per user: 10 commands a second with bursts of 30, and 30 `play` or `transfer` a
+minute; `429 rate_limited` with `Retry-After`. Every command route accepts `Idempotency-Key`
+(section 3): a retry with the same key gets the stored `202`, and the command is not sent again.
+
+### 20.4 Events
+
+The speaker events of section 13 go only to callers with `features.speakers`, and are not
+replayed after `Last-Event-ID`; after a reconnect or `hello` read `GET /speakers` again. While
+Music Assistant is away: `speakers` `connecting` at once, `unavailable` after 30 s (fixture
+`speakers-event.json`); pending commands fail with `speakers_unavailable`; on return `speakers`
+`ok` and a `speaker_added` for every speaker. Fixtures: `speaker-removed-event.json`,
+`speaker-progress-event.json`, `speaker-queue-event.json`.
