@@ -1,6 +1,8 @@
 // Answers api.js calls from dev/fixtures when the page is opened with ?preview.
 // Variants: ?preview=member, noacq, nostats, fresh, setup, signedout, ratelimit, slow, error, reauth.
 // A pasted Apple Music key without BEGIN PRIVATE KEY answers 400, to see the field error.
+// Connect a TV: a code starting 0 is unknown, E expired, D used, K locked, R rate limited,
+// N from outside the home network; any other code is a TV waiting.
 
 import { ApiError } from '../api.js';
 
@@ -92,6 +94,20 @@ const writes = {
   'POST /me/api-keys': (_, __, body) => (body?.kind === 'app_password' ? 'me-app-password-created' : 'me-api-key-created'),
 };
 
+/** Connect a TV: the first character of the code picks what the server would say. */
+async function linkAnswer(name, body) {
+  const code = String(body?.user_code || '').toUpperCase();
+  const first = code.charAt(0);
+  if (first === '0') fail(404, 'not_found', '');
+  if (first === 'E') fail(410, 'link_expired', '');
+  if (first === 'D') fail(409, 'conflict', '', { reason: 'link_used' });
+  if (first === 'K') fail(410, 'link_locked', '');
+  if (first === 'R') { const e = new ApiError(429, 'rate_limited', ''); e.retryAfter = 90; throw e; }
+  const link = await fixture(name);
+  if (first === 'N') link.nearby = false;
+  return link;
+}
+
 export async function answer(route, { values = {}, body, query = {}, variant }) {
   await wait(variant === 'slow' ? 1500 : 120);
   const [method] = route.split(' ');
@@ -142,6 +158,9 @@ export async function answer(route, { values = {}, body, query = {}, variant }) 
     if (query.action || query.actor) delete page.next_cursor;
     return page;
   }
+  if (route === 'POST /link/lookup') return linkAnswer('link-lookup', body);
+  if (route === 'POST /link/approve') return linkAnswer('link-approved', body);
+  if (route === 'POST /link/deny') return linkAnswer('link-denied', body);
   if (route.startsWith('GET /admin/stats/') && !(variant === 'nostats' || variant === 'fresh')) return sliceStats(await fixture(reads[route]()), query);
   const table = method === 'GET' ? reads : writes;
   const pick = table[route];
