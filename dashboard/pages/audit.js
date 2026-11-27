@@ -12,6 +12,7 @@ const ACTIONS = [
   ['library', 'Libraries'],
   ['backup', 'Backups'],
   ['settings', 'Settings'],
+  ['music_assistant', 'Speakers'],
 ];
 
 export async function render(ctx) {
@@ -25,7 +26,7 @@ export async function render(ctx) {
   const actionId = nextId('a');
   const actorId = nextId('a');
   const action = select(actions, '', { id: actionId });
-  const actor = select([['', 'By anyone'], ['system', 'By Trackside itself'], ...users.map((u) => [u.username, u.display_name || u.username])], '', { id: actorId });
+  const actor = select([['', 'By anyone'], ['system', 'By Trackside itself'], ...users.filter((u) => !u.service).map((u) => [u.username, u.display_name || u.username])], '', { id: actorId });
   const results = h('div.history.history-days', { 'aria-live': 'polite' });
   const more = button('Show older', {});
   let cursor = firstPage.next_cursor;

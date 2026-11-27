@@ -27,7 +27,8 @@ async function peopleList(ctx) {
   ]);
   const count = new Map();
   for (const d of devices) count.set(d.user?.id, (count.get(d.user?.id) || 0) + 1);
-  const sorted = [...users].sort((a, b) => (a.disabled - b.disabled) || ((a.role === 'admin' ? 0 : 1) - (b.role === 'admin' ? 0 : 1)) || nameOf(a).localeCompare(nameOf(b)));
+  // Service accounts (Music Assistant's) come last: they are part of the server, not a person.
+  const sorted = [...users].sort((a, b) => (Boolean(a.service) - Boolean(b.service)) || (a.disabled - b.disabled) || ((a.role === 'admin' ? 0 : 1) - (b.role === 'admin' ? 0 : 1)) || nameOf(a).localeCompare(nameOf(b)));
   return h('div.page',
     pageHead('People', {
       actions: [
@@ -36,6 +37,7 @@ async function peopleList(ctx) {
       ],
     }),
     list(sorted.map((u) => {
+      if (u.service) return serviceRow(u);
       const n = count.get(u.id) || 0;
       return row({
         icon: 'account', tint: 'muted',
@@ -46,6 +48,20 @@ async function peopleList(ctx) {
       });
     }), { iconInset: true }),
     section('Approve a code from Tracks', h('div.panel', approveForm('POST /admin/pairing/approve', 'Code shown in Tracks', 'The device joins your account.'))));
+}
+
+const SERVICE = { music_assistant: ['Music Assistant', 'speaker', 'Plays your library on speakers. Cannot sign in.'] };
+const serviceInfo = (u) => SERVICE[u.service] || [u.service, 'key', 'Used by an integration. Cannot sign in.'];
+
+function serviceRow(u) {
+  const [label, iconName, sub] = serviceInfo(u);
+  return row({
+    icon: iconName, tint: 'muted',
+    title: [nameOf(u), badge('Service account')],
+    sub: u.last_seen_at ? `${sub} Used ${agoInline(u.last_seen_at)}.` : sub,
+    href: `#/people/${encodeURIComponent(u.id)}`,
+    label: `${nameOf(u)}, service account for ${label}`,
+  });
 }
 
 /* ---------- Add ---------- */
@@ -112,6 +128,7 @@ async function personPage(ctx, id) {
   const theirKeys = keys.filter(mine).sort(byRecent);
   const theirSessions = sessions.filter(mine).sort(byRecent);
   const isSelf = user.id === ctx.user.id;
+  if (user.service) return servicePage(ctx, user, libraries, theirKeys);
 
   const lede = [`${user.username}, ${roleName(user.role).toLowerCase()}`, user.last_seen_at ? `seen ${agoInline(user.last_seen_at)}` : 'never signed in', `joined ${date(user.created_at)}`].join(', ');
   // Counts only: what someone keeps in sync is theirs, so the content is never shown here.
@@ -165,17 +182,22 @@ function devicesSection(ctx, name, devices) {
     { aside: rows.length ? h('span.num', plural(rows.length, 'device')) : null });
 }
 
+const MANAGED = { music_assistant: ['Music Assistant', 'Speakers stop playing your library until Trackside registers again, from Speakers.'] };
+
 function keysSection(ctx, keys) {
-  const rows = keys.map((k) => row({
-    icon: 'key', tint: 'muted',
-    title: [k.name, badge(k.kind === 'app_password' ? 'App password' : 'API key')],
-    sub: k.last_used_at ? `Used ${agoInline(k.last_used_at)}${k.last_used_ip ? ` from ${k.last_used_ip}` : ''}` : 'Never used',
-    trail: revoker(ctx, {
-      label: 'Revoke', ariaLabel: `Revoke ${k.name}`,
-      title: `Revoke ${k.name}?`, text: 'Any app using it is signed out straight away.',
-      route: 'DELETE /admin/api-keys/{id}', id: k.id, done: `${k.name} revoked`,
-    }),
-  }));
+  const rows = keys.map((k) => {
+    const managed = k.managed_by ? MANAGED[k.managed_by] || [k.managed_by, 'The integration that uses it stops working.'] : null;
+    return row({
+      icon: 'key', tint: 'muted',
+      title: [k.name, managed ? badge(`Managed by ${managed[0]}`, 'accent') : badge(k.kind === 'app_password' ? 'App password' : 'API key')],
+      sub: k.last_used_at ? `Used ${agoInline(k.last_used_at)}${k.last_used_ip ? ` from ${k.last_used_ip}` : ''}` : 'Never used',
+      trail: revoker(ctx, {
+        label: 'Revoke', ariaLabel: `Revoke ${k.name}`,
+        title: `Revoke ${k.name}?`, text: managed ? managed[1] : 'Any app using it is signed out straight away.',
+        route: 'DELETE /admin/api-keys/{id}', id: k.id, done: `${k.name} revoked`,
+      }),
+    });
+  });
   return section('App keys', list(rows.length ? rows : [empty('No app keys')], { iconInset: true }));
 }
 
@@ -277,6 +299,42 @@ function signInSection(ctx, user, name, isSelf) {
       h('div.row-main', h('div.row-title', 'Forgotten password'), h('div.row-sub', 'A link they open to choose a new one')),
       h('div.control', resetButton)),
     resetSlot));
+}
+
+/**
+ * An account Trackside made for an integration: no password, no sign-in, no role. Only which
+ * libraries it can play is chosen here; the rest belongs to the integration's own page.
+ */
+function servicePage(ctx, user, libraries, keys) {
+  const [label, , sub] = serviceInfo(user);
+  const boxes = libraries.map((lib) => checkbox(lib.name, user.library_ids?.includes(lib.id) ?? true, { value: lib.id }));
+  const error = formError();
+  const save = button('Save libraries', { kind: 'primary', type: 'submit' });
+  const form = h('form.form', {
+    on: {
+      submit: async (event) => {
+        event.preventDefault();
+        error.hide();
+        const ids = boxes.filter((b) => b.querySelector('input').checked).map((b) => b.querySelector('input').value);
+        await busy(save, async () => {
+          try {
+            await call('PUT /admin/users/{id}/libraries', { values: { id: user.id }, body: { library_ids: ids } });
+            toast('Saved');
+            ctx.rerender();
+          } catch (err) { error.show(describe(err)); }
+        });
+      },
+    },
+  },
+  h('div.panel', libraries.length ? h('div.list.check-list', boxes) : h('p.hint', 'There are no libraries yet.')),
+  error.el,
+  h('div.btn-row.end', save));
+  const manage = user.service === 'music_assistant' ? h('a.btn', { href: '#/speakers/registration' }, icon('speaker', 'sm'), 'Open Speakers') : null;
+  return h('div.page.narrow',
+    pageHead(nameOf(user), { crumb: ['People', '#/people'], lede: `Service account for ${label}, made ${date(user.created_at)}`, actions: manage }),
+    h('div.callout.info', { role: 'note' }, icon('lock', 'tint-muted'), h('p', `${sub} It has no password and is not counted as a person.`)),
+    section('Libraries it can play', form),
+    keysSection(ctx, keys));
 }
 
 function deleteSection(ctx, user, name) {

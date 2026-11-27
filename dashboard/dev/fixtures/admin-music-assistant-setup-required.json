@@ -1,0 +1,40 @@
+{
+  "auto_register": true,
+  "configured": true,
+  "enabled": true,
+  "hidden_services": [
+    "tidal--P9wq1Lza"
+  ],
+  "lan_url": {
+    "checked_at": "2026-11-14T09:30:00.000Z",
+    "reachable": true,
+    "source": "detected",
+    "url": "http://192.168.1.20:4747"
+  },
+  "relays": {
+    "active": 1,
+    "max": 4
+  },
+  "source": {
+    "token": "dashboard",
+    "url": "dashboard"
+  },
+  "token_set": true,
+  "token_set_at": "2026-11-12T18:00:00.000Z",
+  "ui_url": "http://192.168.1.20:8095",
+  "url": "http://192.168.1.20:8095",
+  "connection": {
+    "state": "setup_required",
+    "since": "2026-11-14T09:58:00.000Z"
+  },
+  "server": {
+    "compatible": true,
+    "min_supported_schema_version": 28,
+    "name": "Music Assistant",
+    "relay_supported": true,
+    "schema_version": 65,
+    "server_id": "8f2e4b6a1c3d5e7f9a0b2c4d6e8f0a1b",
+    "tested": true,
+    "version": "2.10.13"
+  }
+}

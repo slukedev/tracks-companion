@@ -47,6 +47,7 @@ const messages = {
   unavailable: 'The server is busy.',
   insufficient_storage: 'The server is out of disk space.',
   network: 'Cannot reach the server.',
+  catalog_unavailable: 'Music Assistant is not answering right now.',
 };
 
 const reasons = {
@@ -54,6 +55,7 @@ const reasons = {
   last_admin: 'This is the only admin. Make someone else an admin first.',
   username_taken: 'That username is taken.',
   running: 'A backup is already running.',
+  service_account: 'This account belongs to Music Assistant and never signs in.',
 };
 
 /** A message fit to show a person, preferring what the server said about a bad field. */

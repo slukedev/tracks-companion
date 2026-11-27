@@ -15,6 +15,7 @@ const pages = {
   people: { title: 'People', icon: 'users', load: () => import('./pages/people.js'), admin: true },
   invites: { title: 'Invites', icon: 'invite', load: () => import('./pages/invites.js'), admin: true },
   libraries: { title: 'Libraries', icon: 'library', load: () => import('./pages/libraries.js'), admin: true },
+  speakers: { title: 'Speakers', icon: 'speaker', load: () => import('./pages/speakers.js'), admin: true },
   requests: { title: 'Requests', icon: 'requests', load: () => import('./pages/acquisition.js'), admin: true, acquisition: true },
   backups: { title: 'Backups', icon: 'backups', load: () => import('./pages/backups.js'), admin: true },
   settings: { title: 'Settings', icon: 'settings', load: () => import('./pages/settings.js'), admin: true },
@@ -23,13 +24,13 @@ const pages = {
   link: { title: 'Connect a TV', icon: 'tv', load: () => import('./pages/link.js'), nav: 'account' },
 };
 
-// Old links keep working: Users and Devices became People.
-const ALIASES = { users: 'people', devices: 'people' };
+// Old links keep working: Users and Devices became People. #/music-assistant opens Speakers.
+const ALIASES = { users: 'people', devices: 'people', 'music-assistant': 'speakers' };
 
 const groups = [
   [null, ['overview']],
   ['People', ['people', 'invites']],
-  ['Music', ['libraries', 'requests']],
+  ['Music', ['libraries', 'speakers', 'requests']],
   ['Server', ['backups', 'settings', 'activity']],
 ];
 
@@ -313,7 +314,7 @@ function renderShell() {
 
 function skeletonFor(key, args) {
   if (key === 'overview') return skeleton('overview');
-  if (args.length || key === 'account' || key === 'settings' || key === 'backups' || key === 'activity') return skeleton('detail');
+  if (args.length || ['account', 'settings', 'backups', 'activity', 'speakers'].includes(key)) return skeleton('detail');
   return skeleton('list');
 }
 

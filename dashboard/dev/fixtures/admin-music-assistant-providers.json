@@ -21,6 +21,16 @@
       "ui_url": "http://192.168.1.20:8095/#/settings/editprovider/tidal--P9wq1Lza"
     },
     {
+      "available": false,
+      "domain": "qobuz",
+      "hidden": false,
+      "instance_id": "qobuz--Rv3sM7nE",
+      "name": "Qobuz",
+      "service_id": "c4h8m2q6t0w4y8b2e6j0n",
+      "streaming": true,
+      "ui_url": "http://192.168.1.20:8095/#/settings/editprovider/qobuz--Rv3sM7nE"
+    },
+    {
       "available": true,
       "domain": "opensubsonic",
       "hidden": false,
@@ -47,6 +57,14 @@
       "name": "AirPlay",
       "speakers": 2,
       "ui_url": "http://192.168.1.20:8095/#/settings/editprovider/airplay--Lz5n1CwT"
+    },
+    {
+      "available": false,
+      "domain": "chromecast",
+      "instance_id": "chromecast--Jw6p0XsD",
+      "name": "Chromecast",
+      "speakers": 0,
+      "ui_url": "http://192.168.1.20:8095/#/settings/editprovider/chromecast--Jw6p0XsD"
     }
   ],
   "ui_url": "http://192.168.1.20:8095/#/settings/providers"

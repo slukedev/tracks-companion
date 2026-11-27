@@ -6,7 +6,9 @@
     "state": "connected"
   },
   "enabled": true,
-  "hidden_services": [],
+  "hidden_services": [
+    "tidal--P9wq1Lza"
+  ],
   "lan_url": {
     "checked_at": "2026-11-14T09:30:00.000Z",
     "reachable": true,

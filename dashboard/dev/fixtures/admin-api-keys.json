@@ -35,6 +35,25 @@
       "created_at": "2026-10-01T09:00:00.000Z",
       "last_used_at": "2026-11-14T09:55:00.000Z",
       "last_used_ip": "192.168.1.10"
+    },
+    {
+      "id": "kwd5w7vf6ptaf3cwd1xbt",
+      "kind": "api_key",
+      "name": "Music Assistant",
+      "prefix": "tsk_Qm3vXa",
+      "scopes": [
+        "library",
+        "stream"
+      ],
+      "managed_by": "music_assistant",
+      "user": {
+        "id": "uvxvacxf5ak9afxq4qdjj",
+        "username": "music-assistant",
+        "display_name": "Music Assistant"
+      },
+      "created_at": "2026-11-12T18:00:05.000Z",
+      "last_used_at": "2026-11-14T09:29:00.000Z",
+      "last_used_ip": "192.168.1.20"
     }
   ]
 }

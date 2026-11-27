@@ -4,8 +4,8 @@
 //    'GET /admin/users/{id}' in the dashboard's modules).
 // 2. Every GET route the pages use has a preview fixture.
 // 3. No "http" anywhere in the shipped .html, .js and .css files, so no external URL can creep in,
-//    apart from two plain links: the acquisition setup guide and Last.fm's API key page.
-//    The one exception is the acquisition setup guide on GitHub, a plain link.
+//    apart from two plain links (the acquisition setup guide and Last.fm's API key page), the
+//    example Music Assistant address and the pattern that checks an address has a scheme.
 // 4. Nothing that would break the CSP or insert HTML: inline scripts or styles, innerHTML and friends.
 // 5. Source provider names appear only on the acquisition page.
 // 6. Security rules: no browser storage or cookies from script, network only through api.js,
@@ -71,9 +71,12 @@ for (const f of files.filter((x) => extname(x) === '.json')) {
 // 3. External URLs.
 const SETUP_DOCS = "'https://github.com/slukedev/tracks-companion/blob/main/docs/ops/acquisition.md'";
 const LASTFM_KEYS = "'https://www.last.fm/api/account/create'";
+// The Speakers page shows an example Music Assistant address and tells a whole address from a bare host.
+const ASSISTANT_EXAMPLE = "'http://homeassistant.local:8095'";
+const WEB_SCHEME = '/^https?:\\/\\//i';
 for (const f of [...shipped, ...files.filter((x) => relative(root, x).startsWith('dev') && ['.js', '.html', '.css'].includes(extname(x)))]) {
   read(f).split('\n').forEach((line, i) => {
-    if (/http/i.test(line.replace(SETUP_DOCS, '').replace(LASTFM_KEYS, ''))) fail(`${relative(root, f)}:${i + 1} mentions http`);
+    if (/http/i.test(line.replace(SETUP_DOCS, '').replace(LASTFM_KEYS, '').replace(ASSISTANT_EXAMPLE, '').replace(WEB_SCHEME, ''))) fail(`${relative(root, f)}:${i + 1} mentions http`);
   });
 }
 

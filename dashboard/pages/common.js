@@ -36,12 +36,33 @@ export function scanSummary(run) {
 const ROLE = { admin: 'Admin', member: 'Member' };
 export const roleName = (r) => ROLE[r] || r;
 
+/** [key, label, sub, on when the server leaves it out]. */
 export const PERMISSIONS = [
-  ['can_download', 'Download songs', 'Keep songs on their phone to play offline'],
-  ['can_upload', 'Upload songs', 'Add their own files to the uploads library'],
-  ['can_request', 'Request songs', 'Ask Trackside to find songs the library does not have'],
-  ['legacy_subsonic', 'Use older Subsonic apps', 'Make app passwords for apps like Symfonium or Feishin'],
+  ['can_download', 'Download songs', 'Keep songs on their phone to play offline', false],
+  ['can_upload', 'Upload songs', 'Add their own files to the uploads library', false],
+  ['can_request', 'Request songs', 'Ask Trackside to find songs the library does not have', false],
+  ['legacy_subsonic', 'Use older Subsonic apps', 'Make app passwords for apps like Symfonium or Feishin', false],
+  ['can_use_speakers', 'Play on speakers', 'Speakers around the home, through Music Assistant', true],
+  ['can_play_services', 'Play streaming services', 'Spotify, Tidal and the others added to Music Assistant', true],
 ];
+
+/** Music Assistant's connection state: a dot and a few words. */
+export const ASSISTANT_STATE = {
+  not_set_up: ['', 'Not set up'],
+  disabled: ['', 'Turned off'],
+  connecting: ['live', 'Connecting'],
+  connected: ['good', 'Connected'],
+  unreachable: ['warn', 'Cannot reach Music Assistant'],
+  auth_failed: ['bad', 'Token refused'],
+  incompatible: ['warn', 'Version not supported'],
+  setup_required: ['warn', 'Music Assistant needs setting up'],
+};
+export const assistantState = (state) => ASSISTANT_STATE[state] || ['warn', state || 'Unknown'];
+
+/** A link into Music Assistant's own interface, only for a web address from the server. */
+export function assistantHref(url) {
+  return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : null;
+}
 
 export function warnIcon(severity) {
   if (severity === 'critical' || severity === 'error') return icon('critical', 'tint-bad');

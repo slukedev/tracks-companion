@@ -1,0 +1,49 @@
+{
+  "auto_register": true,
+  "configured": true,
+  "enabled": true,
+  "hidden_services": [
+    "tidal--P9wq1Lza"
+  ],
+  "lan_url": {
+    "checked_at": "2026-11-14T09:30:00.000Z",
+    "reachable": false,
+    "source": "configured",
+    "url": "http://127.0.0.1:4747",
+    "warning": "This address only works on the Trackside machine itself, and Music Assistant runs on another."
+  },
+  "relays": {
+    "active": 1,
+    "max": 4
+  },
+  "source": {
+    "token": "config",
+    "url": "config"
+  },
+  "token_set": true,
+  "token_set_at": "2026-11-12T18:00:00.000Z",
+  "ui_url": "https://music.home.arpa",
+  "url": "https://music.home.arpa",
+  "connection": {
+    "state": "connected",
+    "since": "2026-11-14T08:00:00.000Z"
+  },
+  "server": {
+    "compatible": true,
+    "min_supported_schema_version": 28,
+    "name": "Music Assistant",
+    "relay_supported": true,
+    "schema_version": 131,
+    "server_id": "8f2e4b6a1c3d5e7f9a0b2c4d6e8f0a1b",
+    "tested": false,
+    "version": "2.11.0b14"
+  },
+  "user": {
+    "display_name": "Trackside",
+    "role": "admin",
+    "username": "trackside"
+  },
+  "custom_ca": true,
+  "speakers": 5,
+  "services": 2
+}

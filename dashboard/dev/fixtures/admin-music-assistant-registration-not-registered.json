@@ -1,0 +1,9 @@
+{
+  "base_url": "http://192.168.1.20:4747",
+  "service_user": {
+    "display_name": "Music Assistant",
+    "id": "uvxvacxf5ak9afxq4qdjj",
+    "username": "music-assistant"
+  },
+  "state": "not_registered"
+}
