@@ -48,9 +48,18 @@ starts at schema 5; there is nothing to upgrade from.
   source on your machine; no images are published between releases. Release images are
   signed by `images.yml` and carry SBOM and provenance attestations; release binaries and
   packages carry build provenance.
-- Optional acquisition through yt-dlp and slskd, off unless an admin turns it on. Playing a
-  song the server doesn't have streams it through yt-dlp without keeping it; only Get adds a
-  song to the library.
+- Optional acquisition through yt-dlp, off unless an admin turns it on. Playing a song the
+  server doesn't have streams it through yt-dlp without keeping it; only Get adds a song to the
+  library.
+- **Action needed if you ran a pre-release with Soulseek:** Soulseek through slskd is no longer
+  supported. Take the `slskd` service out of your compose setup (the new
+  `compose.acquire.yaml` has none) and delete the `slskd` folder and the `SLSKD_*` and
+  `SOULSEEK_*` lines in `.env` if you like. The `acquire.soulseek.*` settings, in the file,
+  the environment or `_FILE` secrets, are ignored with one warning each at start-up, except
+  `acquire.soulseek.min_bitrate`, which now sets the new `acquire.min_bitrate` unless that is
+  set. Past requests keep their history, a file Soulseek had already delivered is still
+  added, and a request that was still downloading from Soulseek fails as "no source
+  reachable"; ask for the song again to get it through yt-dlp.
 - Instant play keeps playing as the song lands in the library: a stream opened during the import
   waits for it and moves on to the library song instead of failing, a request for a song that
   is already downloading plays that download, and media tokens (`mt`) work on instant play
