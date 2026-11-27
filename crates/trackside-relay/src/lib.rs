@@ -123,8 +123,37 @@ pub struct SessionInfo {
     /// The current epoch, from 1; 0 before the first audio.
     pub generation: u32,
     pub tier: Tier,
-    /// The current epoch's multivariant playlist path, without the media token.
+    /// The multivariant playlist path of the live epoch, or of the next one when none is live
+    /// (it waits for audio), without the media token. `None` once ended.
     pub hls: Option<String>,
+    /// What the segments carry (contract 3.2 `stream.format`).
+    pub format: OutputFormat,
+}
+
+/// The wire's `stream.format`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OutputFormat {
+    pub codec: &'static str,
+    pub container: &'static str,
+    pub sample_rate: u32,
+    pub channels: u32,
+    /// Lossless only.
+    pub bit_depth: Option<u32>,
+    /// Cellular only.
+    pub bitrate_kbps: Option<u32>,
+}
+
+impl Default for OutputFormat {
+    fn default() -> Self {
+        Self {
+            codec: "flac",
+            container: "mp4",
+            sample_rate: 44_100,
+            channels: 2,
+            bit_depth: Some(16),
+            bitrate_kbps: None,
+        }
+    }
 }
 
 pub type ControlFuture<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;

@@ -17,7 +17,9 @@ use trackside_sendspin::{self as sendspin, Clock, Event, GoodbyeReason};
 use crate::encoder::Encoder;
 use crate::epoch::{Epoch, Shape, Timeline};
 use crate::flac::{self, StreamInfo};
-use crate::{ControlFuture, EndReason, PlayerControl, SessionInfo, SessionState, Tier};
+use crate::{
+    ControlFuture, EndReason, OutputFormat, PlayerControl, SessionInfo, SessionState, Tier,
+};
 
 /// The encoder may sit on fed audio this long before the tier falls back.
 const MAX_ENCODER_LAG_US: i64 = 3_000_000;
@@ -113,12 +115,43 @@ impl Shared {
             detail: inner.ended.as_ref().and_then(|(_, d)| d.clone()),
             generation: inner.generation,
             tier: inner.tier,
-            hls: Some(format!(
-                "{}/{}/{}/master.m3u8",
-                self.settings.path_prefix,
-                self.id,
-                Self::playable_generation(inner)
-            )),
+            hls: inner.ended.is_none().then(|| {
+                format!(
+                    "{}/{}/{}/master.m3u8",
+                    self.settings.path_prefix,
+                    self.id,
+                    Self::playable_generation(inner)
+                )
+            }),
+            format: self.format(inner),
+        }
+    }
+
+    fn format(&self, inner: &Inner) -> OutputFormat {
+        let (sample_rate, channels, bits) = inner.stream.as_ref().map_or((44_100, 2, 16), |i| {
+            (
+                i.sample_rate,
+                u32::from(i.channels),
+                u32::from(i.bits_per_sample),
+            )
+        });
+        match inner.tier {
+            Tier::Lossless => OutputFormat {
+                codec: "flac",
+                container: "mp4",
+                sample_rate,
+                channels,
+                bit_depth: Some(bits),
+                bitrate_kbps: None,
+            },
+            Tier::Cellular => OutputFormat {
+                codec: "aac",
+                container: "mp4",
+                sample_rate,
+                channels,
+                bit_depth: None,
+                bitrate_kbps: Some(self.settings.cellular_kbps),
+            },
         }
     }
 
@@ -419,6 +452,7 @@ impl RelaySession {
             generation: 0,
             tier,
             hls: Some(format!("{}/{id}/1/master.m3u8", settings.path_prefix)),
+            format: OutputFormat::default(),
         };
         let (info, _) = watch::channel(placeholder);
         let clock = Clock::new();

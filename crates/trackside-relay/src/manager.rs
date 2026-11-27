@@ -167,6 +167,11 @@ impl RelayManager {
         &self.config
     }
 
+    /// `latency_ms` of the wire: the output delay reported to Music Assistant.
+    pub fn latency_ms(&self) -> u32 {
+        self.config.timing.output_delay_ms
+    }
+
     pub fn cellular_available(&self) -> bool {
         self.config.ffmpeg.is_some()
     }

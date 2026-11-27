@@ -247,6 +247,7 @@ async fn nobody_fetching_pauses_then_the_session_ends_idle() {
     let info = session.info();
     assert_eq!(info.state, SessionState::Ended);
     assert_eq!(info.ended_reason, Some(EndReason::Idle));
+    assert_eq!(info.hls, None);
     assert_eq!(rig.manager.active(), 0);
 }
 
