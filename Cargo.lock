@@ -3771,6 +3771,7 @@ dependencies = [
  "base64 0.23.1",
  "futures-util",
  "http",
+ "image",
  "jiff 1.0.3",
  "percent-encoding",
  "qrcode",
@@ -3803,9 +3804,12 @@ name = "trackside-assistant"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
+ "futures-util",
  "http",
+ "reqwest",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
  "tokio-util",
  "tracing",

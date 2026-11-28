@@ -408,6 +408,35 @@ pub fn by_key(c: &Connection, a: &Access, song_key: &str) -> Result<Vec<Song>, D
     load(c, &tail, &[&song_key])
 }
 
+/// One visible song per `tracks_model::song_key`, for keys that have one: a present song
+/// before a missing one, then the oldest.
+pub fn ids_by_keys(
+    c: &Connection,
+    a: &Access,
+    keys: &[&str],
+) -> Result<HashMap<String, SongId>, DbError> {
+    if keys.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let list = json_strings(keys.iter().copied());
+    let sql = format!(
+        "SELECT s.song_key, s.pid FROM songs s
+         WHERE s.song_key IN (SELECT value FROM json_each(?1)) AND {}
+         ORDER BY s.missing_since IS NOT NULL, s.id",
+        visible(a, "s.library_id", None)
+    );
+    let mut statement = c.prepare_cached(&sql)?;
+    let rows = statement.query_map([&list], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, SongId>(1)?))
+    })?;
+    let mut out = HashMap::new();
+    for row in rows {
+        let (key, id) = row?;
+        out.entry(key).or_insert(id);
+    }
+    Ok(out)
+}
+
 /// By a score of plays on this server, the caller's own plays (counted twice), the caller's
 /// star, and the song's rank on Last.fm when enrichment has one; then the caller's rating,
 /// then album order.

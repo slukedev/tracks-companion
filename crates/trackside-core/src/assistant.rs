@@ -679,12 +679,7 @@ pub struct AssistantOverview {
     pub speakers: Option<u32>,
 }
 
-/// The hook the streaming catalog builds on. The catalog work extends this trait; speakers
-/// only need it to name catalog artwork.
-pub trait CatalogControl: Send + Sync + 'static {
-    /// The image address an `m` id was derived from, while it is known.
-    fn art_source(&self, id: &CatalogArtId) -> Option<String>;
-}
+pub use crate::catalog::CatalogControl;
 
 /// Music Assistant as the HTTP crates see it.
 pub trait AssistantControl: Send + Sync + 'static {
