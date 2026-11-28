@@ -734,6 +734,7 @@ impl Auth {
     /// Builds the service. When called inside a tokio runtime it also starts listening for
     /// `CredentialRevoked` events, so revocations made elsewhere in the process drop cached
     /// credentials at once.
+    #[expect(clippy::too_many_lines, reason = "one field per limit, in one place")]
     pub fn new(
         db: Db,
         config: &AuthConfig,

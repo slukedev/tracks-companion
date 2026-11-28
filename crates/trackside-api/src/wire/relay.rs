@@ -25,7 +25,7 @@ pub struct RelayStream {
     pub hls: String,
 }
 
-/// **RelaySession**.
+/// A relay session as its owner sees it (`RelaySession`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelaySession {
     pub created_at: Time,

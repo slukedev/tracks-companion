@@ -4,7 +4,7 @@
 //! to this device, Music Assistant going away, device revocation and shutdown.
 
 #[path = "../../trackside-relay/tests/support/mod.rs"]
-#[allow(dead_code, unused_imports)]
+#[allow(unused_imports)]
 mod tone;
 
 use std::net::SocketAddr;
