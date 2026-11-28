@@ -1,0 +1,22 @@
+{
+  "created_at": "2026-11-14T09:30:00.000Z",
+  "device_id": "dchjkb9k3cnapjw0kmhq6",
+  "fetch_timeout_s": 30,
+  "generation": 0,
+  "id": "h9zvca9p26dymt4v7cxj5",
+  "idle_timeout_s": 600,
+  "latency_ms": 4000,
+  "speaker_id": "o1a0psgqvec0jm734s9tv",
+  "state": "starting",
+  "stream": {
+    "format": {
+      "bit_depth": 16,
+      "channels": 2,
+      "codec": "flac",
+      "container": "mp4",
+      "sample_rate": 44100
+    },
+    "hls": "/api/v1/relay/h9zvca9p26dymt4v7cxj5/1/master.m3u8"
+  },
+  "tier": "lossless"
+}

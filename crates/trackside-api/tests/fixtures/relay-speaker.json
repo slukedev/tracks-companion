@@ -1,0 +1,43 @@
+{
+  "availability": "available",
+  "capabilities": [
+    "next_previous",
+    "pause",
+    "play",
+    "queue",
+    "repeat",
+    "seek",
+    "shuffle",
+    "stop",
+    "transfer"
+  ],
+  "id": "o1a0psgqvec0jm734s9tv",
+  "kind": "phone",
+  "name": "Luke's iPhone",
+  "now_playing": {
+    "album": "Jazz (2011 Remaster)",
+    "artist": "Queen",
+    "artwork_id": "mkem33c2vrhyyrdj08jqc",
+    "duration_ms": 209000,
+    "item_id": "0b1c2d3e4f5061728394a5b6c7d8e9f0",
+    "origin": "queue",
+    "ref": "mc1.dHJhY2sfc3BvdGlmeR81VDhFRFVEcUtjczZPU093RXNmcUc3",
+    "service_id": "bqtyy4kcexcsg6wa0y4w5",
+    "song_key": "don't stop me now\u001fqueen",
+    "title": "Don't Stop Me Now"
+  },
+  "playback": {
+    "position_at": "2026-11-14T09:30:00.000Z",
+    "position_ms": 12000,
+    "repeat": "off",
+    "shuffle": false,
+    "state": "playing"
+  },
+  "protocol": "relay",
+  "relay": {
+    "device_id": "dchjkb9k3cnapjw0kmhq6",
+    "session_id": "h9zvca9p26dymt4v7cxj5",
+    "this_device": true
+  },
+  "revision": 7
+}

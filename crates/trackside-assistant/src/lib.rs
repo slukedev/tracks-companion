@@ -165,6 +165,9 @@ pub(crate) struct Inner {
     shutdown: CancellationToken,
     tasks: TaskTracker,
     relay: relay::Relays,
+    /// Stops the listeners that live as long as the integration; cancelled by
+    /// [`Assistant::shutdown`].
+    listeners: CancellationToken,
     /// Told whenever the speakers' state may have changed.
     hub_changed: tokio::sync::Notify,
 }
@@ -219,9 +222,10 @@ impl Assistant {
             reg: Mutex::new(RegState::default()),
             reg_lock: tokio::sync::Mutex::new(()),
             reconfigure_lock: tokio::sync::Mutex::new(()),
-            shutdown: deps.shutdown,
+            shutdown: deps.shutdown.clone(),
             tasks: TaskTracker::new(),
             relay,
+            listeners: deps.shutdown.child_token(),
             hub_changed: tokio::sync::Notify::new(),
         });
         lock(&inner.hub)
@@ -242,6 +246,7 @@ impl Assistant {
     /// task.
     pub async fn shutdown(&self) {
         self.inner.shutdown_relays().await;
+        self.inner.listeners.cancel();
         let link = lock(&self.inner.link).take();
         if let Some(link) = link {
             link.cancel.cancel();
@@ -276,7 +281,7 @@ impl Inner {
         let mut events = self.events.subscribe();
         loop {
             let event = tokio::select! {
-                () = self.shutdown.cancelled() => return,
+                () = self.listeners.cancelled() => return,
                 event = events.recv() => event,
             };
             match event {
