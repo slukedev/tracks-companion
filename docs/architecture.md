@@ -1449,7 +1449,8 @@ off in the dashboard applies to the next request, so it stops every app password
 AVPlayer cannot reliably send an `Authorization` header, so stream and art URLs carry `mt`, a
 token minted by `POST /api/v1/media-token` for the calling device. It is accepted only on media
 routes (`/api/v1/songs/{id}/stream`, `/download`, `/api/v1/art/*`, `/api/v1/transcodes/*`,
-`/api/v1/acquisitions/{id}/stream*`), is bound to the user, device and `media_epoch`, and expires
+`/api/v1/acquisitions/{id}/stream*`, the phone relay's `/api/v1/relay/{id}/{generation}/*`), is
+bound to the user, device and `media_epoch`, and expires
 after 7 days. Revoking a device bumps its epoch. The server redacts `mt`, `apiKey`, `t`, `s` and
 `p` from every log line.
 
@@ -1717,6 +1718,18 @@ phone, with `trackside-sendspin`, and serves that player's audio as live HLS.
   resume, since MA stops a player whose connection drops. Shutdown says goodbye `shutdown`.
   At most one session per phone, three per user and four per server (each is its own stream
   pipeline inside MA).
+- **Wiring.** `trackside-assistant` owns one `RelayManager` per MA connection, built from its
+  address and token and replaced when either changes; limits change in place. A
+  `PlayerControl` pauses and resumes the relay player's MA queue (`player_queues/pause`,
+  `player_queues/play`). Identities live in `settings` rows `music_assistant.relay_identity.<device
+  id>`, sealed with the server key under a purpose that names the row; a revoked or deleted
+  device's row is swept on `CredentialRevoked` and at start. Every relay player Trackside has a
+  key for is hidden from other users and from grouping; while its session lives, its owner sees
+  it as a `kind: phone` speaker (`o` id `BLAKE3("speaker" ‖ ma_server_id ‖ client_id)`), and
+  speaker events about it reach only them. Commands for a phone MA does not list yet (it is
+  still joining) wait up to 10 s for the player. Sessions end with `assistant_unavailable` when
+  the speakers list turns `unavailable`, `revoked` on revocation, and `server_restart` with a
+  goodbye on shutdown.
 
 ---
 
@@ -2220,6 +2233,7 @@ The server starts with no file at all: data in the platform default directory, l
 | `music_assistant.ca_file` **D** | `TRACKSIDE_MUSIC_ASSISTANT__CA_FILE` | unset | a PEM file of the CA (or self-signed certificate) Music Assistant's `https` uses; trusted instead of the system store |
 | `music_assistant.hidden_services` **D** | `TRACKSIDE_MUSIC_ASSISTANT__HIDDEN_SERVICES` | empty | Music Assistant music provider instance ids not offered as streaming services |
 | `music_assistant.relay_max_sessions` **D** | `TRACKSIDE_MUSIC_ASSISTANT__RELAY_MAX_SESSIONS` | `4` | phone relays at once, server-wide |
+| `music_assistant.relay_max_per_user` | `TRACKSIDE_MUSIC_ASSISTANT__RELAY_MAX_PER_USER` | `3` | phone relays one person may run at once, across their devices |
 
 `trackside config show` prints one `key = value  # source` line per key in this table's order,
 values as TOML with durations and sizes in their largest whole unit and secrets as `<redacted>`,

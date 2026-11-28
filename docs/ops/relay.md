@@ -22,7 +22,8 @@ the audio on as it plays. This page is what a self-hoster needs to know about it
 - CPU: almost none for lossless (the audio is repackaged, not decoded); one ffmpeg process per
   cellular listener, roughly 1 to 3 % of a core.
 - Memory: under 3 MiB of audio per listener. At most four listeners at once by default
-  (`relay_max_sessions` in the Speakers settings), three per person, one per phone. Each
+  (`relay_max_sessions` in the Speakers settings), three per person
+  (`music_assistant.relay_max_per_user` in the configuration), one per phone. Each
   listener is a separate stream inside Music Assistant, and services limit how many streams one
   account may run at a time.
 
@@ -41,7 +42,16 @@ responses carry `Cache-Control: no-store`.
 - If nobody fetches audio for 30 seconds while it plays (the phone went out of range, or the app
   was killed), Trackside pauses that player in Music Assistant. After ten minutes paused the
   relay leaves Music Assistant until the phone plays again.
-- If the connection to Music Assistant drops, Trackside reconnects and resumes playback.
+- If the connection to Music Assistant drops, Trackside reconnects and resumes playback. If
+  Music Assistant stays away for 30 seconds, or its address or token changes, the phones'
+  relays end and the apps fall back to the calm "not available" state.
+- Each phone is only visible to its owner: other people never see it among the speakers or
+  in Music Assistant groups through Trackside.
+- When the server stops, every relay says goodbye to Music Assistant first.
+- Removing or revoking a device in Tracks or the dashboard ends its relay and deletes its
+  player key; Music Assistant forgets that player a few minutes later.
+- Only the phone that started a relay can fetch its audio: playlists and segments need that
+  device's media token (`mt=`), which the server log never shows.
 
 ## When it doesn't work
 
@@ -51,6 +61,8 @@ responses carry `Cache-Control: no-store`.
 | The relay session ends with `failed` right away | the Music Assistant token was refused; set a new one in Speakers |
 | It ends with `failed` after 30 seconds | Music Assistant did not activate the player; its log (Sendspin provider) says why. Guest players that only play are normally approved automatically |
 | Cellular quality is missing | ffmpeg is not installed (the `slim` image) |
-| "Too many listeners" | the server limit is reached; raise `relay_max_sessions` if the machine and your services allow it |
+| "Too many listeners" | the server limit is reached; raise `relay_max_sessions` if the machine and your services allow it, or `music_assistant.relay_max_per_user` for one person's devices |
+| The phone's music stops after 30 seconds in the background | the app stopped fetching audio, so Trackside paused Music Assistant; it resumes when the app plays again |
+| Phones can't relay with an `https` Music Assistant behind a private CA | the relay trusts the system certificate store only; add the CA to the system store |
 
 Tokens and player keys never appear in the server log.

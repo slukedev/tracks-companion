@@ -290,6 +290,7 @@ dashboard under Settings, Last.fm (Test checks it), or set it here.
 | `music_assistant.ca_file` **D** | `TRACKSIDE_MUSIC_ASSISTANT__CA_FILE` | unset | a PEM file of the CA (or self-signed certificate) Music Assistant's `https` uses; trusted instead of the system store |
 | `music_assistant.hidden_services` **D** | `TRACKSIDE_MUSIC_ASSISTANT__HIDDEN_SERVICES` | empty | Music Assistant music provider instance ids not offered as streaming services |
 | `music_assistant.relay_max_sessions` **D** | `TRACKSIDE_MUSIC_ASSISTANT__RELAY_MAX_SESSIONS` | `4` | phone relays at once, server-wide |
+| `music_assistant.relay_max_per_user` | `TRACKSIDE_MUSIC_ASSISTANT__RELAY_MAX_PER_USER` | `3` | phone relays one person may run at once, across their devices |
 
 Speakers and streaming services through Music Assistant: see [music-assistant.md](music-assistant.md).
 A key set here is read-only in the dashboard.

@@ -35,6 +35,7 @@ Contents:
 19. Trackside Cloud
 20. Speakers
 21. Streaming catalog
+22. Phone playback relay
 
 ---
 
@@ -65,7 +66,7 @@ Contents:
   |---|---|---|
   | `Authorization: Bearer tsk_...` | every authenticated route | device keys and API keys |
   | `__Host-trackside_session` cookie | every authenticated route; required for `/admin/*` | requests that change state also need `X-Trackside-CSRF: 1` and a matching `Origin`. Over plain HTTP from a private or loopback address the cookie is `trackside_session`, without `Secure`; it is accepted only where a password would be (Plain HTTP, below) |
-  | `?mt=<media token>` | media routes only (section 11, 15.6) | for AVPlayer, which cannot send headers reliably |
+  | `?mt=<media token>` | media routes only (section 11, 15.6, 22.3) | for AVPlayer, which cannot send headers reliably |
 
   Keys never travel in query strings on non-media routes; a key in a query string is rejected
   with `400 credential_in_query`.
@@ -1360,6 +1361,7 @@ caller can see, in sync as well.
 | `speaker_queue` | `{"id", "revision"}` | the speaker's queue items changed |
 | `speaker_command` | `{"command_id", "speaker_id", "outcome", "error"?}` | the outcome of the caller's own `202` command |
 | `speakers` | `{"state", "since"?}` | the speakers list state changed (`ok`, `connecting`, `unavailable`) |
+| `relay` | RelaySession (22.1) | the caller's own phone relay changed state, generation, tier or stream URL, or ended (section 22) |
 | `catalog_services` | `{"state"}` | the streaming services, their sign-in states or Music Assistant's reachability changed; read `GET /catalog/services` again (section 21; fixture `catalog-services-event.json`) |
 | `device_linked` | `{"id", "name", "platform"}` | a TV the caller approved with a code (section 6, Linking a TV) collected its key; it is now in `GET /me/devices` |
 | `cloud` | `{"entity": "plays"}` | the caller's Trackside Cloud data for `entity` (or `devices`) changed; pull it (section 19). Never carries the data |
@@ -2492,7 +2494,9 @@ Assistant keeps the player.
 reconnecting; the last known list), `unavailable` (Music Assistant unreachable for over 30 s or
 the token was refused; `speakers` empty, `since` set; fixture `speakers-unavailable.json`). Never
 an error for Music Assistant being away. Groups come first, each leader followed by its
-members, then the rest by folded name. Disabled, hidden and protocol-only players are left out.
+members, then the rest by folded name. Disabled, hidden and protocol-only players are left out,
+and so are other users' relay speakers; the caller's own (any of their devices) are listed with
+`relay` (section 22.4).
 Weak `ETag`; `If-None-Match` gives `304`.
 
 `GET /api/v1/speakers/{id}` (scope: library): one Speaker; `404` unknown, `503
@@ -2541,8 +2545,9 @@ fields. A start after an album or playlist ref starts at the first item, since t
 inside Music Assistant.
 
 `transfer` moves the queue, position, shuffle and repeat to `to` and stops this speaker unless
-`keep_playing_here`. `"to": "this_device"` is `422 unsupported`, `details.capability = "relay"`
-until the relay is offered. The `202` `speaker` is the target's expected state.
+`keep_playing_here`. `"to": "this_device"` moves it to the calling device's relay (section
+22.2); the `202` then also carries `relay`. The `202` `speaker` is the target's expected state.
+Commands to a relay speaker whose session ended are `409`, `details.reason = "relay_ended"`.
 
 Rate limits per user: 10 commands a second with bursts of 30, and 30 `play` or `transfer` a
 minute; `429 rate_limited` with `Retry-After`. Every command route accepts `Idempotency-Key`
@@ -2716,3 +2721,107 @@ last sync.
   `429 rate_limited` with `Retry-After`.
 - Errors: `404` without `features.catalog`; `409 conflict` (`service_signed_out`); `422
   unsupported`; `503 catalog_unavailable`.
+
+---
+
+## 22. Phone playback relay
+
+Catalog items play on "this device" through a relay: Trackside joins Music Assistant as a
+player for the app device and serves that player's audio as live HLS (contract section 3). The
+relay is the device's speaker (`kind: phone`, `protocol: relay`), visible only to its owner, and
+every control is a speaker command with its `speaker_id` (section 20.3). Audio is real-time
+only: held in memory for a few seconds, never written to disk, cached, added to the library or
+offered for download.
+
+The routes need `features.catalog` (`404` otherwise). Opening and changing a session needs a
+device key with `stream` and `features.catalog.relay`; `relay_cellular` for `tier: "cellular"`.
+
+### 22.1 RelaySession (fixtures `relay-session.json`, `relay-session-starting.json`, `relay-session-ended.json`)
+
+```json
+{
+  "created_at": "2026-11-14T09:30:00.000Z",
+  "device_id": "dchjkb9k3cnapjw0kmhq6",
+  "fetch_timeout_s": 30,
+  "generation": 3,
+  "id": "h9zvca9p26dymt4v7cxj5",
+  "idle_timeout_s": 600,
+  "latency_ms": 4000,
+  "speaker_id": "o1a0psgqvec0jm734s9tv",
+  "state": "playing",
+  "stream": {
+    "format": {"bitrate_kbps": 256, "channels": 2, "codec": "aac", "container": "mp4", "sample_rate": 44100},
+    "hls": "/api/v1/relay/h9zvca9p26dymt4v7cxj5/3/master.m3u8"
+  },
+  "tier": "cellular"
+}
+```
+
+- `state`: `starting`, `ready`, `playing`, `paused`, `ended` (open). With `ended`:
+  `ended_reason` (`idle`, `closed`, `replaced`, `assistant_unavailable`, `server_restart`,
+  `revoked`, `failed`), `detail` sometimes, and no `stream`.
+- `generation`: the current epoch, from 1; `0` before the first audio. A seek, skip, resume,
+  replaced queue or tier change starts a new one with its own URL; a natural track change does
+  not.
+- `stream.hls`: an absolute path; append `mt`. It names the live generation, or the next one
+  when none is live (before the first audio, while paused): that URL already works and waits up
+  to 8 s for audio. When it changes, replace the player item; never seek inside the old one.
+- `stream.format`: lossless is FLAC 44.1 kHz 16 bit in fMP4 (`bit_depth`), cellular AAC-LC
+  256 kbit/s in fMP4 (`bitrate_kbps`). Read it rather than assuming it from `tier`.
+- `latency_ms`: what Trackside receives reaches the player this much later. `fetch_timeout_s`:
+  playing with no fetch this long pauses the queue. `idle_timeout_s`: paused or ready this long
+  ends the session (`idle`); the queue stays in Music Assistant for the next one.
+
+### 22.2 Sessions
+
+| Method and path | Scope | Answer |
+|---|---|---|
+| `POST /api/v1/relay/sessions` | stream, device keys only, idempotent with key | `{"name"?, "tier"?, "play"?}`: `201` with a new session, `200` with this device's running one (switching `tier` when it differs). `name` defaults to the device's; `tier` to `lossless`; `play` is a `POST /speakers/{id}/play` body, run on the relay in the same round trip |
+| `GET /api/v1/relay/sessions` | library | `{"sessions": [RelaySession]}`: the caller's live sessions, all devices |
+| `GET /api/v1/relay/sessions/{id}` | library | the caller's own, live or ended in the last 10 minutes; `404` otherwise |
+| `PATCH /api/v1/relay/sessions/{id}` | stream, the owning device | `{"tier": "lossless" \| "cellular"}` → `200` RelaySession; while playing a new generation starts. Another device: `404` |
+| `DELETE /api/v1/relay/sessions/{id}` | stream | ends it (`closed`); the player leaves Music Assistant. `204` |
+
+Limits: 1 session per device (reused), 3 per user (`music_assistant.relay_max_per_user`),
+`music_assistant.relay_max_sessions` per server (default 4). Over one: `409 conflict`,
+`details.reason = "relay_limit"`, `details.limit`. Errors: `403 forbidden` for a session, an
+API key or a user without `can_play_services`; `422 unsupported` with `details.capability`
+`relay` (Music Assistant has no Sendspin server) or `relay_cellular` (no ffmpeg); `503
+catalog_unavailable`; `429 rate_limited` past 10 `POST` and `PATCH` a minute together.
+
+`POST /speakers/{id}/transfer` with `"to": "this_device"` (and optionally `"tier"`) creates or
+reuses the calling device's session and moves the queue there; the `202` then carries `relay`
+(a RelaySession) and `speaker` is the relay speaker. Without `features.catalog.relay` it is
+`422 unsupported`, `details.capability = "relay"`. Commands to the speaker of an ended session
+are `409 conflict`, `details.reason = "relay_ended"`.
+
+### 22.3 HLS (scope: stream, media token of the owning device)
+
+| Path | Content type |
+|---|---|
+| `GET /api/v1/relay/{id}/{generation}/master.m3u8?mt=` | `application/vnd.apple.mpegurl`: one variant with `BANDWIDTH` and `CODECS` (`fLaC` or `mp4a.40.2`) |
+| `GET /api/v1/relay/{id}/{generation}/index.m3u8?mt=` | `application/vnd.apple.mpegurl`: the live media playlist |
+| `GET /api/v1/relay/{id}/{generation}/init.mp4?mt=` | `audio/mp4` |
+| `GET /api/v1/relay/{id}/{generation}/{n}.m4s?mt=` | `audio/mp4`: segment `n`, from 0 per generation |
+
+- Every response is `Cache-Control: no-store`; `HEAD` works; no range requests. URLs inside
+  playlists are relative and carry the request's `mt`. `mt` is redacted from logs.
+- A media token works only for the device that owns the session; any other caller gets `404`.
+  No token or a forged one is `401`, an expired one `401 media_token_expired`.
+- The current generation, the one before it (ending with `#EXT-X-ENDLIST`) and the next one
+  answer; anything else is `404`. A new generation's playlist and init segment wait up to 8 s
+  for audio; a segment one or two past the live edge waits up to 3 s; a segment that left the
+  window is `404`. A player that gets `404` reloads `stream.hls`.
+- Segments are about 1 s (`#EXT-X-TARGETDURATION:1`), each with `#EXT-X-PROGRAM-DATE-TIME`
+  (Music Assistant's timeline in wall-clock time, for lining up now playing with what is
+  audible); the window lists the newest 6.
+
+### 22.4 Events and the relay speaker (fixture `relay-speaker.json`)
+
+SSE `relay` (RelaySession) goes to the owner only, on every change of `state`, `generation`,
+`tier` or `stream.hls`, and when the session ends; `speaker_removed` follows for its speaker.
+The relay speaker carries `relay: {"device_id", "session_id", "this_device"}` and the
+capabilities `next_previous`, `pause`, `play`, `queue`, `repeat`, `seek`, `shuffle`, `stop`,
+`transfer`: no volume, mute, power or grouping (the phone's own volume applies). It is in the
+owner's `GET /speakers` while the session lives; other users never see it, its events or its
+sessions (`404`).

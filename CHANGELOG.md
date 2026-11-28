@@ -68,6 +68,13 @@ starts at schema 7; there is nothing to upgrade from.
   Turn it off per person with the "play music services" permission, or hide a service with
   `music_assistant.hidden_services`. Nothing from a service is stored except cover thumbnails, which the artwork cache
   keeps re-encoded under its usual size limit.
+- Music services on your phone: Tracks plays them on the phone through Trackside, which joins
+  Music Assistant as a player for that phone and passes the audio on as it plays (lossless on
+  Wi-Fi, AAC on cellular when ffmpeg is installed). Audio is only held in memory for a few
+  seconds and never stored. A speaker's queue can move to the phone and back. At most one
+  listener per phone, three per person (`music_assistant.relay_max_per_user`) and four per
+  server (`relay_max_sessions` in Speakers). Removing a device also removes its player key.
+  See [relay.md](docs/ops/relay.md).
 - Optional acquisition through yt-dlp, off unless an admin turns it on. Playing a song the
   server doesn't have streams it through yt-dlp without keeping it; only Get adds a song to the
   library.
