@@ -1,0 +1,15 @@
+[
+  {"item_id": "in_progress", "provider": "recommendations", "name": "Continue listening", "version": "", "sort_name": "continue listening",
+   "uri": "library://folder/in_progress", "external_ids": [], "is_playable": false, "media_type": "folder", "translation_key": "in_progress",
+   "translation_params": null, "path": "recommendations://in_progress", "image": null, "icon": "mdi-play-circle", "items": [], "subtitle": null,
+   "type": "timeline", "enabled_by_default": true, "supports_provider_filter": true, "supports_hide_played": true},
+  {"item_id": "stations-for-you", "provider": "apple_music--Hq7cT2", "name": "Stations for You", "version": "", "sort_name": "stations for you",
+   "uri": "apple_music--Hq7cT2://folder/stations-for-you", "external_ids": [], "is_playable": false, "media_type": "folder", "translation_key": null,
+   "translation_params": null, "path": "apple_music--Hq7cT2://stations-for-you", "image": null, "icon": null, "items": [], "subtitle": null,
+   "type": "default", "enabled_by_default": true, "supports_provider_filter": false, "supports_hide_played": false},
+  {"item_id": "mixed-for-you", "provider": "spotify--Xb4LkP2q", "name": "Made For Luke", "media_type": "folder", "type": "default",
+   "subtitle": "Your daily mixes", "enabled_by_default": null, "supports_provider_filter": null, "supports_hide_played": null,
+   "items": [{"item_id": "37i9dQZF1E39", "provider": "spotify--Xb4LkP2q", "name": "Daily Mix 1", "media_type": "playlist",
+              "provider_mappings": [{"item_id": "37i9dQZF1E39", "provider_domain": "spotify", "provider_instance": "spotify--Xb4LkP2q", "available": true}],
+              "metadata": {"images": []}, "owner": "Spotify", "is_editable": false, "is_dynamic": false}]}
+]

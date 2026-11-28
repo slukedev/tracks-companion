@@ -1,11 +1,12 @@
 //! Media items, as Music Assistant serializes `Track`, `Album`, `Artist`, `Playlist`, `Radio`
 //! and `ItemMapping` (models `media_items/media_item.py`, `provider_mapping.py`, `metadata.py`).
-//! One struct covers all of them: the fields a kind does not have are empty.
+//! One struct covers all of them: the fields a kind does not have are empty. Browse folders
+//! and recommendation rows (`BrowseFolder`, `RecommendationFolder`) have their own.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
-use super::enums::{ImageType, MediaType};
+use super::enums::{ImageType, MediaType, RecommendationFolderType};
 use crate::de;
 
 /// An artist, album, track, playlist, radio station or item mapping.
@@ -232,4 +233,97 @@ pub struct SearchResults {
     pub audiobooks: Vec<MediaItem>,
     #[serde(default, deserialize_with = "de::lenient_vec")]
     pub podcasts: Vec<MediaItem>,
+}
+
+/// A folder in a browse listing, or among a recommendation row's items (`BrowseFolder`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct BrowseFolder {
+    #[serde(default, deserialize_with = "de::nullable")]
+    pub item_id: String,
+    #[serde(default, deserialize_with = "de::nullable")]
+    pub provider: String,
+    #[serde(default, deserialize_with = "de::nullable")]
+    pub name: String,
+    /// The folder's browse path in URI style, such as `spotify--x://playlists`.
+    #[serde(default, deserialize_with = "de::nullable")]
+    pub path: String,
+    #[serde(default, deserialize_with = "de::lenient")]
+    pub uri: Option<String>,
+    #[serde(default, deserialize_with = "de::lenient")]
+    pub image: Option<Image>,
+}
+
+/// One entry of a recommendation row: a full media item or an item mapping of any kind (kinds
+/// this client does not know keep their `media_type` as [`MediaType::Other`], for the caller
+/// to skip), or a folder. Music Assistant tells them apart the same way: `folder` is a
+/// folder, anything else a media item.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(untagged)]
+#[non_exhaustive]
+pub enum RecommendationItem {
+    Media(Box<MediaItem>),
+    Folder(Box<BrowseFolder>),
+}
+
+impl<'de> Deserialize<'de> for RecommendationItem {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let value = Value::deserialize(deserializer)?;
+        if !value.is_object() {
+            return Err(D::Error::custom("a recommendation item is an object"));
+        }
+        if value.get("media_type").and_then(Value::as_str) == Some("folder") {
+            serde_json::from_value(value)
+                .map(|folder| Self::Folder(Box::new(folder)))
+                .map_err(D::Error::custom)
+        } else {
+            serde_json::from_value(value)
+                .map(|media| Self::Media(Box::new(media)))
+                .map_err(D::Error::custom)
+        }
+    }
+}
+
+/// A recommendation row (`RecommendationFolder`, a `BrowseFolder` with its items), as
+/// `music/recommendations` lists them. Music Assistant 2.10.14 and the 2.11 betas send the
+/// rows without items, which `music/recommendations/items` reads one row at a time; older
+/// servers sent them inline.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct RecommendationFolder {
+    #[serde(default, deserialize_with = "de::nullable")]
+    pub item_id: String,
+    /// The provider instance id (or domain) that owns the row, `recommendations` for Music
+    /// Assistant's own library rows.
+    #[serde(default, deserialize_with = "de::nullable")]
+    pub provider: String,
+    /// The English title.
+    #[serde(default, deserialize_with = "de::nullable")]
+    pub name: String,
+    #[serde(default, deserialize_with = "de::nullable")]
+    pub path: String,
+    #[serde(default, deserialize_with = "de::lenient")]
+    pub uri: Option<String>,
+    #[serde(default, deserialize_with = "de::lenient")]
+    pub image: Option<Image>,
+    /// A Material Design icon name.
+    #[serde(default, deserialize_with = "de::lenient")]
+    pub icon: Option<String>,
+    #[serde(default, deserialize_with = "de::lenient")]
+    pub translation_key: Option<String>,
+    #[serde(default, deserialize_with = "de::lenient_vec")]
+    pub items: Vec<RecommendationItem>,
+    #[serde(default, deserialize_with = "de::lenient")]
+    pub subtitle: Option<String>,
+    #[serde(rename = "type", default, deserialize_with = "de::nullable")]
+    pub kind: RecommendationFolderType,
+    /// Rows off by default are noisier; Music Assistant's own client hides them until the
+    /// user opts in.
+    #[serde(default = "de::yes", deserialize_with = "de::nullable_true")]
+    pub enabled_by_default: bool,
+    #[serde(default, deserialize_with = "de::nullable")]
+    pub supports_provider_filter: bool,
+    #[serde(default, deserialize_with = "de::nullable")]
+    pub supports_hide_played: bool,
 }

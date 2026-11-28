@@ -5,8 +5,8 @@
 //! It covers what the integration needs, not all of Music Assistant: players and their
 //! queues, player and queue commands with their visible effect, providers, provider configs
 //! and the `OpenSubsonic` setup flow, a token with a role, the music catalog (search per
-//! provider, items by URI, album, artist and playlist tracks, library items) with answers
-//! that can be held back, and the `/imageproxy/` images on the same port over plain HTTP.
+//! provider, items by URI, album, artist and playlist tracks, library items, recommendation
+//! rows and their items) with answers that can be held back, and the `/imageproxy/` images on the same port over plain HTTP.
 
 #![allow(
     clippy::missing_panics_doc,
@@ -63,7 +63,11 @@ pub struct Model {
     /// `music/albums/album_tracks:tidal--x/1781880`, and library items by
     /// `music/playlists/library_items:<provider>`.
     pub listings: HashMap<String, Vec<Value>>,
-    /// Answers held back: by command, or by `music/search:<provider>`.
+    /// `music/recommendations` rows (`RecommendationFolder` objects). A row's items are the
+    /// listing `music/recommendations/items:<provider>/<item_id>`.
+    pub recommendations: Vec<Value>,
+    /// Answers held back: by command, by `music/search:<provider>`, or by
+    /// `music/recommendations/items:<provider>/<item_id>`.
     pub delays: HashMap<String, Duration>,
     /// Bodies served over HTTP by path and query, such as `/imageproxy/<id>?size=0`, with
     /// their content type.
@@ -91,6 +95,7 @@ impl Default for Model {
             search: HashMap::new(),
             items: HashMap::new(),
             listings: HashMap::new(),
+            recommendations: Vec::new(),
             delays: HashMap::new(),
             images: HashMap::new(),
             next_instance: 1,
@@ -416,6 +421,11 @@ fn delay_of(shared: &Shared, command: &str, args: &Value) -> Option<Duration> {
     {
         return Some(*delay);
     }
+    if command == "music/recommendations/items"
+        && let Some(delay) = model.delays.get(&recommendation_key(args))
+    {
+        return Some(*delay);
+    }
     model.delays.get(command).copied()
 }
 
@@ -500,9 +510,19 @@ async fn serve_http(mut stream: tokio::net::TcpStream, shared: &Shared) {
     let _ = stream.shutdown().await;
 }
 
+/// `music/recommendations/items:<provider>/<item_id>`.
+fn recommendation_key(args: &Value) -> String {
+    format!(
+        "music/recommendations/items:{}/{}",
+        args["provider"].as_str().unwrap_or_default(),
+        args["item_id"].as_str().unwrap_or_default()
+    )
+}
+
 fn listing(model: &Model, command: &str, args: &Value) -> Value {
     let key = match args["provider"].as_str() {
         Some(provider) if command.ends_with("/library_items") => format!("{command}:{provider}"),
+        Some(_) if command == "music/recommendations/items" => recommendation_key(args),
         _ => format!(
             "{command}:{}/{}",
             args["provider_instance_id_or_domain"]
@@ -642,7 +662,9 @@ fn answer(shared: &Shared, id: &str, command: &str, args: &Value) -> (Value, Vec
         | "music/albums/library_items"
         | "music/artists/library_items"
         | "music/playlists/library_items"
-        | "music/radios/library_items" => listing(&model, command, args),
+        | "music/radios/library_items"
+        | "music/recommendations/items" => listing(&model, command, args),
+        "music/recommendations" => Value::Array(model.recommendations.clone()),
         "providers" => {
             let kind = args["provider_type"].as_str();
             Value::Array(

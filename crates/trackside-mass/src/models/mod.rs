@@ -9,10 +9,11 @@ mod server;
 
 pub use enums::{
     FlowStepType, ImageType, MediaType, PlaybackState, PlayerFeature, PlayerType, ProviderType,
-    QueueOption, RepeatMode,
+    QueueOption, RecommendationFolderType, RepeatMode,
 };
 pub use media::{
-    AudioFormat, ExternalId, Image, MediaItem, Metadata, ProviderMapping, SearchResults,
+    AudioFormat, BrowseFolder, ExternalId, Image, MediaItem, Metadata, ProviderMapping,
+    RecommendationFolder, RecommendationItem, SearchResults,
 };
 pub use player::{DeviceInfo, Player, PlayerMedia, PlayerQueue, QueueItem, StreamOrigin};
 pub use server::{

@@ -12,8 +12,8 @@ use crate::error::RequestError;
 use crate::image::{ImageFormat, ImageSize, image_url};
 use crate::models::{
     FlowStepType, Image, MediaItem, MediaType, Player, PlayerQueue, ProviderConfig,
-    ProviderInstance, ProviderManifest, ProviderType, QueueItem, QueueOption, RepeatMode,
-    SearchResults, ServerInfo, SetupFlowStep,
+    ProviderInstance, ProviderManifest, ProviderType, QueueItem, QueueOption, RecommendationFolder,
+    RecommendationItem, RepeatMode, SearchResults, ServerInfo, SetupFlowStep,
 };
 use crate::token::Token;
 
@@ -337,6 +337,36 @@ impl Client {
             .opt("provider", query.provider.as_deref());
         let command = format!("music/{}/library_items", media_type.plural());
         self.listing(&command, args.into()).await
+    }
+
+    /// The recommendation rows of every provider that offers them, the library's own
+    /// included, in Music Assistant's interleaved order (`music/recommendations`). Rows that
+    /// do not decode are dropped.
+    pub async fn recommendations(&self) -> Result<Vec<RecommendationFolder>, RequestError> {
+        self.list("music/recommendations", None).await
+    }
+
+    /// The items of one recommendation row (`music/recommendations/items`). `providers`
+    /// limits a row that `supports_provider_filter` to those instances; `hide_played` leaves
+    /// out fully played episodes and audiobooks on a row that `supports_hide_played` (2.11).
+    /// Each is sent only when set, so 2.10 servers get only the arguments they know. Entries
+    /// that do not decode are dropped.
+    pub async fn recommendation_items(
+        &self,
+        provider: &str,
+        item_id: &str,
+        providers: &[String],
+        hide_played: bool,
+    ) -> Result<Vec<RecommendationItem>, RequestError> {
+        let args = Args::new()
+            .set("provider", provider)
+            .set("item_id", item_id)
+            .opt(
+                "providers",
+                (!providers.is_empty()).then(|| text(providers)),
+            )
+            .opt("hide_played", hide_played.then_some(true));
+        self.list("music/recommendations/items", args.into()).await
     }
 
     pub async fn players(&self) -> Result<Vec<Player>, RequestError> {

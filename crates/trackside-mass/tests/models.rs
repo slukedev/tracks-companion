@@ -9,13 +9,17 @@
 //! `provider-instance.json` payload is copied from `tests/test_provider_instance.py`
 //! (`BASE_PAYLOAD` with the `supported_artist_types` case), and the `protocols` entry of
 //! `player-2.11.json` from `tests/test_player.py`
-//! (`test_player_protocol_info_defaults_and_unknown_role`).
+//! (`test_player_protocol_info_defaults_and_unknown_role`). The recommendation samples follow
+//! `RecommendationFolder` and `_deserialize_recommendation_items` of the same files, with the
+//! Apple Music provider's station rows of 2.10.14 (stations as dynamic `ra.` playlists) and
+//! of 2.11 (stations as radios) and the library provider's rows.
 
 use serde::de::DeserializeOwned;
 use trackside_mass::models::{
     FlowStepType, ImageType, MediaItem, MediaType, PlaybackState, Player, PlayerFeature,
-    PlayerQueue, PlayerType, ProviderConfig, ProviderInstance, ProviderType, RepeatMode,
-    SearchResults, ServerInfo, SetupFlowStep,
+    PlayerQueue, PlayerType, ProviderConfig, ProviderInstance, ProviderType, RecommendationFolder,
+    RecommendationFolderType, RecommendationItem, RepeatMode, SearchResults, ServerInfo,
+    SetupFlowStep,
 };
 use trackside_mass::{Endpoint, ImageSize, image_url, schema};
 
@@ -220,4 +224,115 @@ fn a_setup_flow_form_with_errors_decodes() {
         Some("Could not connect to http://192.168.1.10")
     );
     assert!(step.result.is_empty());
+}
+
+/// A list as the client decodes one: entry by entry, dropping those that do not decode.
+fn load_list<T: DeserializeOwned>(name: &str) -> Vec<T> {
+    let entries: Vec<serde_json::Value> = load(name);
+    entries
+        .into_iter()
+        .filter_map(|entry| serde_json::from_value(entry).ok())
+        .collect()
+}
+
+fn media(item: &RecommendationItem) -> Option<&MediaItem> {
+    match item {
+        RecommendationItem::Media(media) => Some(media),
+        _ => None,
+    }
+}
+
+#[test]
+fn recommendation_rows_from_2_10_decode_and_bad_rows_are_dropped() {
+    let rows: Vec<RecommendationFolder> = load_list("recommendations-2.10.json");
+    let ids: Vec<&str> = rows.iter().map(|r| r.item_id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "recently_played",
+            "made-for-you",
+            "random_artists",
+            "new-releases"
+        ]
+    );
+    let apple = &rows[1];
+    assert_eq!(apple.provider, "apple_music--Hq7cT2");
+    assert_eq!(apple.name, "Made for You");
+    assert!(apple.items.is_empty(), "2.10.14 lists rows without items");
+    assert!(apple.enabled_by_default);
+    assert!(!apple.supports_hide_played, "2.10 does not send it");
+    assert_eq!(rows[0].icon.as_deref(), Some("mdi-motion-play"));
+    assert!(!rows[2].enabled_by_default);
+    let deezer = &rows[3];
+    assert_eq!(deezer.subtitle.as_deref(), Some("Fresh this week"));
+    assert_eq!(
+        deezer.kind,
+        RecommendationFolderType::Other(String::from("some_future_type"))
+    );
+    assert!(deezer.items.is_empty(), "null items are none");
+    assert!(deezer.enabled_by_default, "absent means on");
+}
+
+#[test]
+fn recommendation_rows_from_2_11_decode_with_inline_items() {
+    let rows: Vec<RecommendationFolder> = load_list("recommendations-2.11.json");
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].kind, RecommendationFolderType::Timeline);
+    assert!(rows[0].supports_hide_played && rows[0].supports_provider_filter);
+    assert_eq!(rows[1].kind, RecommendationFolderType::Default);
+    let spotify = &rows[2];
+    assert!(spotify.enabled_by_default, "null means on");
+    assert_eq!(spotify.items.len(), 1);
+    let mix = media(&spotify.items[0]).expect("a media item");
+    assert_eq!(mix.media_type, MediaType::Playlist);
+    assert_eq!(mix.owner.as_deref(), Some("Spotify"));
+}
+
+#[test]
+fn apple_music_stations_of_2_10_are_dynamic_playlists() {
+    let items: Vec<RecommendationItem> = load_list("recommendation-items-2.10.json");
+    assert_eq!(items.len(), 3);
+    let station = media(&items[0]).expect("a media item");
+    assert_eq!(station.media_type, MediaType::Playlist);
+    assert!(station.is_dynamic);
+    assert!(station.item_id.starts_with("ra."));
+    assert_eq!(
+        station.provider_mappings[0].provider_instance,
+        "apple_music--Hq7cT2"
+    );
+    assert!(station.thumb().is_some_and(|i| i.remotely_accessible));
+    let mapping = media(&items[2]).expect("an item mapping");
+    assert!(mapping.is_mapping());
+    assert_eq!(
+        mapping.provider, "apple_music",
+        "a mapping may name the domain"
+    );
+    assert!(mapping.thumb().is_some_and(|i| i.proxy_id.is_some()));
+}
+
+#[test]
+fn apple_music_stations_of_2_11_are_radios_among_mixed_items() {
+    let items: Vec<RecommendationItem> = load_list("recommendation-items-2.11.json");
+    assert_eq!(items.len(), 6, "entries that are not objects are dropped");
+    let station = media(&items[0]).expect("a media item");
+    assert_eq!(station.media_type, MediaType::Radio);
+    assert!(station.is_dynamic);
+    assert_eq!(station.duration, Some(172_800.0));
+    let album = media(&items[1]).expect("a media item");
+    assert_eq!(album.media_type, MediaType::Album);
+    assert_eq!(album.artist_names(), "Beyoncé");
+    let track = media(&items[2]).expect("an item mapping");
+    assert!(track.is_mapping() && track.media_type == MediaType::Track);
+    assert!(
+        matches!(&items[3], RecommendationItem::Folder(f) if f.path == "apple_music--Hq7cT2://genres")
+    );
+    assert_eq!(
+        media(&items[4]).map(|m| m.media_type.clone()),
+        Some(MediaType::Podcast)
+    );
+    assert_eq!(
+        media(&items[5]).map(|m| m.media_type.clone()),
+        Some(MediaType::Other(String::from("audio_source"))),
+        "an unknown kind is kept for the caller to skip"
+    );
 }

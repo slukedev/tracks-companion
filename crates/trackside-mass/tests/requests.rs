@@ -633,3 +633,53 @@ async fn an_aborted_setup_reports_the_reason() {
     );
     client.shutdown().await;
 }
+
+#[tokio::test]
+async fn recommendation_rows_drop_entries_that_do_not_decode() {
+    let (sent, result) = sent_by(
+        |c| async move { c.recommendations().await },
+        json!([
+            {"item_id": "made-for-you", "provider": "apple_music--x", "name": "Made for You", "media_type": "folder", "items": []},
+            "nope",
+            {"item_id": ["x"], "provider": "y", "name": "z"}
+        ]),
+    )
+    .await;
+    let rows = result.expect("ok");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].name, "Made for You");
+    assert_eq!(sent.command, "music/recommendations");
+    assert_eq!(sent.args, Value::Null);
+}
+
+#[tokio::test]
+async fn recommendation_items_send_only_the_arguments_asked_for() {
+    let (sent, result) = sent_by(
+        |c| async move {
+            c.recommendation_items("apple_music--x", "made-for-you", &[], false)
+                .await
+        },
+        json!([{"item_id": "ra.1", "provider": "apple_music--x", "name": "Station", "media_type": "radio"}, 7]),
+    )
+    .await;
+    assert_eq!(result.expect("ok").len(), 1);
+    assert_eq!(sent.command, "music/recommendations/items");
+    assert_eq!(
+        sent.args,
+        json!({"provider": "apple_music--x", "item_id": "made-for-you"})
+    );
+
+    let (sent, _) = sent_by(
+        |c| async move {
+            c.recommendation_items("recommendations", "in_progress", &["tidal--y".into()], true)
+                .await
+        },
+        json!([]),
+    )
+    .await;
+    assert_eq!(
+        sent.args,
+        json!({"provider": "recommendations", "item_id": "in_progress",
+               "providers": ["tidal--y"], "hide_played": true})
+    );
+}

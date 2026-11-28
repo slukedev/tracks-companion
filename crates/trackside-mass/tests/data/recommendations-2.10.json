@@ -1,0 +1,16 @@
+[
+  {"item_id": "recently_played", "provider": "recommendations", "name": "Recently played", "version": "", "sort_name": "recently played",
+   "uri": "library://folder/recently_played", "external_ids": [], "is_playable": false, "media_type": "folder", "translation_key": "recently_played",
+   "path": "recommendations://recently_played", "image": null, "icon": "mdi-motion-play", "items": [], "subtitle": null, "type": "default",
+   "enabled_by_default": true, "supports_provider_filter": true},
+  {"item_id": "made-for-you", "provider": "apple_music--Hq7cT2", "name": "Made for You", "version": "", "sort_name": "made for you",
+   "uri": "apple_music--Hq7cT2://folder/made-for-you", "external_ids": [], "is_playable": false, "media_type": "folder", "translation_key": null,
+   "path": "apple_music--Hq7cT2://made-for-you", "image": null, "icon": null, "items": [], "subtitle": null, "type": "default",
+   "enabled_by_default": true, "supports_provider_filter": false},
+  {"item_id": "random_artists", "provider": "recommendations", "name": "Random artists", "media_type": "folder", "type": "default",
+   "enabled_by_default": false, "supports_provider_filter": true, "items": []},
+  {"item_id": "new-releases", "provider": "deezer--Mm2", "name": "New releases", "media_type": "folder", "type": "some_future_type",
+   "subtitle": "Fresh this week", "items": null},
+  "not a row",
+  {"item_id": 7, "provider": "broken", "name": {"en": "x"}}
+]

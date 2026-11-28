@@ -182,6 +182,15 @@ open_enum!(
 );
 
 open_enum!(
+    /// How a recommendation row is meant to be shown (models `enums.py`,
+    /// `RecommendationFolderType`).
+    RecommendationFolderType default Default {
+        Default => "default",
+        Timeline => "timeline",
+    }
+);
+
+open_enum!(
     /// The kind of step a provider setup flow is on.
     FlowStepType default Unknown {
         Form => "form",

@@ -1,0 +1,19 @@
+[
+  {"item_id": "ra.q-GAI6IDE2MjgwNjYwNTE", "provider": "apple_music--Hq7cT2", "name": "Beyoncé & Similar Artists Station", "version": "",
+   "sort_name": "beyonce & similar artists station", "uri": "apple_music--Hq7cT2://playlist/ra.q-GAI6IDE2MjgwNjYwNTE", "external_ids": [],
+   "is_playable": true, "media_type": "playlist", "translation_key": null,
+   "provider_mappings": [{"item_id": "ra.q-GAI6IDE2MjgwNjYwNTE", "provider_domain": "apple_music", "provider_instance": "apple_music--Hq7cT2",
+                          "available": true, "in_library": null, "is_unique": null, "audio_format": {"content_type": "?", "sample_rate": 44100, "bit_depth": 16, "channels": 2, "bit_rate": 0},
+                          "url": null, "details": null}],
+   "metadata": {"description": null, "explicit": null,
+                "images": [{"type": "thumb", "path": "https://is1-ssl.mzstatic.com/image/thumb/Features/v4/a1/b2/station/{w}x{h}cc.jpg", "provider": "apple_music--Hq7cT2",
+                            "remotely_accessible": true, "proxy_id": "5e1f0a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7"}],
+                "genres": null, "popularity": null},
+   "favorite": false, "position": null, "owner": "", "is_editable": false, "is_dynamic": true},
+  {"item_id": "ra.u-6d0e8b1a7c5f4e3d", "provider": "apple_music--Hq7cT2", "name": "Luke's Station", "media_type": "playlist", "is_dynamic": true,
+   "provider_mappings": [{"item_id": "ra.u-6d0e8b1a7c5f4e3d", "provider_domain": "apple_music", "provider_instance": "apple_music--Hq7cT2", "available": true}],
+   "metadata": {"images": []}, "owner": null, "is_editable": false},
+  {"item_id": "pl.f4d106fed2bd41149aaacabb233eb5eb", "provider": "apple_music", "name": "Today's Hits", "media_type": "playlist",
+   "image": {"type": "thumb", "path": "playlist/pl.f4d106fed2bd41149aaacabb233eb5eb", "provider": "apple_music--Hq7cT2", "remotely_accessible": false,
+             "proxy_id": "9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b"}}
+]
