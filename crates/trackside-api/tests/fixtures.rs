@@ -62,6 +62,25 @@ fn id<T: PublicId>(seed: &str) -> T {
     T::from_hash(&spread(seed))
 }
 
+/// The Music Assistant service account, as `ensure_service_user` makes it.
+fn service_account() -> User {
+    User {
+        key: UserKey(9),
+        id: id("user music assistant"),
+        username: String::from(trackside_assistant::SERVICE_USERNAME),
+        display_name: String::from(trackside_assistant::SERVICE_DISPLAY_NAME),
+        role: Role::Member,
+        permissions: Permissions::NONE,
+        sync_epoch: 1,
+        created_at: at(-86_400 * 2),
+        updated_at: at(-86_400 * 2),
+        password_changed_at: at(-86_400 * 2),
+        disabled_at: None,
+        must_change_password: false,
+        service: Some(String::from(trackside_assistant::SERVICE)),
+    }
+}
+
 /// Stable ids from a name: the name's bytes spread over 32.
 fn spread(seed: &str) -> [u8; 32] {
     let mut out = [0_u8; 32];
@@ -1491,12 +1510,20 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
     put(
         "admin/users.json",
         &wire::admin::AdminUsers {
-            users: vec![build::admin_user(
-                &admin_user,
-                vec![s.library.id.to_string(), s.acquired.id.to_string()],
-                Some(at(-60)),
-                None,
-            )],
+            users: vec![
+                build::admin_user(
+                    &admin_user,
+                    vec![s.library.id.to_string(), s.acquired.id.to_string()],
+                    Some(at(-60)),
+                    None,
+                ),
+                build::admin_user(
+                    &service_account(),
+                    vec![s.library.id.to_string(), s.acquired.id.to_string()],
+                    Some(at(-60)),
+                    None,
+                ),
+            ],
         },
     )?;
     put(
@@ -1761,6 +1788,36 @@ fn admin_extras(s: &Seed) -> Result<Vec<(&'static str, serde_json::Value)>, serd
                     last_used_at: record.last_used_at,
                     last_used_ip: record.last_used_ip.clone(),
                     managed_by: None,
+                }, {
+                    let service = service_account();
+                    let managed = ApiKeyRow {
+                        id: id("key music assistant"),
+                        user: service.key,
+                        device: None,
+                        kind: KeyKind::ApiKey,
+                        name: String::from(trackside_assistant::SERVICE_DISPLAY_NAME),
+                        prefix: String::from("tsk_Qm3vXa"),
+                        scopes: Scopes::LIBRARY.union(Scopes::STREAM).to_string(),
+                        created_at: at(-86_400 * 2),
+                        last_used_at: Some(at(-60)),
+                        last_used_ip: Some(String::from("192.168.1.20")),
+                        expires_at: None,
+                        revoked_at: None,
+                        managed_by: Some(String::from(trackside_assistant::SERVICE)),
+                    };
+                    let record = map::key_record(&managed);
+                    a::AdminKey {
+                        id: record.id,
+                        kind: record.kind,
+                        name: record.name,
+                        prefix: record.prefix,
+                        scopes: record.scopes,
+                        user: map::user_ref(&service),
+                        created_at: record.created_at,
+                        last_used_at: record.last_used_at,
+                        last_used_ip: record.last_used_ip,
+                        managed_by: managed.managed_by,
+                    }
                 }],
             })?,
         ),

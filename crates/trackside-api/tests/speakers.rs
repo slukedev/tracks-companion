@@ -598,14 +598,25 @@ async fn trackside_registers_itself_with_a_key_that_only_reads_and_streams() -> 
         .cloned()
         .ok_or("listed")?;
     assert_eq!(service["service"], "music_assistant");
+    assert_eq!(service["role"], "member");
+    assert!(
+        service["permissions"]
+            .as_object()
+            .is_some_and(|p| p.values().all(|v| v == false)),
+        "a service account has no permissions: {service}"
+    );
     let (_, keys) = server
         .admin(&cookie, reqwest::Method::GET, "/api-keys", None)
         .await?;
-    assert!(
-        keys["keys"]
-            .as_array()
-            .is_some_and(|k| k.iter().any(|k| k["managed_by"] == "music_assistant"))
-    );
+    let managed = keys["keys"]
+        .as_array()
+        .and_then(|k| k.iter().find(|k| k["managed_by"] == "music_assistant"))
+        .cloned()
+        .ok_or("managed key listed")?;
+    assert_eq!(managed["kind"], "api_key");
+    assert_eq!(managed["name"], "Music Assistant");
+    assert_eq!(managed["scopes"], json!(["library", "stream"]));
+    assert_eq!(managed["user"]["id"], service["id"]);
     let (status, _) = server
         .admin(
             &cookie,

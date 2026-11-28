@@ -169,15 +169,7 @@ impl Auth {
                 display_name,
                 password_hash: String::from("!"),
                 role: Role::Member,
-                permissions: trackside_core::Permissions {
-                    can_download: false,
-                    can_upload: false,
-                    can_request: false,
-                    legacy_subsonic: false,
-                    max_bitrate_kbps: None,
-                    can_use_speakers: false,
-                    can_play_services: false,
-                },
+                permissions: trackside_core::Permissions::NONE,
                 libraries,
                 service: Some(service.to_owned()),
             };

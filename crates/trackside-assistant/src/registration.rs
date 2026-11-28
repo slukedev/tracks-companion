@@ -19,11 +19,9 @@ use trackside_mass::{
 };
 
 use crate::settings::{self, Registration};
-use crate::{Inner, SERVICE, lock};
+use crate::{Inner, SERVICE, SERVICE_DISPLAY_NAME, SERVICE_USERNAME, lock};
 
 /// The service account's name, and how the key is labelled.
-const USERNAME: &str = "music-assistant";
-const DISPLAY_NAME: &str = "Music Assistant";
 
 #[derive(Debug)]
 pub(crate) struct RegState {
@@ -314,7 +312,7 @@ impl Inner {
             .map_err(|e| RegisterError::Failed(format!("The LAN address {e}.")))?;
         let user = self
             .auth
-            .ensure_service_user(SERVICE, USERNAME, DISPLAY_NAME)
+            .ensure_service_user(SERVICE, SERVICE_USERNAME, SERVICE_DISPLAY_NAME)
             .await
             .map_err(|e| {
                 RegisterError::Failed(format!("Could not make the service account: {e}."))
@@ -324,7 +322,7 @@ impl Inner {
             .create_managed_key(
                 user.key,
                 SERVICE,
-                DISPLAY_NAME,
+                SERVICE_DISPLAY_NAME,
                 Scopes::LIBRARY.union(Scopes::STREAM),
             )
             .await

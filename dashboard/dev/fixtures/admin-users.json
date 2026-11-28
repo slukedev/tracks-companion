@@ -95,8 +95,8 @@
         "can_upload": false,
         "can_request": false,
         "legacy_subsonic": false,
-        "can_use_speakers": true,
-        "can_play_services": true
+        "can_use_speakers": false,
+        "can_play_services": false
       },
       "library_ids": [
         "l0a8f2c9e7d1b3k5m6n4",

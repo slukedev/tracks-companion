@@ -65,6 +65,9 @@ use crate::settings::Effective;
 
 /// The integration's name on service accounts and managed keys.
 pub const SERVICE: &str = "music_assistant";
+/// The username and display name of the service account, and the name of its key.
+pub const SERVICE_USERNAME: &str = "music-assistant";
+pub const SERVICE_DISPLAY_NAME: &str = "Music Assistant";
 
 /// Waits a test may shorten.
 #[derive(Clone, Debug)]

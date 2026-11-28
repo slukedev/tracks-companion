@@ -49,6 +49,19 @@ pub struct Permissions {
     pub can_play_services: bool,
 }
 
+impl Permissions {
+    /// Every flag off, as service accounts have.
+    pub const NONE: Self = Self {
+        can_download: false,
+        can_upload: false,
+        can_request: false,
+        legacy_subsonic: false,
+        max_bitrate_kbps: None,
+        can_use_speakers: false,
+        can_play_services: false,
+    };
+}
+
 impl Default for Permissions {
     /// The defaults of the `users` table: downloads, requests, speakers and services on,
     /// uploads and legacy Subsonic off, no bitrate limit.
