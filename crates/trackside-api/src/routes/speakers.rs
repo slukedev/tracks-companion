@@ -16,7 +16,8 @@ use trackside_core::assistant::{
     PlaybackAction, QueuePage, Repeat, Speaker, SpeakerCommand, SpeakerError, SpeakerEvent,
     SpeakerList, SpeakerPatch, SpeakerQueue, SpeakersState,
 };
-use trackside_core::{Access, SongId, SpeakerId};
+use trackside_core::relay::{RelayOpen, RelayTier};
+use trackside_core::{Access, DeviceKey, SongId, SpeakerId};
 
 use super::{cached_json, idempotency};
 use crate::ApiState;
@@ -75,6 +76,15 @@ fn context_body(context: &PlayContext) -> wire::PlayContext {
 
 /// A speaker as `access` may see it.
 pub fn speaker_body(speaker: &Speaker, access: &Access) -> wire::Speaker {
+    speaker_body_on(speaker, access, None)
+}
+
+/// A speaker as `access` sees it from `device`: a relay speaker says whether it is this one.
+pub fn speaker_body_on(
+    speaker: &Speaker,
+    access: &Access,
+    device: Option<DeviceKey>,
+) -> wire::Speaker {
     wire::Speaker {
         availability: speaker.availability.as_str().to_owned(),
         can_group_with: speaker
@@ -126,31 +136,52 @@ pub fn speaker_body(speaker: &Speaker, access: &Access) -> wire::Speaker {
         }),
         powered: speaker.powered,
         protocol: speaker.protocol.clone(),
-        relay: None,
+        relay: speaker.relay.as_ref().map(|r| wire::SpeakerRelay {
+            device_id: r.device_id.to_string(),
+            session_id: r.session.to_string(),
+            this_device: device == Some(r.device),
+        }),
         revision: speaker.revision,
         volume: speaker.volume,
     }
 }
 
 pub fn speakers_body(list: &SpeakerList, access: &Access) -> wire::Speakers {
+    speakers_body_on(list, access, None)
+}
+
+pub fn speakers_body_on(
+    list: &SpeakerList,
+    access: &Access,
+    device: Option<DeviceKey>,
+) -> wire::Speakers {
     let state = list.state.unwrap_or(SpeakersState::Unavailable);
     wire::Speakers {
         since: list.since.map(Time),
         speakers: list
             .speakers
             .iter()
-            .map(|s| speaker_body(s, access))
+            .map(|s| speaker_body_on(s, access, device))
             .collect(),
         state: state.as_str().to_owned(),
     }
 }
 
 pub fn command_body(accepted: &CommandAccepted, access: &Access) -> wire::CommandAccepted {
+    command_body_on(accepted, access, None)
+}
+
+pub fn command_body_on(
+    accepted: &CommandAccepted,
+    access: &Access,
+    device: Option<DeviceKey>,
+) -> wire::CommandAccepted {
     wire::CommandAccepted {
         action: accepted.action.to_owned(),
         command_id: accepted.command_id.to_string(),
+        relay: None,
         settle_by: Time(accepted.settle_by),
-        speaker: speaker_body(&accepted.speaker, access),
+        speaker: speaker_body_on(&accepted.speaker, access, device),
     }
 }
 
@@ -189,10 +220,41 @@ pub fn queue_body(queue: &SpeakerQueue, access: &Access) -> wire::SpeakerQueue {
 /// An SSE speaker event for one listener: its name and data, or `None` when it is not for
 /// them.
 pub fn event_body(event: &SpeakerEvent, access: &Access) -> Option<(&'static str, String)> {
+    event_body_on(event, access, None, "")
+}
+
+/// [`event_body`] for a listener on `device`, under the server's `base_path`.
+pub fn event_body_on(
+    event: &SpeakerEvent,
+    access: &Access,
+    device: Option<DeviceKey>,
+    base_path: &str,
+) -> Option<(&'static str, String)> {
     let data = |value: &dyn erased::Json| value.json();
     Some(match event {
-        SpeakerEvent::Added(speaker) => ("speaker_added", data(&speaker_body(speaker, access))),
-        SpeakerEvent::Updated(speaker) => ("speaker_updated", data(&speaker_body(speaker, access))),
+        SpeakerEvent::Added(speaker) => (
+            "speaker_added",
+            data(&speaker_body_on(speaker, access, device)),
+        ),
+        SpeakerEvent::Updated(speaker) => (
+            "speaker_updated",
+            data(&speaker_body_on(speaker, access, device)),
+        ),
+        SpeakerEvent::Owned { user, event } => {
+            if *user != access.user {
+                return None;
+            }
+            return event_body_on(event, access, device, base_path);
+        }
+        SpeakerEvent::Relay(view) => {
+            if view.user != access.user {
+                return None;
+            }
+            (
+                "relay",
+                data(&super::relay::session_body(view, base_path)),
+            )
+        }
         SpeakerEvent::Removed(id) => (
             "speaker_removed",
             data(&wire::SpeakerRemoved { id: id.to_string() }),
@@ -294,7 +356,8 @@ async fn list(
 ) -> ApiResult<Response> {
     allowed(&state, &principal)?;
     let list = state.assistant.speakers(&principal.access).await;
-    let body = speakers_body(&list, &principal.access);
+    let device = principal.device.as_ref().map(|(key, _)| *key);
+    let body = speakers_body_on(&list, &principal.access, device);
     let newest = list.speakers.iter().map(|s| s.revision).max().unwrap_or(0);
     let etag = format!(
         "W/\"s{:x}-{newest}-{}-{}-{}\"",
@@ -314,9 +377,10 @@ async fn one(
     allowed(&state, &principal)?;
     let id = speaker_id(&id)?;
     let speaker = state.assistant.speaker(&principal.access, &id).await?;
+    let device = principal.device.as_ref().map(|(key, _)| *key);
     Ok(json_with(
         StatusCode::OK,
-        &speaker_body(&speaker, &principal.access),
+        &speaker_body_on(&speaker, &principal.access, device),
     ))
 }
 
@@ -376,6 +440,7 @@ async fn run(
     );
     state.auth.speaker_command(principal, starts)?;
     let access = principal.access.clone();
+    let device = principal.device.as_ref().map(|(key, _)| *key);
     idempotency::once(
         state,
         access.user,
@@ -387,7 +452,7 @@ async fn run(
             let accepted = state.assistant.command(&access, &id, command).await?;
             Ok((
                 StatusCode::ACCEPTED,
-                serde_json::to_value(command_body(&accepted, &access))?,
+                serde_json::to_value(command_body_on(&accepted, &access, device))?,
             ))
         },
     )
@@ -549,7 +614,14 @@ async fn leave_group(
 }
 
 fn play_request(body: &[u8], allow_catalog: bool) -> ApiResult<PlayRequest> {
-    let request: wire::PlayRequest = parse_json(body)?;
+    play_from_wire(parse_json(body)?, allow_catalog)
+}
+
+/// A `play` body, checked.
+pub(crate) fn play_from_wire(
+    request: wire::PlayRequest,
+    allow_catalog: bool,
+) -> ApiResult<PlayRequest> {
     if request.items.is_empty() || request.items.len() > MAX_PLAY_ITEMS {
         return Err(ApiError::bad_field(
             "items",
@@ -641,28 +713,92 @@ async fn transfer(
     headers: HeaderMap,
     body: Bytes,
 ) -> ApiResult<Response> {
-    run(
-        &state,
-        &principal,
-        &headers,
-        &method,
-        &uri,
-        &body,
-        &id,
-        || {
-            let request: wire::Transfer = parse_json(&body)?;
-            if request.to == "this_device" {
-                // The relay is what plays on this device; until it is offered, this is refused.
-                return Err(SpeakerError::Unsupported {
-                    capability: "relay",
-                    speaker: None,
-                }
-                .into());
+    let request: wire::Transfer = parse_json(&body)?;
+    if request.to != "this_device" {
+        if request.tier.is_some() {
+            return Err(ApiError::bad_field(
+                "tier",
+                "tier is only for \"to\": \"this_device\".",
+            ));
+        }
+        return run(
+            &state,
+            &principal,
+            &headers,
+            &method,
+            &uri,
+            &body,
+            &id,
+            || {
+                Ok(SpeakerCommand::Transfer {
+                    to: body_id(&request.to, "to")?,
+                    keep_playing_here: request.keep_playing_here,
+                })
+            },
+        )
+        .await;
+    }
+    to_this_device(&state, &principal, request, &id, (&method, &uri, &headers, &body)).await
+}
+
+/// Moves the queue to the calling device's relay, creating or reusing it (contract 1.7).
+async fn to_this_device(
+    state: &ApiState,
+    principal: &Principal,
+    request: wire::Transfer,
+    id: &str,
+    (method, uri, headers, body): (&Method, &http::Uri, &HeaderMap, &Bytes),
+) -> ApiResult<Response> {
+    allowed(state, principal)?;
+    let id = speaker_id(id)?;
+    let tier = match request.tier.as_deref() {
+        None => RelayTier::Lossless,
+        Some(raw) => RelayTier::parse(raw)
+            .ok_or_else(|| ApiError::bad_field("tier", "tier is lossless or cellular."))?,
+    };
+    let caller = match super::relay::caller(state, principal, tier, None).await {
+        Err(e) if e.status == StatusCode::FORBIDDEN || e.status == StatusCode::NOT_FOUND => {
+            return Err(SpeakerError::Unsupported {
+                capability: "relay",
+                speaker: None,
             }
-            Ok(SpeakerCommand::Transfer {
-                to: body_id(&request.to, "to")?,
-                keep_playing_here: request.keep_playing_here,
-            })
+            .into());
+        }
+        other => other?,
+    };
+    state.auth.speaker_command(principal, true)?;
+    let access = principal.access.clone();
+    let keep_playing_here = request.keep_playing_here;
+    idempotency::once(
+        state,
+        access.user,
+        headers,
+        method,
+        uri.path(),
+        body,
+        || async move {
+            let control = state.assistant.relay().ok_or_else(ApiError::not_found)?;
+            let opened = control.open(&caller, RelayOpen { tier }).await?;
+            let accepted = state
+                .assistant
+                .command(
+                    &access,
+                    &id,
+                    SpeakerCommand::Transfer {
+                        to: opened.session.speaker_id.clone(),
+                        keep_playing_here,
+                    },
+                )
+                .await?;
+            let view = control
+                .session(caller.user, &opened.session.id)
+                .unwrap_or(opened.session);
+            let mut reply = command_body_on(&accepted, &access, Some(caller.device));
+            reply.relay = Some(super::relay::session_body(
+                &view,
+                &state.server.base_path,
+            ));
+            Ok((StatusCode::ACCEPTED, serde_json::to_value(reply)?))
         },
     )
     .await

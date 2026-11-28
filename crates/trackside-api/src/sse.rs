@@ -136,8 +136,15 @@ pub fn visible_event(event: &ServerEvent, filter: &EventFilter) -> Outgoing {
                 platform: platform.clone(),
             }),
         },
-        ServerEvent::Speaker(event) if filter.speakers => {
-            match crate::routes::speakers::event_body(event, access) {
+        ServerEvent::Speaker(event)
+            if filter.speakers || matches!(event, trackside_core::assistant::SpeakerEvent::Relay(_)) =>
+        {
+            match crate::routes::speakers::event_body_on(
+                event,
+                access,
+                filter.device,
+                &filter.base_path,
+            ) {
                 Some((event, data)) => Outgoing::Send { event, data },
                 None => Outgoing::Skip,
             }

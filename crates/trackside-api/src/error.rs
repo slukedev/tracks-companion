@@ -9,6 +9,7 @@ use trackside_auth::{AuthError, LinkError};
 use trackside_core::DbError;
 use trackside_core::assistant::{AssistantError, SpeakerError};
 use trackside_core::control::{AcquireError, ScanControlError};
+use trackside_core::relay::RelayError;
 use trackside_core::sync::SyncError;
 use trackside_media::MediaError;
 
@@ -481,6 +482,37 @@ impl From<SpeakerError> for ApiError {
                 .with_details(details)
             }
             SpeakerError::Invalid { field, message } => Self::bad_field(field, message),
+            SpeakerError::RelayEnded => Self::relay_ended(),
+            other => Self::internal(&other),
+        }
+    }
+}
+
+impl ApiError {
+    /// `409 conflict`, `details.reason = "relay_ended"`.
+    pub fn relay_ended() -> Self {
+        Self::conflict("relay_ended", "The relay session ended.")
+    }
+}
+
+impl From<RelayError> for ApiError {
+    fn from(error: RelayError) -> Self {
+        match error {
+            RelayError::NotFound => Self::not_found(),
+            RelayError::Unsupported(capability) => Self::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "unsupported",
+                "This server can't do that.",
+            )
+            .with_details(serde_json::json!({ "capability": capability })),
+            RelayError::Limit(limit) => Self::new(
+                StatusCode::CONFLICT,
+                "conflict",
+                "Too many listeners right now.",
+            )
+            .with_details(serde_json::json!({ "reason": "relay_limit", "limit": limit })),
+            RelayError::Unavailable => Self::catalog_unavailable(),
+            RelayError::Ended => Self::relay_ended(),
             other => Self::internal(&other),
         }
     }

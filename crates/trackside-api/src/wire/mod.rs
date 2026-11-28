@@ -11,6 +11,7 @@ pub mod enrichment;
 pub mod events;
 pub mod library;
 pub mod playback;
+pub mod relay;
 pub mod social;
 pub mod speakers;
 pub mod sync;

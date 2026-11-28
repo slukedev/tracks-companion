@@ -61,9 +61,10 @@ pub mod build {
     pub use crate::routes::social::{check_listen, listen_result};
     pub use crate::routes::speakers::{
         command_body as speaker_command_body, command_event_body as speaker_command_event_body,
-        event_body as speaker_event_body, queue_body as speaker_queue_body, speaker_body,
-        speakers_body,
+        event_body as speaker_event_body, event_body_on as speaker_event_body_on,
+        queue_body as speaker_queue_body, speaker_body, speaker_body_on, speakers_body,
     };
+    pub use crate::routes::relay::session_body as relay_session_body;
     pub use crate::routes::stats::{
         DayBuckets, day_buckets, listening_body, requests_body, storage_body, streams_body,
     };

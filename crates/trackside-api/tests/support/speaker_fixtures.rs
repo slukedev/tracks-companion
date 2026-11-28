@@ -13,9 +13,10 @@ use trackside_core::assistant::{
     MediaInfo, MusicProvider, NowPlaying, Origin, PlayContext, PlayState, Playback, PlayerProvider,
     ProviderLists, QueueEntry, RegistrationKey, RegistrationState, RegistrationView, Repeat,
     ServerFacts, ServiceUser, SettingSource, Speaker, SpeakerError, SpeakerEvent, SpeakerGroup,
-    SpeakerKind, SpeakerList, SpeakerQueue, SpeakersState,
+    SpeakerKind, SpeakerList, SpeakerQueue, SpeakerRelay, SpeakersState,
 };
-use trackside_core::{Access, ArtworkId, LibraryKey, PublicId, SongId, UserKey};
+use trackside_core::relay::{RelayFormat, RelayState, RelayTier, RelayView};
+use trackside_core::{Access, ArtworkId, DeviceKey, LibraryKey, PublicId, SongId, UserKey};
 
 use super::at;
 
@@ -114,6 +115,7 @@ fn sonos(id: &str, name: &str, model: &str, library: LibraryKey) -> Speaker {
             origin: Origin::Queue,
         }),
         context: Some(album_context()),
+        relay: None,
         revision: 0,
     }
 }
@@ -172,6 +174,7 @@ fn bedroom_playing() -> Speaker {
             id: None,
             name: Some(String::from("Late Night Chill")),
         }),
+        relay: None,
         revision: 980,
     }
 }
@@ -222,6 +225,7 @@ pub fn fixtures(access: &Access, library: LibraryKey) -> Result<Out, serde_json:
         playback: None,
         now_playing: None,
         context: None,
+        relay: None,
         revision: 977,
     };
     let office = Speaker {
@@ -242,6 +246,7 @@ pub fn fixtures(access: &Access, library: LibraryKey) -> Result<Out, serde_json:
         playback: None,
         now_playing: None,
         context: None,
+        relay: None,
         revision: 512,
     };
     let list = SpeakerList {
@@ -407,8 +412,154 @@ pub fn fixtures(access: &Access, library: LibraryKey) -> Result<Out, serde_json:
             "8b2d4f6a0c1e3a5c7e9b1d3f5a7c9e0d",
         )?,
     ));
-    let _ = UserKey(0);
+    out.extend(relay(access)?);
     out.extend(admin()?);
+    Ok(out)
+}
+
+const PHONE: &str = "dchjkb9k3cnapjw0kmhq6";
+const RELAY: &str = "h9zvca9p26dymt4v7cxj5";
+const RELAY_SPEAKER: &str = "o1a0psgqvec0jm734s9tv";
+
+fn relay_view(access: &Access) -> RelayView {
+    RelayView {
+        id: pid(RELAY),
+        user: access.user,
+        device: DeviceKey(7),
+        device_id: pid(PHONE),
+        speaker_id: pid(RELAY_SPEAKER),
+        created_at: at(0),
+        state: RelayState::Playing,
+        ended_reason: None,
+        detail: None,
+        generation: 3,
+        tier: RelayTier::Cellular,
+        latency_ms: 4000,
+        idle_timeout_s: 600,
+        fetch_timeout_s: 30,
+        hls: Some(format!("/relay/{RELAY}/3/master.m3u8")),
+        format: RelayFormat {
+            codec: "aac",
+            container: "mp4",
+            sample_rate: 44_100,
+            channels: 2,
+            bit_depth: None,
+            bitrate_kbps: Some(256),
+        },
+    }
+}
+
+fn lossless() -> RelayFormat {
+    RelayFormat {
+        codec: "flac",
+        container: "mp4",
+        sample_rate: 44_100,
+        channels: 2,
+        bit_depth: Some(16),
+        bitrate_kbps: None,
+    }
+}
+
+/// Contract 6.1: the relay session in its states, as `POST /relay/sessions` and SSE `relay`
+/// send it, and the relay as its owner's speaker.
+fn relay(access: &Access) -> Result<Out, serde_json::Error> {
+    let mut out: Out = Vec::new();
+    let playing = relay_view(access);
+    out.push((
+        "relay-session.json",
+        event(&SpeakerEvent::Relay(Box::new(playing.clone())), access)?,
+    ));
+    let starting = RelayView {
+        state: RelayState::Starting,
+        generation: 0,
+        tier: RelayTier::Lossless,
+        hls: Some(format!("/relay/{RELAY}/1/master.m3u8")),
+        format: lossless(),
+        ..playing.clone()
+    };
+    out.push((
+        "relay-session-starting.json",
+        json(&build::relay_session_body(&starting, ""))?,
+    ));
+    let ended = RelayView {
+        state: RelayState::Ended,
+        ended_reason: Some("idle"),
+        tier: RelayTier::Lossless,
+        hls: None,
+        format: lossless(),
+        ..playing.clone()
+    };
+    out.push((
+        "relay-session-ended.json",
+        event(&SpeakerEvent::Relay(Box::new(ended)), access)?,
+    ));
+    let phone = Speaker {
+        id: pid(RELAY_SPEAKER),
+        name: String::from("Luke's iPhone"),
+        kind: SpeakerKind::Phone,
+        protocol: String::from("relay"),
+        manufacturer: None,
+        model: None,
+        availability: Availability::Available,
+        capabilities: vec![
+            Capability::NextPrevious,
+            Capability::Pause,
+            Capability::Play,
+            Capability::Queue,
+            Capability::Repeat,
+            Capability::Seek,
+            Capability::Shuffle,
+            Capability::Stop,
+            Capability::Transfer,
+        ],
+        powered: None,
+        volume: None,
+        muted: None,
+        group: None,
+        group_volume: None,
+        can_group_with: Vec::new(),
+        playback: Some(Playback {
+            state: PlayState::Playing,
+            position_ms: 12_000,
+            position_at: at(0),
+            shuffle: false,
+            repeat: Repeat::Off,
+        }),
+        now_playing: Some(NowPlaying {
+            media: dont_stop(),
+            item_id: Some(String::from("0b1c2d3e4f5061728394a5b6c7d8e9f0")),
+            origin: Origin::Queue,
+        }),
+        context: None,
+        relay: Some(SpeakerRelay {
+            session: pid(RELAY),
+            user: access.user,
+            device: DeviceKey(7),
+            device_id: pid(PHONE),
+        }),
+        revision: 7,
+    };
+    out.push((
+        "relay-speaker.json",
+        json(&build::speaker_body_on(&phone, access, Some(DeviceKey(7))))?,
+    ));
+    let other = Access {
+        user: UserKey(access.user.0 + 1),
+        ..access.clone()
+    };
+    assert!(
+        build::speaker_event_body(
+            &SpeakerEvent::Owned {
+                user: access.user,
+                event: Box::new(SpeakerEvent::Removed(pid(RELAY_SPEAKER))),
+            },
+            &other,
+        )
+        .is_none()
+    );
+    assert!(
+        build::speaker_event_body(&SpeakerEvent::Relay(Box::new(playing)), &other).is_none()
+    );
     Ok(out)
 }
 

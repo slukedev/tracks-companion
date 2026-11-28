@@ -118,6 +118,9 @@ pub struct Speakers {
 pub struct CommandAccepted {
     pub action: String,
     pub command_id: String,
+    /// A transfer to `this_device`: the relay session the queue moved to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay: Option<super::relay::RelaySession>,
     pub settle_by: Time,
     pub speaker: Speaker,
 }
@@ -188,6 +191,9 @@ pub struct Transfer {
     pub to: String,
     #[serde(default)]
     pub keep_playing_here: bool,
+    /// For a relay that `"to": "this_device"` creates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

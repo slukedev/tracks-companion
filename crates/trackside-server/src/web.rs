@@ -292,12 +292,14 @@ pub const PERMISSIONS_POLICY: &str = "camera=(), microphone=(), geolocation=(), 
 /// A year, for this host only: other names under the same domain may still be plain HTTP.
 pub const HSTS: &str = "max-age=31536000";
 
-/// Paths that send audio: streams, downloads, HLS, instant play, and Subsonic's media.
+/// Paths that send audio: streams, downloads, HLS, instant play, the phone relay's HLS, and
+/// Subsonic's media.
 fn is_media_path(path: &str) -> bool {
     let api_media = path.contains("/api/v1/")
         && (path.ends_with("/stream")
             || path.ends_with("/download")
             || path.contains("/transcodes/")
+            || path.contains("/relay/") && !path.contains("/relay/sessions")
             || path.contains("/acquisitions/") && path.contains("/stream"));
     let subsonic = ["/rest/stream", "/rest/download", "/rest/hls"]
         .iter()

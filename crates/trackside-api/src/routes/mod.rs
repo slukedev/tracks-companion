@@ -14,6 +14,7 @@ pub(crate) mod link;
 pub(crate) mod media;
 pub(crate) mod music_assistant;
 pub(crate) mod public;
+pub(crate) mod relay;
 pub(crate) mod settings;
 pub(crate) mod social;
 pub(crate) mod speakers;
@@ -59,6 +60,7 @@ pub(crate) fn router(state: ApiState) -> Router {
         .merge(cloud::routes())
         .merge(apple_music::routes())
         .merge(speakers::routes())
+        .merge(relay::routes())
         .nest(
             "/admin",
             admin::routes()

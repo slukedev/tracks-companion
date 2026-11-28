@@ -412,7 +412,7 @@ pub(crate) fn catalog_feature(
             && state.assistant.relay_supported();
         crate::wire::auth::CatalogFeature {
             relay,
-            relay_cellular: relay && state.media.capabilities().ffmpeg.is_some(),
+            relay_cellular: relay && state.assistant.relay().is_some_and(|r| r.cellular()),
         }
     })
 }

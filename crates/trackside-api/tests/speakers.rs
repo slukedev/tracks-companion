@@ -144,6 +144,7 @@ async fn start() -> Result<Server, Error> {
             unavailable_after: Duration::from_millis(400),
             command_timeout: Duration::from_secs(3),
             retry: Duration::from_millis(50),
+            relay: trackside_assistant::RelayTuning::default(),
         },
     })
     .await;
