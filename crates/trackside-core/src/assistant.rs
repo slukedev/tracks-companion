@@ -13,9 +13,10 @@ use crate::config::Secret;
 use crate::control::BoxFuture;
 use crate::db::DbError;
 use crate::ids::{
-    ArtworkId, CatalogArtId, KeyId, LibraryKey, ServiceId, SongId, SpeakerCommandId, SpeakerId,
-    UserId, UserKey,
+    ArtworkId, CatalogArtId, DeviceId, DeviceKey, KeyId, LibraryKey, RelaySessionId, ServiceId,
+    SongId, SpeakerCommandId, SpeakerId, UserId, UserKey,
 };
+use crate::relay::{RelayControl, RelayView};
 use crate::time::Millis;
 
 /// The newest Music Assistant schema Trackside was tested with (2.11 beta).
@@ -243,6 +244,15 @@ pub struct NowPlaying {
     pub origin: Origin,
 }
 
+/// The phone relay behind a `kind: phone` speaker. Only its owner sees the speaker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpeakerRelay {
+    pub session: RelaySessionId,
+    pub user: UserKey,
+    pub device: DeviceKey,
+    pub device_id: DeviceId,
+}
+
 /// A speaker (contract 1.1). Shared between every caller; per-caller visibility (a song in a
 /// library the caller does not see) is applied when it is put on the wire.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -266,6 +276,8 @@ pub struct Speaker {
     pub playback: Option<Playback>,
     pub now_playing: Option<NowPlaying>,
     pub context: Option<PlayContext>,
+    /// Relay speakers only.
+    pub relay: Option<SpeakerRelay>,
     pub revision: u64,
 }
 
@@ -439,6 +451,9 @@ pub enum SpeakerError {
     },
     #[error("Music Assistant refused: {0}")]
     Failed(String),
+    /// The relay session behind this speaker ended.
+    #[error("the relay session ended")]
+    RelayEnded,
 }
 
 /// The outcome of a `202` command, as its SSE event says it.
@@ -478,6 +493,13 @@ pub enum SpeakerEvent {
         state: SpeakersState,
         since: Option<Millis>,
     },
+    /// An event about a relay speaker: only for its owner.
+    Owned {
+        user: UserKey,
+        event: Box<SpeakerEvent>,
+    },
+    /// A relay session changed (SSE `relay`): only for its owner.
+    Relay(Box<RelayView>),
 }
 
 /// Where each connection setting comes from.
@@ -748,6 +770,11 @@ pub trait AssistantControl: Send + Sync + 'static {
 
     /// The streaming catalog, once there is one.
     fn catalog(&self) -> Option<&dyn CatalogControl> {
+        None
+    }
+
+    /// The phone playback relay, when Music Assistant support is built in.
+    fn relay(&self) -> Option<&dyn RelayControl> {
         None
     }
 }

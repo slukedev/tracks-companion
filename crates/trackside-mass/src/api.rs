@@ -439,6 +439,18 @@ impl Client {
         self.unit("player_queues/play_media", args.into()).await
     }
 
+    /// Plays (resumes) the queue.
+    pub async fn queue_play(&self, queue_id: &str) -> Result<(), RequestError> {
+        let args = Args::new().set("queue_id", queue_id);
+        self.unit("player_queues/play", args.into()).await
+    }
+
+    /// Pauses the queue.
+    pub async fn queue_pause(&self, queue_id: &str) -> Result<(), RequestError> {
+        let args = Args::new().set("queue_id", queue_id);
+        self.unit("player_queues/pause", args.into()).await
+    }
+
     pub async fn queue_shuffle(&self, queue_id: &str, enabled: bool) -> Result<(), RequestError> {
         let args = Args::new()
             .set("queue_id", queue_id)

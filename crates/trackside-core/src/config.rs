@@ -567,7 +567,8 @@ pub struct EnrichmentConfig {
     pub lastfm_api_key: Option<Secret>,
 }
 
-/// Music Assistant (ADR 0013). Every key is also editable in the dashboard unless set here.
+/// Music Assistant (ADR 0013). Every key but `relay_max_per_user` is also editable in the
+/// dashboard unless set here.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MusicAssistantConfig {
     /// Music Assistant's web address, such as `http://192.168.1.20:8095`.
@@ -585,6 +586,8 @@ pub struct MusicAssistantConfig {
     /// Music provider instance ids not offered as streaming services.
     pub hidden_services: Vec<String>,
     pub relay_max_sessions: u32,
+    /// Phone relays one person may run at once, across their devices. Configuration only.
+    pub relay_max_per_user: u32,
 }
 
 impl Default for MusicAssistantConfig {
@@ -599,6 +602,7 @@ impl Default for MusicAssistantConfig {
             ca_file: None,
             hidden_services: Vec::new(),
             relay_max_sessions: 4,
+            relay_max_per_user: 3,
         }
     }
 }

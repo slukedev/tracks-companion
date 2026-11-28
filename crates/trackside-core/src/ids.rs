@@ -281,6 +281,11 @@ public_id!(
     CatalogArtId,
     'm'
 );
+public_id!(
+    /// A phone playback relay session (random); sessions end when the server stops.
+    RelaySessionId,
+    'h'
+);
 
 impl SongId {
     /// The id a song gets when it is first seen: `BLAKE3("song" ‖ digest)`.

@@ -392,6 +392,11 @@ pub const KEYS: &[KeyInfo] = &[
         "TRACKSIDE_MUSIC_ASSISTANT__RELAY_MAX_SESSIONS",
         Integer,
     ),
+    key(
+        "music_assistant.relay_max_per_user",
+        "TRACKSIDE_MUSIC_ASSISTANT__RELAY_MAX_PER_USER",
+        Integer,
+    ),
 ];
 
 /// A key an earlier version read. It is accepted and ignored with a warning, or its value

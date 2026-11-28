@@ -19,6 +19,7 @@ pub mod memo;
 pub mod now_playing;
 pub mod recommend;
 pub mod records;
+pub mod relay;
 pub mod repo;
 pub mod search;
 pub mod similar;
@@ -38,7 +39,7 @@ pub use events::{Audience, EventBus, ServerEvent};
 pub use ids::{
     AcquisitionId, AlbumId, ArtistId, ArtworkId, AudioDigest, CandidateToken, CatalogArtId,
     DeviceId, DeviceKey, ExternalArtId, FolderId, IdError, ImportId, InviteId, KeyId, LibraryId,
-    LibraryKey, PairingId, PlaylistId, PublicId, ScanRunId, Seq, ServiceId, SongId,
+    LibraryKey, PairingId, PlaylistId, PublicId, RelaySessionId, ScanRunId, Seq, ServiceId, SongId,
     SpeakerCommandId, SpeakerId, UserId, UserKey, random_id,
 };
 pub use records::Page;

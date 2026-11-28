@@ -28,6 +28,7 @@ jiff.workspace = true
 uuid.workspace = true
 blake3.workspace = true
 base64.workspace = true
+bytes.workspace = true
 ipnet.workspace = true
 unicode-normalization.workspace = true
 

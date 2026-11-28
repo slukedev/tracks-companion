@@ -2,6 +2,7 @@
 //! few per server (each is a separate stream pipeline inside Music Assistant).
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -133,6 +134,8 @@ pub struct RelayManager {
     identities: Arc<dyn IdentityStore>,
     control: Arc<dyn PlayerControl>,
     sessions: Mutex<Vec<Arc<RelaySession>>>,
+    max_sessions: AtomicUsize,
+    max_per_user: AtomicUsize,
     /// Creating an identity is load, generate, save: one at a time, so a phone never gets two.
     identity_lock: tokio::sync::Mutex<()>,
     cancel: CancellationToken,
@@ -154,6 +157,8 @@ impl RelayManager {
         cancel: CancellationToken,
     ) -> Self {
         Self {
+            max_sessions: AtomicUsize::new(config.max_sessions),
+            max_per_user: AtomicUsize::new(config.max_per_user),
             config,
             identities,
             control,
@@ -170,6 +175,21 @@ impl RelayManager {
     /// `latency_ms` of the wire: the output delay reported to Music Assistant.
     pub fn latency_ms(&self) -> u32 {
         self.config.timing.output_delay_ms
+    }
+
+    /// Changes the server and per-user limits for sessions opened from now on; running
+    /// sessions keep going.
+    pub fn set_limits(&self, max_sessions: usize, max_per_user: usize) {
+        self.max_sessions.store(max_sessions.max(1), Ordering::Relaxed);
+        self.max_per_user.store(max_per_user.max(1), Ordering::Relaxed);
+    }
+
+    /// The server and per-user limits in force.
+    pub fn limits(&self) -> (usize, usize) {
+        (
+            self.max_sessions.load(Ordering::Relaxed),
+            self.max_per_user.load(Ordering::Relaxed),
+        )
     }
 
     pub fn cellular_available(&self) -> bool {
@@ -231,15 +251,15 @@ impl RelayManager {
                 created: false,
             });
         }
-        if sessions.len() >= self.config.max_sessions {
+        let (max_sessions, max_per_user) = self.limits();
+        if sessions.len() >= max_sessions {
             return Err(RelayError::Limit {
-                limit: self.config.max_sessions,
+                limit: max_sessions,
             });
         }
-        if sessions.iter().filter(|s| s.user() == request.user).count() >= self.config.max_per_user
-        {
+        if sessions.iter().filter(|s| s.user() == request.user).count() >= max_per_user {
             return Err(RelayError::Limit {
-                limit: self.config.max_per_user,
+                limit: max_per_user,
             });
         }
         let mut sendspin_config = sendspin::Config::new(

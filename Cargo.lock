@@ -3803,6 +3803,7 @@ name = "trackside-assistant"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
+ "bytes",
  "http",
  "serde",
  "serde_json",
@@ -3813,6 +3814,8 @@ dependencies = [
  "trackside-auth",
  "trackside-core",
  "trackside-mass",
+ "trackside-relay",
+ "trackside-sendspin",
  "zeroize",
 ]
 
@@ -3869,6 +3872,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "blake3",
+ "bytes",
  "ipnet",
  "jiff 0.2.46",
  "jiff 1.0.3",

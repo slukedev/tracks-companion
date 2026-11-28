@@ -486,7 +486,14 @@ fn answer(shared: &Shared, id: &str, command: &str, args: &Value) -> (Value, Vec
             });
             Value::Null
         }
-        "players/cmd/play" => {
+        "player_queues/pause" => {
+            touch_player(&mut model, &|p| {
+                p.insert("playback_state".into(), json!("paused"));
+                p.insert("state".into(), json!("paused"));
+            });
+            Value::Null
+        }
+        "players/cmd/play" | "player_queues/play" => {
             touch_player(&mut model, &|p| {
                 p.insert("playback_state".into(), json!("playing"));
                 p.insert("state".into(), json!("playing"));
