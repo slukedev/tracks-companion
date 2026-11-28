@@ -4,7 +4,9 @@
 //!
 //! It covers what the integration needs, not all of Music Assistant: players and their
 //! queues, player and queue commands with their visible effect, providers, provider configs
-//! and the `OpenSubsonic` setup flow, and a token with a role.
+//! and the `OpenSubsonic` setup flow, a token with a role, the music catalog (search per
+//! provider, items by URI, album, artist and playlist tracks, library items) with answers
+//! that can be held back, and the `/imageproxy/` images on the same port over plain HTTP.
 
 #![allow(
     clippy::missing_panics_doc,
@@ -53,6 +55,19 @@ pub struct Model {
     pub failures: HashMap<String, (i64, String)>,
     /// New connections are closed at once while false.
     pub reachable: bool,
+    /// `music/search` answers by provider instance id (a `SearchResults` object).
+    pub search: HashMap<String, Value>,
+    /// `music/item_by_uri` answers by URI.
+    pub items: HashMap<String, Value>,
+    /// Listings by `<command>:<provider>/<item_id>`, such as
+    /// `music/albums/album_tracks:tidal--x/1781880`, and library items by
+    /// `music/playlists/library_items:<provider>`.
+    pub listings: HashMap<String, Vec<Value>>,
+    /// Answers held back: by command, or by `music/search:<provider>`.
+    pub delays: HashMap<String, Duration>,
+    /// Bodies served over HTTP by path and query, such as `/imageproxy/<id>?size=0`, with
+    /// their content type.
+    pub images: HashMap<String, (String, Vec<u8>)>,
     next_instance: u32,
 }
 
@@ -73,6 +88,11 @@ impl Default for Model {
             configs: Vec::new(),
             failures: HashMap::new(),
             reachable: true,
+            search: HashMap::new(),
+            items: HashMap::new(),
+            listings: HashMap::new(),
+            delays: HashMap::new(),
+            images: HashMap::new(),
             next_instance: 1,
         }
     }
@@ -146,7 +166,9 @@ impl FakeAssistant {
                     let shared = Arc::clone(&shared);
                     let stop = stop.clone();
                     tokio::spawn(async move {
-                        if let Ok(ws) = tokio_tungstenite::accept_async(stream).await {
+                        if is_image_request(&stream).await {
+                            serve_http(stream, &shared).await;
+                        } else if let Ok(ws) = tokio_tungstenite::accept_async(stream).await {
                             serve(ws, shared, stop).await;
                         }
                     });
@@ -197,6 +219,14 @@ impl FakeAssistant {
     /// Closes every open connection; with `reachable` false, new ones too.
     pub fn disconnect_all(&self) {
         let _ = self.shared.kick.send(());
+    }
+
+    /// The HTTP requests for images, by path and query.
+    pub fn image_requests(&self) -> Vec<String> {
+        self.received_named("GET")
+            .into_iter()
+            .filter_map(|r| r.args.as_str().map(str::to_owned))
+            .collect()
     }
 
     pub fn received(&self) -> Vec<Received> {
@@ -314,10 +344,16 @@ async fn serve(mut ws: Ws, shared: Arc<Shared>, stop: CancellationToken) {
     }
     let mut kick = shared.kick.subscribe();
     let mut events = shared.events.subscribe();
+    let (late, mut late_answers) = tokio::sync::mpsc::unbounded_channel::<String>();
     let mut authed = false;
     loop {
         tokio::select! {
             () = stop.cancelled() => return,
+            Some(text) = late_answers.recv() => {
+                if ws.send(Message::text(text)).await.is_err() {
+                    return;
+                }
+            }
             _ = kick.recv() => {
                 let _ = ws.close(None).await;
                 return;
@@ -338,6 +374,7 @@ async fn serve(mut ws: Ws, shared: Arc<Shared>, stop: CancellationToken) {
                 let id = value["message_id"].as_str().unwrap_or_default().to_owned();
                 let command = value["command"].as_str().unwrap_or_default().to_owned();
                 let args = value.get("args").cloned().unwrap_or(Value::Null);
+                let delay = if authed { delay_of(&shared, &command, &args) } else { None };
                 let (answer, follow) = if command == "auth" {
                     let (answer, ok) = auth(&shared, &id, &args);
                     authed = ok;
@@ -353,7 +390,14 @@ async fn serve(mut ws: Ws, shared: Arc<Shared>, stop: CancellationToken) {
                     shared.arrived.notify_waiters();
                     answer(&shared, &id, &command, &args)
                 };
-                if ws.send(Message::text(answer.to_string())).await.is_err() {
+                if let Some(delay) = delay {
+                    let late = late.clone();
+                    let text = answer.to_string();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(delay).await;
+                        let _ = late.send(text);
+                    });
+                } else if ws.send(Message::text(answer.to_string())).await.is_err() {
                     return;
                 }
                 for event in follow {
@@ -362,6 +406,146 @@ async fn serve(mut ws: Ws, shared: Arc<Shared>, stop: CancellationToken) {
             }
         }
     }
+}
+
+fn delay_of(shared: &Shared, command: &str, args: &Value) -> Option<Duration> {
+    let model = shared.model();
+    if command == "music/search"
+        && let Some(provider) = searched_provider(args)
+        && let Some(delay) = model.delays.get(&format!("music/search:{provider}"))
+    {
+        return Some(*delay);
+    }
+    model.delays.get(command).copied()
+}
+
+/// The provider a search names besides `library`.
+fn searched_provider(args: &Value) -> Option<String> {
+    args["providers"]
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str)
+        .find(|p| *p != "library")
+        .map(str::to_owned)
+}
+
+/// Whether a new connection starts with `GET /imageproxy/`, without reading from it.
+async fn is_image_request(stream: &tokio::net::TcpStream) -> bool {
+    const START: &[u8] = b"GET /imageproxy/";
+    let mut head = [0u8; 16];
+    for _ in 0..100 {
+        let Ok(seen) = stream.peek(&mut head).await else {
+            return false;
+        };
+        if seen == 0 || !START.starts_with(&head[..seen.min(START.len())]) {
+            return false;
+        }
+        if seen >= START.len() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    false
+}
+
+/// Answers one plain HTTP `GET` for an image, then closes.
+async fn serve_http(mut stream: tokio::net::TcpStream, shared: &Shared) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut request = Vec::new();
+    let mut buffer = [0u8; 1024];
+    while !request.windows(4).any(|w| w == b"\r\n\r\n") && request.len() < 16 * 1024 {
+        match stream.read(&mut buffer).await {
+            Ok(0) | Err(_) => return,
+            Ok(n) => request.extend_from_slice(&buffer[..n]),
+        }
+    }
+    let text = String::from_utf8_lossy(&request);
+    let target = text
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or_default()
+        .to_owned();
+    shared
+        .received
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(Received {
+            command: String::from("GET"),
+            args: Value::String(target.clone()),
+        });
+    shared.arrived.notify_waiters();
+    let (delay, found) = {
+        let model = shared.model();
+        (
+            model.delays.get("GET").copied(),
+            model.images.get(&target).cloned(),
+        )
+    };
+    if let Some(delay) = delay {
+        tokio::time::sleep(delay).await;
+    }
+    let head = match &found {
+        Some((kind, body)) => format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: {kind}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            body.len()
+        ),
+        None => {
+            String::from("HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+        }
+    };
+    let _ = stream.write_all(head.as_bytes()).await;
+    if let Some((_, body)) = found {
+        let _ = stream.write_all(&body).await;
+    }
+    let _ = stream.shutdown().await;
+}
+
+fn listing(model: &Model, command: &str, args: &Value) -> Value {
+    let key = match args["provider"].as_str() {
+        Some(provider) if command.ends_with("/library_items") => format!("{command}:{provider}"),
+        _ => format!(
+            "{command}:{}/{}",
+            args["provider_instance_id_or_domain"]
+                .as_str()
+                .unwrap_or_default(),
+            args["item_id"].as_str().unwrap_or_default()
+        ),
+    };
+    let all = model.listings.get(&key).cloned().unwrap_or_default();
+    let offset = args["offset"].as_u64().unwrap_or(0) as usize;
+    let limit = args["limit"].as_u64().map_or(usize::MAX, |l| l as usize);
+    Value::Array(all.into_iter().skip(offset).take(limit).collect())
+}
+
+fn search(model: &Model, args: &Value) -> Value {
+    let Some(provider) = searched_provider(args) else {
+        return json!({});
+    };
+    let limit = args["limit"].as_u64().unwrap_or(25) as usize;
+    let wanted: Option<Vec<String>> = args["media_types"].as_array().map(|types| {
+        types
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|t| match t {
+                "radio" => String::from("radio"),
+                other => format!("{other}s"),
+            })
+            .collect()
+    });
+    let mut out = Map::new();
+    if let Some(Value::Object(found)) = model.search.get(&provider) {
+        for (section, items) in found {
+            if wanted.as_ref().is_some_and(|w| !w.contains(section)) {
+                continue;
+            }
+            let items = items
+                .as_array()
+                .map(|i| i.iter().take(limit).cloned().collect())
+                .unwrap_or_default();
+            out.insert(section.clone(), Value::Array(items));
+        }
+    }
+    Value::Object(out)
 }
 
 fn error(id: &str, code: i64, details: &str) -> Value {
@@ -442,6 +626,23 @@ fn answer(shared: &Shared, id: &str, command: &str, args: &Value) -> (Value, Vec
                     .unwrap_or_default(),
             )
         }
+        "music/search" => search(&model, args),
+        "music/item_by_uri" => {
+            let uri = args["uri"].as_str().unwrap_or_default();
+            match model.items.get(uri) {
+                Some(item) => item.clone(),
+                None => return (error(id, 2, "Item not found"), Vec::new()),
+            }
+        }
+        "music/albums/album_tracks"
+        | "music/artists/artist_tracks"
+        | "music/artists/artist_albums"
+        | "music/playlists/playlist_tracks"
+        | "music/tracks/library_items"
+        | "music/albums/library_items"
+        | "music/artists/library_items"
+        | "music/playlists/library_items"
+        | "music/radios/library_items" => listing(&model, command, args),
         "providers" => {
             let kind = args["provider_type"].as_str();
             Value::Array(
