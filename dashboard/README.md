@@ -1,8 +1,8 @@
 # Trackside dashboard
 
 The admin pages for Trackside: setup, people (with their devices, app keys and web sessions) and
-invites, libraries and scans, backups, settings, activity, your own account, and (when the server
-has it) song requests.
+invites, libraries and scans, speakers through Music Assistant, backups, settings, activity, your
+own account, and (when the server has it) song requests.
 
 Plain HTML, CSS and JavaScript modules. No build step, no dependencies, no external URLs. The
 server embeds this folder and serves it from `/` (ADR 0007).
@@ -105,7 +105,13 @@ Variants: `?preview=member` (Mum's view: her own devices, no admin pages), `noac
 `ratelimit` (sign-in answers 429 with Retry-After),
 `fresh` (new server: empty lists and the Get started steps), `signedout` (sign-in page),
 `setup` (open `setup.html?preview=setup`), `slow` (1.5 s per call, to see loading states),
-`error` (the overview fails). Invite and reset: `invite.html?preview`, `reset.html?preview`;
+`error` (the overview fails).
+Speakers: `ma-connecting`, `ma-auth-failed`, `ma-incompatible`, `ma-unreachable`, `ma-setup-required`,
+`ma-disabled`, `ma-config` (address and token from the config file, a private CA, a loopback
+address and a Music Assistant newer than tested), and for Trackside's registration in it
+`needsadmin`, `reg-registering`, `reg-failed`, `reg-stale`, `reg-not-registered`; `fresh` shows
+the setup form. Connecting and registering finish by themselves after a moment, a test or token
+`wrong` is refused, and a test of an address containing `nowhere` cannot connect. Invite and reset: `invite.html?preview`, `reset.html?preview`;
 `invite.html` and `reset.html` link their assets with `../`, so a static server needs
 `/dashboard/invite/<token>` and `/dashboard/reset/<token>` rewritten to those files.
 
@@ -122,7 +128,8 @@ across files.
 
 1. an admin endpoint in api.md section 16 is not called by any page,
 2. a page calls a GET route that has no preview fixture,
-3. any `.html`, `.js` or `.css` file contains `http`,
+3. any `.html`, `.js` or `.css` file contains `http` (apart from two plain links, the example
+   Music Assistant address and the pattern that checks an address has a scheme),
 4. a page has an inline script, style or event handler, or a module uses `innerHTML` and the like,
 5. yt-dlp appears anywhere but `pages/acquisition.js`,
 6. a module uses browser storage, cookies, `window.open`, `javascript:` URLs, or the network
@@ -140,6 +147,7 @@ across files.
 | `#/invites`, `#/invites/new` | Invites waiting and earlier ones; create one |
 | `#/libraries`, `#/libraries/<id>`, `#/libraries/add` | Folders, where new songs go, recent uploads (filter and paging), duplicates; one library's scans, problems and settings |
 | `#/requests`, `#/requests/<filter>`, `#/requests/setup` | Requests in progress, failed, finished or all; Source and limits on its own tab, with the limits for songs played without keeping them |
+| `#/speakers`, `#/speakers/token`, `#/speakers/connection`, `#/speakers/registration` | Music Assistant: its state with one next step, its speakers and streaming services (each linking into Music Assistant, services switchable out of Tracks), Trackside's own source in it, and the connection (address, write-only token, private CA, the address it uses for Trackside, Test connection). The suffixes focus the token or address, or scroll to the registration, for the overview's fixes. `#/music-assistant` lands here. Its service account shows under People with libraries only |
 | `#/backups`, `#/settings`, `#/activity`, `#/account` | Backups; settings, with the addresses for Tracks first; the audit log; your own account |
 | `#/link`, `#/link/<code>` | Connect a TV: type the TV's 8-character code (or arrive with it from the TV's `/link?code=` address, which the server serves as this page), check the TV's name, kind and whether it asked from your network, then Approve or Deny. Reached from Connect a TV beside Your devices on My account. Expired, used, locked and wrong codes each say what to do next |
 
@@ -228,6 +236,10 @@ one pass.
       A pasted text that is not a key says so under the field.
 - [ ] People: change a member's libraries; make a reset link and use it; try to delete the last
       admin and read the refusal. Old `#/users` and `#/devices` links land on People.
+- [ ] Speakers: on a fresh server, Test connection with a wrong token, then connect with a good
+      one; the page shows Connecting and then the speakers and services. Switch a service off and
+      on. Register again, Remove (confirm), Add library. Replace the token (asks for the password
+      again). Disconnect. A Music Assistant address and token in the config file show locked.
 - [ ] Requests: on Source and limits enable the source and run Test search; on Requests view a
       failed request's details and Try again.
 - [ ] With acquisition unavailable, Requests is not in the sidebar and `#/requests` goes to the

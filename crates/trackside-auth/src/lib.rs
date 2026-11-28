@@ -678,6 +678,9 @@ pub struct Auth {
     speaker_plays: limit::RequestLimiter<UserKey>,
     assistant_tests: limit::RequestLimiter<UserKey>,
     relay_changes: limit::RequestLimiter<UserKey>,
+    catalog_searches: limit::RequestLimiter<UserKey>,
+    catalog_reads: limit::RequestLimiter<UserKey>,
+    catalog_art: limit::RequestLimiter<UserKey>,
     cache: Arc<cache::CredentialCache>,
     /// Media epochs of devices seen authenticating, so a media token can be minted without
     /// a database read. The epoch is checked against the database when the token is used.
@@ -716,6 +719,13 @@ pub const SPEAKER_PLAYS_PER_MINUTE: u32 = 30;
 pub const ASSISTANT_TESTS_PER_MINUTE: u32 = 6;
 /// Relay sessions a user may open or change a minute, together.
 pub const RELAY_CHANGES_PER_MINUTE: u32 = 10;
+
+/// Streaming-catalog searches a user may run a minute (contract 5.4).
+pub const CATALOG_SEARCHES_PER_MINUTE: u32 = 30;
+/// Catalog item and saved-library reads a user may make a minute.
+pub const CATALOG_READS_PER_MINUTE: u32 = 120;
+/// Catalog images a user may make Trackside fetch a minute (cache misses only).
+pub const CATALOG_ART_FETCHES_PER_MINUTE: u32 = 120;
 
 /// Wrong pairing-request codes a signed-in user may enter in 10 minutes.
 const APPROVAL_ATTEMPTS: u32 = 5;
@@ -803,6 +813,21 @@ impl Auth {
             relay_changes: limit::RequestLimiter::per_minute(
                 RELAY_CHANGES_PER_MINUTE,
                 RELAY_CHANGES_PER_MINUTE,
+                Arc::clone(&clock),
+            ),
+            catalog_searches: limit::RequestLimiter::per_minute(
+                CATALOG_SEARCHES_PER_MINUTE,
+                CATALOG_SEARCHES_PER_MINUTE,
+                Arc::clone(&clock),
+            ),
+            catalog_reads: limit::RequestLimiter::per_minute(
+                CATALOG_READS_PER_MINUTE,
+                CATALOG_READS_PER_MINUTE,
+                Arc::clone(&clock),
+            ),
+            catalog_art: limit::RequestLimiter::per_minute(
+                CATALOG_ART_FETCHES_PER_MINUTE,
+                CATALOG_ART_FETCHES_PER_MINUTE,
                 Arc::clone(&clock),
             ),
             cache,
@@ -1046,6 +1071,27 @@ impl Auth {
     /// Counts one relay session opened or changed (`POST` and `PATCH /relay/sessions`).
     pub fn relay_change(&self, principal: &Principal) -> Result<(), AuthError> {
         self.relay_changes
+            .check(&principal.access.user, &self.clock)
+            .map_err(AuthError::rate_limited)
+    }
+
+    /// Counts one catalog search, standalone or inside `/search`.
+    pub fn catalog_search(&self, principal: &Principal) -> Result<(), AuthError> {
+        self.catalog_searches
+            .check(&principal.access.user, &self.clock)
+            .map_err(AuthError::rate_limited)
+    }
+
+    /// Counts one catalog item or saved-library read.
+    pub fn catalog_read(&self, principal: &Principal) -> Result<(), AuthError> {
+        self.catalog_reads
+            .check(&principal.access.user, &self.clock)
+            .map_err(AuthError::rate_limited)
+    }
+
+    /// Counts one catalog image the cache does not hold.
+    pub fn catalog_art_fetch(&self, principal: &Principal) -> Result<(), AuthError> {
+        self.catalog_art
             .check(&principal.access.user, &self.clock)
             .map_err(AuthError::rate_limited)
     }

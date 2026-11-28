@@ -19,7 +19,7 @@ export function accessForm(value, libraries, { acquisition }) {
   const adminNote = h('p.hint', 'Admins see every library and can change everything here.');
 
   const permissions = PERMISSIONS.filter(([key]) => key !== 'can_request' || acquisition)
-    .map(([key, label, sub]) => [key, checkbox(label, Boolean(value.permissions?.[key]), { sub })]);
+    .map(([key, label, sub, on]) => [key, checkbox(label, Boolean(value.permissions?.[key] ?? on), { sub })]);
   const bitrate = select(BITRATES, value.permissions?.max_bitrate_kbps ?? '');
   const permissionGroup = h('fieldset.field.plain-fieldset',
     h('legend.label', 'They can'),

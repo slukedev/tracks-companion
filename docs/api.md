@@ -33,6 +33,8 @@ Contents:
 17. Subsonic and OpenSubsonic coverage
 18. Versioning and deprecation
 19. Trackside Cloud
+20. Speakers
+21. Streaming catalog
 
 ---
 
@@ -1050,7 +1052,16 @@ are shortened here; the server sends the full shapes of section 4.
 A cursor pages a single type: pass `types=song` with the cursor from `songs.next_cursor`; a
 cursor with more than one library type is `400 bad_request` (`details.field = "types"`).
 
-Library results never include anything the server does not have. With `types=external`, and
+Library results never include anything the server does not have. With `types=catalog`, and
+only when `/me` has `features.catalog`, the response adds a separate `catalog` section with the
+shape of `GET /catalog/search` (section 21.3; fixture `search-with-catalog.json`), whose kinds
+`catalog_types=` narrows (default track, album, artist and playlist). It is left out otherwise,
+never an error. Library sections never hold catalog items and the server never interleaves the
+two: a catalog track that matches a song the caller can see names it in `song_id`, and the
+client shows the owned copy. `types=catalog` alone asks for no library section. A cursor
+request with `catalog` is `400 bad_request`, `details.field = "types"`.
+
+With `types=external`, and
 only when `/me` has `features.acquisition` and the credential has the `request` scope, the
 response adds a separate `external` section: `{"search_id", "complete", "candidates":
 [Candidate]}`, the same as `POST /acquisitions/search` (section 15.2), waiting up to 8 s. It is
@@ -1230,6 +1241,9 @@ way, with the same media token, sizes and headers, to users who may request (as 
 from Last.fm's image hosts, checked it and keeps it in its artwork cache; a cover the cache has
 since dropped is `404` until it is fetched again, which the next suggestion showing it starts.
 
+A streaming-catalog image (`m...`, section 21.6) is served the same way to users with
+`features.catalog` (Music Assistant set up, `can_play_services`).
+
 ### `GET /api/v1/songs/{id}/lyrics` (scope: library)
 
 ```json
@@ -1346,6 +1360,7 @@ caller can see, in sync as well.
 | `speaker_queue` | `{"id", "revision"}` | the speaker's queue items changed |
 | `speaker_command` | `{"command_id", "speaker_id", "outcome", "error"?}` | the outcome of the caller's own `202` command |
 | `speakers` | `{"state", "since"?}` | the speakers list state changed (`ok`, `connecting`, `unavailable`) |
+| `catalog_services` | `{"state"}` | the streaming services, their sign-in states or Music Assistant's reachability changed; read `GET /catalog/services` again (section 21; fixture `catalog-services-event.json`) |
 | `device_linked` | `{"id", "name", "platform"}` | a TV the caller approved with a code (section 6, Linking a TV) collected its key; it is now in `GET /me/devices` |
 | `cloud` | `{"entity": "plays"}` | the caller's Trackside Cloud data for `entity` (or `devices`) changed; pull it (section 19). Never carries the data |
 
@@ -2541,3 +2556,163 @@ Music Assistant is away: `speakers` `connecting` at once, `unavailable` after 30
 `speakers-event.json`); pending commands fail with `speakers_unavailable`; on return `speakers`
 `ok` and a `speaker_added` for every speaker. Fixtures: `speaker-removed-event.json`,
 `speaker-progress-event.json`, `speaker-queue-event.json`.
+
+---
+
+## 21. Streaming catalog
+
+The streaming services connected in Music Assistant (Spotify, Tidal, Qobuz, Deezer,
+SoundCloud, Apple Music on Android and others): browsed, searched and played through
+Trackside. Apps never reach Music Assistant or a service; every call and every image goes
+through these routes. They answer only callers whose `/me` has `features.catalog` (Music
+Assistant set up and enabled, the user's `can_play_services`, a credential with `library`);
+`404` otherwise. Service names such as "Spotify" are data on the wire.
+
+**Nothing from a streaming service is written to disk**, except artwork thumbnails, which the
+artwork cache keeps decoded and re-encoded as JPEG (21.6). No audio is downloaded, recorded,
+cached or exported; items play on speakers inside Music Assistant (section 20) or on a phone
+through the relay. Search results, playlist track lists and the image addresses `m` ids come
+from live in memory only.
+
+### 21.1 Objects
+
+Every enum and capability list is open; show a control only when its capability is listed.
+
+**CatalogService** (fixture `catalog-services.json`): `{"account": {"state", "detail"?},
+"capabilities"?, "id", "logo_key", "name", "quality"?}`.
+
+- `id`: a `b` id, `BLAKE3("service" ‖ ma_server_id ‖ provider_instance_id)`, stable while Music
+  Assistant keeps the instance. `name`: the instance's name in Music Assistant. `logo_key`:
+  Music Assistant's provider domain (`spotify`, `tidal`, `qobuz`, `deezer`, `soundcloud`,
+  `apple_music`, ...), for the app's own glyph; Trackside serves no logos.
+- `capabilities` (sorted): `library` (21.5 works), `playlists`, `radio`, `search`, `similar`,
+  `top_tracks`, from the provider's features in Music Assistant.
+- `account.state`: `ok`, `signed_out` (sign in again in Music Assistant), `error`,
+  `unavailable`; `detail` is English for logs. Sign-in states come from Music Assistant's
+  provider configs, which only an admin token may read; with another token a service is `ok`
+  while it is available and `unavailable` otherwise.
+- `quality`: the best the service delivers through Music Assistant (`lossless`, `high`,
+  `standard`), absent when unknown.
+- Listed: Music Assistant's music providers that are streaming providers, except any the admin
+  hid (`hidden_services`), Trackside's own OpenSubsonic registration, and file or server
+  sources (filesystem, Subsonic, OpenSubsonic, Jellyfin, Plex) whatever they declare.
+
+**CatalogTrack**: `{"kind": "track", "ref", "service_id", "title", "artist"?, "artists"?:
+[{"name", "ref"?}], "album"?, "album_ref"?, "artwork_id"?, "duration_ms"?, "explicit"?,
+"isrc"?, "track_number"?, "disc_number"?, "quality"?, "song_key"?, "song_id"?,
+"playable"?}`. `song_key` is `tracks_model::song_key(title, artist)`. `song_id` names a library
+song the caller can see with the same `song_key`, so the app can prefer the owned copy and
+avoid listing it twice. `explicit` is `explicit` or `clean`. `quality` from the format Music
+Assistant reports for the item. `playable: false` only when Music Assistant says the item
+cannot play.
+
+**CatalogAlbum**: `{"kind": "album", "ref", "service_id", "name", "artist"?, "artists"?,
+"year"?, "artwork_id"?, "track_count"?, "album_key"?}`. **CatalogArtist**: `{"kind": "artist",
+"ref", "service_id", "name", "identity"?, "artwork_id"?}`. **CatalogPlaylist**: `{"kind":
+"playlist", "ref", "service_id", "name", "owner"?, "track_count"?, "artwork_id"?,
+"editable"?}`. **CatalogRadio**: `{"kind": "radio", "ref", "service_id", "name",
+"artwork_id"?}`. `album_key` and `identity` are computed as for library albums and artists
+(section 4).
+
+**Refs** name a catalog item: `mc1.` and base64url (no padding) of `media_type 0x1F
+provider_domain 0x1F item_id [0x1F instance_id]`. Clients treat them as opaque and
+case-sensitive (at most 1024 characters, URL path safe) and may keep them. A ref resolves to
+the instance it names while that is a listed, available service, else to any listed, available
+service of its domain, else `409 conflict` with `details.reason = "service_signed_out"`
+(`details.service_id` when known). Speakers resolve refs the same way. A ref that does not
+decode is `400`, `details.field = "ref"`.
+
+### 21.2 `GET /api/v1/catalog/services` (scope: library)
+
+`{"services": [CatalogService], "state", "since"?}`. `state` as speakers (20.2): `ok`,
+`connecting`, `unavailable` with `since` (then `services` is empty). Never `503`. SSE
+`catalog_services` `{"state"}` says the list, a sign-in state or the connection changed.
+
+### 21.3 `GET /api/v1/catalog/search?q&types&services&limit` (scope: library)
+
+- `types`: any of `track`, `album`, `artist`, `playlist`, `radio` (plurals accepted), default
+  the first four. `services`: `b` ids, default every listed service with `search` and
+  `account.state: ok`; unknown ids are ignored, a signed-out one is reported as `signed_out`.
+  `limit` per kind and service, default 20, at most 50. `q` at most 200 characters; an empty
+  `q` answers empty sections. No cursor: Music Assistant's searches are one-shot.
+- Each service is asked on its own (with its saved items in Music Assistant's library), at most
+  8 Music Assistant requests at once server-wide. The answer waits up to 5 s for the slowest:
+  a service that has not answered is listed `timed_out` and `complete` is `false`; the others'
+  results are returned. `services[].state`: `ok`, `timed_out`, `failed`, `signed_out`.
+- Sections not asked for are left out. Each is in Music Assistant's relevance order with the
+  services interleaved, the best of each first, in the order the services were asked; a ref
+  appears once. The radio section is `radio`.
+- Answers are kept in memory per user and query for a minute (10 s when a service timed out),
+  at most 256 searches and 20,000 items in all. A client that disconnects cancels its search.
+
+Fixture `catalog-search.json`:
+
+```json
+{"albums": {"items": [CatalogAlbum]}, "artists": {"items": [CatalogArtist]}, "complete": false,
+ "playlists": {"items": [CatalogPlaylist]},
+ "services": [{"id": "bqtyy4kcexcsg6wa0y4w5", "state": "ok"},
+              {"id": "bnr6z9ds6zzv5xjpv0j1s", "state": "timed_out"}],
+ "tracks": {"items": [CatalogTrack]}}
+```
+
+Inside `GET /search` (section 9) the same shape is the `catalog` section; while Music
+Assistant is not `ok` it is `{"complete": true, "services": [], "state": "unavailable"}` (or
+`connecting`) and the library sections answer as usual. Fixture `search-with-catalog.json` is
+`GET /search?q=halo&types=song,catalog&catalog_types=track`.
+
+`503 catalog_unavailable` (`Retry-After: 10`) while Music Assistant is unreachable.
+
+### 21.4 `GET /api/v1/catalog/items/{ref}?cursor&limit` (scope: library)
+
+| Kind | Response | Fixture |
+|---|---|---|
+| track | `{"track": CatalogTrack}` | |
+| album | `{"album": CatalogAlbum, "tracks": [CatalogTrack]}`, in disc and track order | `catalog-album.json` |
+| artist | `{"artist": CatalogArtist, "top_tracks": [CatalogTrack], "albums": [CatalogAlbum]}`, at most 20 top tracks and 100 albums | `catalog-artist.json` |
+| playlist | `{"playlist": CatalogPlaylist, "tracks": [CatalogTrack], "next_cursor"?}`; `limit` 1 to 500, default 100 | `catalog-playlist.json` |
+| radio | `{"radio": CatalogRadio}` | |
+
+A playlist's tracks are read from Music Assistant once and kept in memory for 5 minutes while
+the client pages through them (at most 32 lists and 50,000 tracks in all). `404` for an item
+the service no longer has; `409 conflict` `service_signed_out`; `400` with `details.field`
+`ref` or `cursor`.
+
+### 21.5 `GET /api/v1/catalog/services/{id}/library?kind&cursor&limit` (scope: library)
+
+The service's saved items from Music Assistant's synced copy, newest added first. `kind`:
+`track`, `album`, `artist`, `playlist` (default). `limit` 1 to 500, default 100. Needs the
+service's `library` capability (`422 unsupported`, `details.capability: "library"`
+otherwise); `404` for an unknown service. `{"items": [CatalogTrack | CatalogAlbum |
+CatalogArtist | CatalogPlaylist], "next_cursor"?, "synced_at"?}` (fixture
+`catalog-library.json`); `synced_at` is left out while Music Assistant does not report its
+last sync.
+
+### 21.6 Artwork
+
+- Every catalog image is an `m` id in `artwork_id`: `BLAKE3("catalog-art" ‖ address)`, where
+  the address is the one Music Assistant gave for the item (its image proxy, or the image's
+  own public URL). It is served by `GET /api/v1/art/{m id}?size&mt` (section 11) with the same
+  sizes, media token and headers as library artwork.
+- The server fetches only addresses Music Assistant gave for an item it listed, never one from
+  a client: Music Assistant's own address (which may be on the local network), or an `https`
+  address whose host resolves only to public addresses (no loopback, private, link-local,
+  shared, unique-local, multicast or documentation addresses, checked when the name resolves
+  and connected to as checked). No redirects, no proxies, no user names in addresses, 5 s, at
+  most 10 MiB, at most 4 fetches at once server-wide, 120 cache misses a minute per user.
+- The bytes must be a JPEG, PNG, WebP or GIF by their magic bytes (never SVG) with sides of at
+  least 16 pixels. They are decoded and kept re-encoded as JPEG of at most 1200 pixels in the
+  artwork cache, which counts them toward its size limit and evicts the least recently used.
+  Anything else is `404`.
+- An `m` id is served while the cache holds the image, and fetched again while Trackside knows
+  its address (the addresses seen recently, in memory); re-reading any listing that shows it
+  brings it back. Otherwise `404`.
+
+### 21.7 Playing, permissions and limits
+
+- On a speaker: `POST /speakers/{id}/play` with `ref` items (20.3). On this device: through
+  the relay. There is no direct audio URL for a catalog item.
+- Rate limits per user: 30 searches a minute (`/catalog/search` and `/search` with `catalog`
+  together), 120 item and saved-library reads a minute, 120 artwork cache misses a minute;
+  `429 rate_limited` with `Retry-After`.
+- Errors: `404` without `features.catalog`; `409 conflict` (`service_signed_out`); `422
+  unsupported`; `503 catalog_unavailable`.

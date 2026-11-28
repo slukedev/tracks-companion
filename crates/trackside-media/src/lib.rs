@@ -825,6 +825,31 @@ impl Media {
         self.artwork.respond_external(id, size, request).await
     }
 
+    /// A streaming-catalog image held in the cache, at a snapped size or as kept.
+    /// [`MediaError::NotFound`] when it is not (or no longer) held.
+    pub async fn catalog_artwork(
+        &self,
+        id: &trackside_core::CatalogArtId,
+        size: Option<u32>,
+        request: &Parts,
+    ) -> Result<Response<Body>, MediaError> {
+        self.artwork.respond_catalog(id, size, request).await
+    }
+
+    /// Checks, re-encodes and keeps a streaming-catalog image (see
+    /// [`ArtworkStore::put_catalog`]), off the async runtime.
+    pub async fn store_catalog_artwork(
+        &self,
+        id: &trackside_core::CatalogArtId,
+        bytes: Vec<u8>,
+    ) -> Result<(), MediaError> {
+        let store = self.artwork.clone();
+        let id = id.clone();
+        tokio::task::spawn_blocking(move || store.put_catalog(&id, &bytes))
+            .await
+            .map_err(|e| MediaError::Process(format!("catalog art task: {e}")))?
+    }
+
     /// Puts a lost original back into the cache from the file the database says it came
     /// from. True when it is back.
     async fn restore_artwork(&self, id: &ArtworkId) -> bool {

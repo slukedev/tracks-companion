@@ -7,6 +7,7 @@
 
 pub mod access;
 pub mod assistant;
+pub mod catalog;
 pub mod catalog_ref;
 pub mod config;
 pub mod control;

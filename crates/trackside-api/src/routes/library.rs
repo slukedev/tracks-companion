@@ -772,6 +772,29 @@ struct SearchParams {
     limit: Option<u32>,
     cursor: Option<String>,
     library_id: Option<String>,
+    /// Narrows the `catalog` section's kinds.
+    catalog_types: Option<String>,
+}
+
+/// `types` without `catalog`, and whether `catalog` was named. Naming only `catalog` asks
+/// for no library section.
+pub(crate) fn split_catalog(types: Option<&str>) -> (Option<String>, bool, bool) {
+    let Some(types) = types else {
+        return (None, false, false);
+    };
+    let mut catalog = false;
+    let rest: Vec<&str> = types
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .filter(|t| {
+            let is = *t == "catalog";
+            catalog |= is;
+            !is
+        })
+        .collect();
+    let only_catalog = catalog && rest.is_empty();
+    (Some(rest.join(",")), catalog, only_catalog)
 }
 
 /// Which sections `types` asks for. `external` is never on by default.
@@ -797,16 +820,74 @@ pub(crate) fn search_kinds(types: Option<&str>) -> ApiResult<(SearchKinds, bool)
     Ok((kinds, external))
 }
 
+/// The `catalog` section of `/search` (contract 2.3): only for callers with
+/// `features.catalog`, left out otherwise; with `state` while Music Assistant is not `ok`.
+async fn catalog_section(
+    state: &ApiState,
+    principal: &trackside_auth::Principal,
+    query: Option<trackside_core::catalog::CatalogSearch>,
+) -> ApiResult<Option<crate::wire::catalog::CatalogSearch>> {
+    let Some(query) = query else {
+        return Ok(None);
+    };
+    let Some(catalog) = super::catalog::catalog_for(state, principal) else {
+        return Ok(None);
+    };
+    let services = catalog.services(&principal.access).await;
+    if services.state != trackside_core::assistant::SpeakersState::Ok {
+        return Ok(Some(super::catalog::search_state_body(services.state)));
+    }
+    match super::catalog::run_search(state, principal, catalog, query).await {
+        Ok(body) => Ok(Some(body)),
+        Err(e) if e.code == "catalog_unavailable" => Ok(Some(super::catalog::search_state_body(
+            trackside_core::assistant::SpeakersState::Unavailable,
+        ))),
+        Err(e) => Err(e),
+    }
+}
+
 /// How long the library search waits for not-yet-owned results when they are asked for.
 const EXTERNAL_WAIT: Duration = Duration::from_secs(8);
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the library, external and catalog sections, read in one place"
+)]
 async fn search_library(
     Authed(principal): Authed<LIBRARY>,
     State(state): State<ApiState>,
     Query(params): Query<SearchParams>,
 ) -> ApiResult<Response> {
     let text = params.q.unwrap_or_default();
-    let (kinds, external) = search_kinds(params.types.as_deref())?;
+    let (types, catalog, only_catalog) = split_catalog(params.types.as_deref());
+    let (kinds, external) = if only_catalog {
+        (
+            SearchKinds {
+                songs: false,
+                albums: false,
+                artists: false,
+            },
+            false,
+        )
+    } else {
+        search_kinds(types.as_deref())?
+    };
+    if catalog && params.cursor.is_some() {
+        return Err(ApiError::bad_field(
+            "types",
+            "A cursor pages one library type; leave catalog out.",
+        ));
+    }
+    let catalog_query = if catalog {
+        Some(super::catalog::search_query(
+            Some(&text),
+            super::catalog::kinds_of(params.catalog_types.as_deref(), "catalog_types")?,
+            None,
+            None,
+        )?)
+    } else {
+        None
+    };
     if params.cursor.is_some()
         && [kinds.songs, kinds.albums, kinds.artists]
             .iter()
@@ -828,11 +909,16 @@ async fn search_library(
     };
     let any_library = kinds.songs || kinds.albums || kinds.artists;
     let access = principal.access.clone();
-    let results = if any_library && !text.trim().is_empty() {
-        read(&state, move |c| search::search(c, &access, &query)).await?
-    } else {
-        search::SearchResults::default()
+    let library = async {
+        if any_library && !text.trim().is_empty() {
+            read(&state, move |c| search::search(c, &access, &query)).await
+        } else {
+            Ok(search::SearchResults::default())
+        }
     };
+    let (results, catalog_section) =
+        tokio::join!(library, catalog_section(&state, &principal, catalog_query));
+    let results = results?;
     let annotations = annotations(
         &state,
         &principal.access,
@@ -863,6 +949,7 @@ async fn search_library(
             )
         }),
         external: None,
+        catalog: catalog_section?,
     };
     let available = super::account::acquisition_feature(&state, &principal).is_some()
         && principal.scopes.contains(Scopes::REQUEST);
@@ -902,6 +989,23 @@ mod tests {
         assert!(kinds.songs && !kinds.albums && !kinds.artists && external);
         assert!(search_kinds(Some("video")).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn catalog_is_split_out_of_types() {
+        assert_eq!(
+            split_catalog(Some("song,catalog")),
+            (Some(String::from("song")), true, false)
+        );
+        assert_eq!(
+            split_catalog(Some("catalog")),
+            (Some(String::new()), true, true)
+        );
+        assert_eq!(
+            split_catalog(Some("song,album")),
+            (Some(String::from("song,album")), false, false)
+        );
+        assert_eq!(split_catalog(None), (None, false, false));
     }
 
     #[test]

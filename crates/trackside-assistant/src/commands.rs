@@ -606,6 +606,8 @@ impl Inner {
                 hub.server_id.clone().unwrap_or_default(),
             )
         };
+        let hidden = self.effective().hidden_services;
+        let ours_instance = ours.as_deref();
         let song_ids: Vec<SongId> = request
             .items
             .iter()
@@ -660,17 +662,8 @@ impl Inner {
                         first_failure.get_or_insert((None, Some(text.clone())));
                         continue;
                     }
-                    let instance = decoded
-                        .instance_id
-                        .as_deref()
-                        .and_then(|i| providers.iter().find(|p| p.instance_id == i && p.available))
-                        .or_else(|| {
-                            providers.iter().find(|p| {
-                                p.domain == decoded.domain
-                                    && p.available
-                                    && p.is_streaming_provider == Some(true)
-                            })
-                        });
+                    let instance =
+                        crate::catalog::resolve(&decoded, &providers, ours_instance, &hidden);
                     match instance {
                         Some(provider) => {
                             uris.push(decoded.uri_on(&provider.instance_id));

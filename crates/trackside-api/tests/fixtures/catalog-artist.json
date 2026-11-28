@@ -1,0 +1,43 @@
+{
+  "albums": [
+    {
+      "album_key": "i am... sasha fierce\u001fbeyonce",
+      "artist": "Beyoncé",
+      "artwork_id": "myweqhq0j9dpzb5wt5pmr",
+      "kind": "album",
+      "name": "I Am... Sasha Fierce",
+      "ref": "mc1.YWxidW0fc3BvdGlmeR8zOVA3VkQ3cWxnM1owbHRxNjBlSHA3",
+      "service_id": "bqtyy4kcexcsg6wa0y4w5",
+      "track_count": 11,
+      "year": 2008
+    }
+  ],
+  "artist": {
+    "artwork_id": "m70csqp0tb9g09j0fg8qt",
+    "identity": "beyonce",
+    "kind": "artist",
+    "name": "Beyoncé",
+    "ref": "mc1.YXJ0aXN0H3Nwb3RpZnkfNnZXRE85NjlQdk5xTllISU9XNXYwbQ",
+    "service_id": "bqtyy4kcexcsg6wa0y4w5"
+  },
+  "top_tracks": [
+    {
+      "album": "I Am... Sasha Fierce",
+      "album_ref": "mc1.YWxidW0fc3BvdGlmeR8zOVA3VkQ3cWxnM1owbHRxNjBlSHA3",
+      "artist": "Beyoncé",
+      "artists": [
+        {
+          "name": "Beyoncé",
+          "ref": "mc1.YXJ0aXN0H3Nwb3RpZnkfNnZXRE85NjlQdk5xTllISU9XNXYwbQ"
+        }
+      ],
+      "artwork_id": "myweqhq0j9dpzb5wt5pmr",
+      "duration_ms": 193213,
+      "kind": "track",
+      "ref": "mc1.dHJhY2sfc3BvdGlmeR83aFFKQTUwWHJDV0FCQXU1djZRWjRp",
+      "service_id": "bqtyy4kcexcsg6wa0y4w5",
+      "song_key": "single ladies (put a ring on it)\u001fbeyonce",
+      "title": "Single Ladies (Put a Ring on It)"
+    }
+  ]
+}

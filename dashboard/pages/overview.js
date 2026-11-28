@@ -3,7 +3,7 @@ import {
   h, icon, section, list, row, kv, bytes, ago, when, time, date, full, dayLabel, num, empty, button, busy, toast, failed,
   codeLine, meter, duration, plural,
 } from '../ui.js';
-import { libraryBadge, songs, scanSummary, warnIcon } from './common.js';
+import { libraryBadge, songs, scanSummary, warnIcon, assistantState } from './common.js';
 import { sentence } from './history.js';
 import { listeningChart, streamsChart, storageChart } from './stats.js';
 
@@ -47,6 +47,7 @@ export async function render(ctx) {
         later(ctx, 'Listening', listeningChart, 'listening')),
       h('div.facts',
         overview.libraries.length ? librariesSection(overview) : null,
+        overview.music_assistant ? speakersSection(overview.music_assistant) : null,
         storageSection(overview, ctx),
         serverSection(overview, urls.urls, ctx))));
 }
@@ -117,6 +118,14 @@ function explain(p, ctx, overview) {
       }));
       return { title: 'The last backup failed', help: p.help, fix: now };
     }
+    case 'music_assistant_unreachable':
+      return { title: p.title, help: p.message, fix: h('a.btn', { href: '#/speakers/connection' }, 'Check the address') };
+    case 'music_assistant_auth_failed':
+      return { title: p.title, help: p.help || p.message, fix: h('a.btn', { href: '#/speakers/token' }, 'Replace the token') };
+    case 'music_assistant_incompatible':
+      return { title: p.title, help: [p.message, p.help].filter(Boolean).join(' '), fix: h('a.btn', { href: '#/speakers' }, 'Open Speakers') };
+    case 'music_assistant_registration':
+      return { title: p.title, help: p.message, fix: h('a.btn', { href: '#/speakers/registration' }, 'Fix on Speakers') };
     case 'storage':
       return {
         title: 'Running low on disk space',
@@ -193,6 +202,26 @@ function librariesSection(overview) {
     href: `#/libraries/${encodeURIComponent(lib.id)}`,
     label: `${lib.name}, ${songs(lib.song_count)}${lib.state === 'unavailable' ? ', offline' : ''}`,
   })), { iconInset: true }), { aside: h('span.num', songs(total)) });
+}
+
+const REGISTRATION = { registered: 'On every speaker', registering: 'Being added', not_registered: 'Not added yet' };
+
+/** Music Assistant at a glance, or the way to set it up. */
+function speakersSection(ma) {
+  if (ma.state === 'not_set_up') {
+    return section('Speakers', list(h('div.row',
+      icon('speaker', 'tint-muted'),
+      h('div.row-main', h('div.row-title', 'Play on speakers at home'), h('div.row-sub', 'Through Music Assistant')),
+      h('div.row-trail', h('a.btn', { href: '#/speakers' }, 'Set up'))), { iconInset: true }));
+  }
+  const [dot, label] = assistantState(ma.state);
+  const counts = ma.state === 'connected';
+  return section('Speakers', h('dl.list',
+    kv('Music Assistant', h('span.state-inline', h(`span.dot${dot ? `.${dot}` : ''}`), label)),
+    counts && ma.speakers !== undefined ? kv('Speakers', num(ma.speakers)) : null,
+    counts && ma.services !== undefined ? kv('Streaming services', num(ma.services)) : null,
+    ma.registration ? kv('Your library', ma.registration === 'registered' && !counts ? 'Registered' : REGISTRATION[ma.registration] || 'Needs attention') : null,
+    counts && ma.relays ? kv('Phones streaming', num(ma.relays)) : null), { aside: h('a', { href: '#/speakers' }, 'Speakers') });
 }
 
 /** Free space appears once: in the chart's figure when there is a chart, otherwise as a line. */

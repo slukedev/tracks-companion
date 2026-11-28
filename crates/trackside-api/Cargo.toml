@@ -42,6 +42,7 @@ trackside-mass = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
+image.workspace = true
 
 [lints]
 workspace = true

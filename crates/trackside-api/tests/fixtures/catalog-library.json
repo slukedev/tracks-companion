@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "artwork_id": "m78a6d72awx3fd6jkzaht",
+      "editable": false,
+      "kind": "playlist",
+      "name": "This Is Beyoncé",
+      "owner": "Spotify",
+      "ref": "mc1.cGxheWxpc3Qfc3BvdGlmeR8zN2k5ZFFaRjFEWDRzV1Nwd3EzTGlP",
+      "service_id": "bqtyy4kcexcsg6wa0y4w5",
+      "track_count": 50
+    }
+  ],
+  "next_cursor": "eyJvIjoxMDB9",
+  "synced_at": "2026-11-14T09:00:00.000Z"
+}

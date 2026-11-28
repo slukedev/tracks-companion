@@ -42,6 +42,13 @@ pub mod build {
         admin_key_body as apple_music_admin_body, parse_private_key as parse_apple_music_key,
         sign_with as sign_developer_token,
     };
+    pub use crate::routes::catalog::{
+        album_body as catalog_album_body, artist_body as catalog_artist_body,
+        detail_body as catalog_detail_body, library_body as catalog_library_body,
+        playlist_body as catalog_playlist_body, search_body as catalog_search_body,
+        search_state_body as catalog_search_state_body, services_body as catalog_services_body,
+        services_event_body as catalog_services_event_body, track_body as catalog_track_body,
+    };
     pub use crate::routes::cloud::{
         cloud_info, device_body, devices_body, page_body as cloud_page_body, push_body,
         record_body, setting_results_body, settings_body, usage_body,

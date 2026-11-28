@@ -24,6 +24,9 @@ const users = [
   { id: 'u5a8b1c4d7e0f3a6b9c2', username: 'sam', display_name: 'Sam Okafor', role: 'member', permissions: perms({ legacy_subsonic: true, max_bitrate_kbps: 320 }), library_ids: [LIB.music.id], created_at: '2026-10-19T20:45:00.000Z', last_seen_at: '2026-11-13T21:10:44.000Z', disabled: false },
   { id: 'u9d2e5f8a1b4c7d0e3f6', username: 'grandad', display_name: 'Grandad', role: 'member', permissions: perms({ can_download: false }), library_ids: [LIB.music.id], created_at: '2026-09-20T13:30:00.000Z', last_seen_at: '2026-10-02T16:05:10.000Z', disabled: true },
 ];
+// The account Trackside made for Music Assistant: no password, cannot sign in, keys on /rest only.
+const serviceUser = { id: 'uvxvacxf5ak9afxq4qdjj', username: 'music-assistant', display_name: 'Music Assistant', role: 'member', service: 'music_assistant', permissions: perms({ can_download: false }), library_ids: allLibs, created_at: '2026-11-12T18:00:04.000Z', last_seen_at: '2026-11-14T09:29:00.000Z', disabled: false };
+users.push(serviceUser);
 const ref = (u) => ({ id: u.id, username: u.username, display_name: u.display_name });
 const [luke, mum, sam, grandad] = users;
 
@@ -167,6 +170,7 @@ w('admin-devices', { devices });
 w('admin-api-keys', { keys: [
   { id: 'k7b9d1f3h5j7l9n1p3r5', kind: 'app_password', name: 'Symfonium', prefix: 'TRK7', scopes: ['library', 'stream', 'write'], user: ref(sam), created_at: '2026-10-19T21:00:00.000Z', last_used_at: '2026-11-13T22:40:11.000Z', last_used_ip: '100.90.41.5' },
   { id: 'k2c4e6g8i0k2m4o6q8s0', kind: 'api_key', name: 'Home Assistant', prefix: 'tsk_Hq7', scopes: ['library'], user: ref(luke), created_at: '2026-10-01T09:00:00.000Z', last_used_at: '2026-11-14T09:55:00.000Z', last_used_ip: '192.168.1.10' },
+  { id: 'kwd5w7vf6ptaf3cwd1xbt', kind: 'api_key', name: 'Music Assistant', prefix: 'tsk_Qm3vXa', scopes: ['library', 'stream'], managed_by: 'music_assistant', user: ref(serviceUser), created_at: '2026-11-12T18:00:05.000Z', last_used_at: '2026-11-14T09:29:00.000Z', last_used_ip: '192.168.1.20' },
 ] });
 w('admin-sessions', { sessions: [
   { id: 'e1s3s5i7o9n1a3b5c7d9', user: ref(luke), user_agent: 'Safari on macOS', ip: '192.168.1.41', created_at: '2026-11-10T19:00:00.000Z', last_seen_at: '2026-11-14T10:00:00.000Z', current: true },
@@ -259,12 +263,34 @@ const MA = 'http://192.168.1.20:8095';
 const edit = (id) => `${MA}/#/settings/editprovider/${id}`;
 w('admin-music-assistant', {
   auto_register: true, configured: true, connection: { since: '2026-11-14T08:00:00.000Z', state: 'connected' },
-  enabled: true, hidden_services: [],
+  enabled: true, hidden_services: ['tidal--P9wq1Lza'],
   lan_url: { checked_at: '2026-11-14T09:30:00.000Z', reachable: true, source: 'detected', url: 'http://192.168.1.20:4747' },
   relays: { active: 1, max: 4 },
   server: { compatible: true, min_supported_schema_version: 28, name: 'Music Assistant', relay_supported: true, schema_version: 65, server_id: '8f2e4b6a1c3d5e7f9a0b2c4d6e8f0a1b', tested: true, version: '2.10.13' },
   services: 2, source: { token: 'dashboard', url: 'dashboard' }, speakers: 5, token_set: true, token_set_at: '2026-11-12T18:00:00.000Z',
   ui_url: MA, url: MA, user: { display_name: 'Trackside', role: 'admin', username: 'trackside' },
+});
+// One fixture per connection state, so ?preview=ma-<state> shows each (dev/preview.js).
+const maBase = JSON.parse(JSON.stringify({
+  auto_register: true, configured: true, enabled: true, hidden_services: ['tidal--P9wq1Lza'],
+  lan_url: { checked_at: '2026-11-14T09:30:00.000Z', reachable: true, source: 'detected', url: 'http://192.168.1.20:4747' },
+  relays: { active: 1, max: 4 }, source: { token: 'dashboard', url: 'dashboard' }, token_set: true, token_set_at: '2026-11-12T18:00:00.000Z', ui_url: MA, url: MA,
+}));
+const maServer = { compatible: true, min_supported_schema_version: 28, name: 'Music Assistant', relay_supported: true, schema_version: 65, server_id: '8f2e4b6a1c3d5e7f9a0b2c4d6e8f0a1b', tested: true, version: '2.10.13' };
+const maUser = { display_name: 'Trackside', role: 'admin', username: 'trackside' };
+const maState = (name, o) => w(`admin-music-assistant-${name}`, { ...maBase, ...o });
+maState('connecting', { connection: { state: 'connecting', since: '2026-11-14T09:59:52.000Z' } });
+maState('auth-failed', { connection: { state: 'auth_failed', since: '2026-11-14T09:12:00.000Z', last_error: { at: '2026-11-14T09:12:00.000Z', message: 'Music Assistant refused the token (error 23: Invalid or expired token).' } }, server: maServer });
+maState('incompatible', { connection: { state: 'incompatible', since: '2026-11-14T09:40:00.000Z' }, server: { ...maServer, compatible: false, schema_version: 52, version: '2.8.4' } });
+maState('unreachable', { connection: { state: 'unreachable', since: '2026-11-14T08:47:00.000Z', last_error: { at: '2026-11-14T09:59:30.000Z', message: 'Connection refused at 192.168.1.20:8095.' } }, lan_url: { ...maBase.lan_url, reachable: false } });
+maState('setup-required', { connection: { state: 'setup_required', since: '2026-11-14T09:58:00.000Z' }, server: { ...maServer, version: '2.10.13' } });
+maState('disabled', { enabled: false, connection: { state: 'disabled' }, server: maServer, user: maUser });
+// Set in the config file: address and token are read-only, a private CA is in use, and the
+// address Music Assistant uses to reach Trackside is loopback.
+maState('config', {
+  connection: { state: 'connected', since: '2026-11-14T08:00:00.000Z' }, server: { ...maServer, schema_version: 131, tested: false, version: '2.11.0b14' }, user: maUser,
+  custom_ca: true, source: { token: 'config', url: 'config' }, url: 'https://music.home.arpa', ui_url: 'https://music.home.arpa', speakers: 5, services: 2,
+  lan_url: { checked_at: '2026-11-14T09:30:00.000Z', reachable: false, source: 'configured', url: 'http://127.0.0.1:4747', warning: 'This address only works on the Trackside machine itself, and Music Assistant runs on another.' },
 });
 w('admin-music-assistant-unset', { configured: false, connection: { state: 'not_set_up' }, enabled: false, token_set: false });
 w('admin-music-assistant-test', { detail: 'Connected to Music Assistant 2.10.13 as trackside (admin).', elapsed_ms: 312, ok: true, players: 5, providers: 9, server: { compatible: true, name: 'Music Assistant', schema_version: 65, tested: true, version: '2.10.13' } });
@@ -277,15 +303,22 @@ w('admin-music-assistant-registration', {
   state: 'registered', ui_url: edit('opensubsonic--T7rk2mQa'),
 });
 w('admin-music-assistant-registration-needs-admin', { base_url: 'http://192.168.1.20:4747', last_error: { at: '2026-11-14T09:30:00.000Z', message: 'The Music Assistant account trackside is not an admin, so it cannot add providers.' }, state: 'needs_admin' });
+const regBase = { base_url: 'http://192.168.1.20:4747', service_user: { display_name: 'Music Assistant', id: 'uvxvacxf5ak9afxq4qdjj', username: 'music-assistant' } };
+w('admin-music-assistant-registration-registering', { ...regBase, state: 'registering' });
+w('admin-music-assistant-registration-not-registered', { ...regBase, state: 'not_registered' });
+w('admin-music-assistant-registration-failed', { ...regBase, state: 'failed', last_error: { at: '2026-11-14T09:31:00.000Z', message: 'Music Assistant could not reach Trackside at http://192.168.1.20:4747.' } });
+w('admin-music-assistant-registration-stale', { ...regBase, state: 'stale', provider_instance_id: 'opensubsonic--T7rk2mQa', registered_at: '2026-11-12T18:00:06.000Z', last_error: { at: '2026-11-14T09:20:00.000Z', message: 'Music Assistant no longer has the Trackside source.' } });
 w('admin-music-assistant-providers', {
   music: [
     { available: true, domain: 'spotify', hidden: false, instance_id: 'spotify--Xb4LkP2q', name: 'Spotify', service_id: 'bqtyy4kcexcsg6wa0y4w5', streaming: true, ui_url: edit('spotify--Xb4LkP2q') },
     { available: true, domain: 'tidal', hidden: true, instance_id: 'tidal--P9wq1Lza', name: 'Tidal', service_id: 'b9j3k7m1q5t8w2x6y0z4c', streaming: true, ui_url: edit('tidal--P9wq1Lza') },
+    { available: false, domain: 'qobuz', hidden: false, instance_id: 'qobuz--Rv3sM7nE', name: 'Qobuz', service_id: 'c4h8m2q6t0w4y8b2e6j0n', streaming: true, ui_url: edit('qobuz--Rv3sM7nE') },
     { available: true, domain: 'opensubsonic', hidden: false, instance_id: 'opensubsonic--T7rk2mQa', name: 'Trackside (Home)', streaming: false, trackside: true, ui_url: edit('opensubsonic--T7rk2mQa') },
   ],
   players: [
     { available: true, domain: 'sonos', instance_id: 'sonos--Kq2m8VbR', name: 'Sonos', speakers: 3, ui_url: edit('sonos--Kq2m8VbR') },
     { available: true, domain: 'airplay', instance_id: 'airplay--Lz5n1CwT', name: 'AirPlay', speakers: 2, ui_url: edit('airplay--Lz5n1CwT') },
+    { available: false, domain: 'chromecast', instance_id: 'chromecast--Jw6p0XsD', name: 'Chromecast', speakers: 0, ui_url: edit('chromecast--Jw6p0XsD') },
   ],
   ui_url: `${MA}/#/settings/providers`,
 });

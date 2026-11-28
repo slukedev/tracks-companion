@@ -23,6 +23,8 @@ pub struct EventFilter {
     pub acquisition: bool,
     /// Whether speaker events reach this caller (`features.speakers`).
     pub speakers: bool,
+    /// Whether catalog events reach this caller (`features.catalog`).
+    pub catalog: bool,
     /// Prefixed in front of instant-play URLs.
     pub base_path: String,
 }
@@ -149,6 +151,10 @@ pub fn visible_event(event: &ServerEvent, filter: &EventFilter) -> Outgoing {
                 None => Outgoing::Skip,
             }
         }
+        ServerEvent::CatalogServices { state } if filter.catalog => Outgoing::Send {
+            event: "catalog_services",
+            data: data(&crate::routes::catalog::services_event_body(*state)),
+        },
         ServerEvent::ServerUrls { version } => Outgoing::Send {
             event: "server_urls",
             data: data(&ServerUrlsEvent {
@@ -313,6 +319,7 @@ mod tests {
             device: Some(DeviceKey(9)),
             acquisition: false,
             speakers: false,
+            catalog: false,
             base_path: String::new(),
         }
     }
@@ -322,6 +329,23 @@ mod tests {
             seq: Seq(42),
             audiences,
         }
+    }
+
+    #[test]
+    fn catalog_events_reach_only_callers_with_the_catalog() {
+        let event = ServerEvent::CatalogServices {
+            state: trackside_core::assistant::SpeakersState::Ok,
+        };
+        assert_eq!(visible_event(&event, &member(1, &[3])), Outgoing::Skip);
+        let mut filter = member(1, &[3]);
+        filter.catalog = true;
+        assert_eq!(
+            visible_event(&event, &filter),
+            Outgoing::Send {
+                event: "catalog_services",
+                data: String::from(r#"{"state":"ok"}"#),
+            }
+        );
     }
 
     #[test]

@@ -1,0 +1,15 @@
+{
+  "base_url": "http://192.168.1.20:4747",
+  "service_user": {
+    "display_name": "Music Assistant",
+    "id": "uvxvacxf5ak9afxq4qdjj",
+    "username": "music-assistant"
+  },
+  "state": "stale",
+  "provider_instance_id": "opensubsonic--T7rk2mQa",
+  "registered_at": "2026-11-12T18:00:06.000Z",
+  "last_error": {
+    "at": "2026-11-14T09:20:00.000Z",
+    "message": "Music Assistant no longer has the Trackside source."
+  }
+}

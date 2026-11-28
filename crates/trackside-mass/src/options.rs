@@ -86,6 +86,11 @@ impl CustomCa {
         self.0.len()
     }
 
+    /// The certificates in DER, for an HTTP client that fetches from the same server.
+    pub fn certificates(&self) -> &[CertificateDer<'static>] {
+        &self.0
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }

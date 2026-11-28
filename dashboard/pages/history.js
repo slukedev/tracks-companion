@@ -25,6 +25,11 @@ const SENTENCES = {
   'settings.update': ['settings', 'muted', (a) => `${a} changed settings`],
   'apple_music.update': ['key', 'muted', (a) => `${a} saved an Apple Music key`],
   'apple_music.remove': ['key', 'muted', (a) => `${a} removed the Apple Music key`],
+  'music_assistant.update': ['speaker', 'muted', (a) => `${a} changed the Music Assistant connection`],
+  'music_assistant.token': ['speaker', 'muted', (a) => `${a} saved a Music Assistant token`],
+  'music_assistant.remove': ['speaker', 'muted', (a) => `${a} disconnected Music Assistant`],
+  'music_assistant.register': ['speaker', 'muted', (a) => `${a} added the library to Music Assistant`],
+  'music_assistant.unregister': ['speaker', 'muted', (a) => `${a} removed the library from Music Assistant`],
   'server.upgrade': ['overview', 'muted', (a, e) => `Trackside updated to ${e.target}`],
   'acquisition.request': ['requests', 'accent', (a, e) => `${a} requested ${e.target}${e.detail ? ` by ${e.detail}` : ''}`],
 };

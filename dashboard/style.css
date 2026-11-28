@@ -224,6 +224,7 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; }
 .i-share { --icon: url(icons/share.svg); }
 .i-more { --icon: url(icons/more.svg); }
 .i-open { --icon: url(icons/open.svg); }
+.i-speaker { --icon: url(icons/speaker.svg); }
 
 /* Row icons stay neutral; colour is kept for state. */
 .tint-accent { color: var(--accent); }
@@ -735,6 +736,60 @@ input.switch:checked:active:not(:disabled)::before { transform: translateX(16px)
 @starting-style { .link-done-mark { opacity: 0; transform: scale(0.6); } }
 @media (pointer: coarse) { .code-input { font-size: var(--t-xl); } }
 
+/* ---------- Speakers (Music Assistant) ---------- */
+
+/* A state with its one next step: the sentence on the left, the action on the right. */
+.state-note { align-items: center; gap: 12px; padding: 12px 14px; }
+.state-note > .icon, .state-note > .note-dot { align-self: flex-start; margin-top: 3px; }
+.note-dot { margin-inline: 4px; }
+.note-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.note-text p { font-size: var(--t-sm); color: var(--ink-2); max-width: 62ch; }
+.note-text .note-title { font-size: var(--t-md); font-weight: 600; color: var(--ink); }
+.note-action { flex: none; }
+@media (max-width: 560px) {
+  .state-note { flex-wrap: wrap; }
+  .note-action { flex-basis: 100%; padding-left: 26px; }
+}
+
+.state-inline { display: inline-flex; align-items: center; gap: 6px; }
+.row-dot { align-self: flex-start; margin: 6px 4px 0; }
+.reg-row { align-items: flex-start; padding-block: 10px; }
+.reg-row .row-trail { align-self: center; }
+.reg-row .row-sub { max-width: 60ch; }
+.reg-row .row-title .mono { font-weight: 400; }
+
+/* The saved token: what is known about it, and Replace. */
+.saved-value { display: flex; align-items: center; gap: 8px; min-height: max(34px, var(--target)); padding: 0 4px 0 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); font-size: var(--t-sm); color: var(--ink-2); }
+.saved-value > span:not(.icon) { flex: 1; min-width: 0; }
+.saved-value .btn { min-height: calc(max(34px, var(--target)) - 8px); }
+.field > .btn.quiet { align-self: flex-start; padding-inline: 0; }
+.field-note { display: flex; gap: 6px; align-items: flex-start; font-size: var(--t-sm); color: var(--ink); }
+.field-note .icon { margin-top: 3px; }
+.field .hint .btn.plain { min-height: 0; padding: 0 2px; font-size: inherit; vertical-align: baseline; }
+
+.disclosure { border-top: 1px solid var(--line); padding-top: var(--s3); }
+.disclosure > summary { display: inline-flex; align-items: center; gap: 8px; min-height: var(--target); cursor: pointer; list-style: none; font-size: var(--t-sm); font-weight: 600; border-radius: var(--r-sm); }
+.disclosure > summary::-webkit-details-marker { display: none; }
+.disclosure-chev { color: var(--ink-3); transition: transform var(--t-base) var(--ease-out); }
+.disclosure[open] .disclosure-chev { transform: rotate(90deg); }
+.disclosure[open] > .form { margin-top: var(--s2); transition: opacity var(--t-base) var(--ease-out), transform var(--t-base) var(--ease-out); }
+@starting-style { .disclosure[open] > .form { opacity: 0; transform: translateY(-4px); } }
+
+/* Test results replace each other in a space kept from the start, so nothing below moves. */
+.test-bar { display: flex; flex-direction: column; gap: var(--s3); padding-top: var(--s1); }
+.test-result { min-height: 42px; }
+.say { display: flex; gap: 8px; align-items: flex-start; font-size: var(--t-sm); transition: opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), filter var(--t-fast) var(--ease-out); }
+@starting-style { .say { opacity: 0; transform: translateY(3px); filter: blur(2px); } }
+.say > .icon, .say > .dot { margin-top: 3px; flex: none; }
+.say > .dot { margin-inline: 3px; }
+.say-title { font-weight: 600; color: var(--ink); }
+.say-sub { color: var(--ink-2); }
+
+.setup-intro { display: flex; gap: var(--s3); align-items: flex-start; }
+.setup-intro p { margin-top: 2px; max-width: 56ch; }
+.setup-mark { display: grid; place-items: center; width: 44px; height: 44px; flex: none; border-radius: var(--r); background: var(--accent-soft); color: var(--accent); }
+.setup-mark .icon { width: 24px; height: 24px; }
+
 /* ---------- Dialog: centred, so it scales from the centre, and leaves faster than it came. ---------- */
 
 dialog {
@@ -832,7 +887,8 @@ dialog[open]::backdrop { opacity: 1; transition-duration: var(--t-base); }
 /* Reduced motion: keep the fades that explain a change, drop the movement. */
 @media (prefers-reduced-motion: reduce) {
   .btn:active:not(:disabled), .tabbar a:active .icon, .tabbar button:active .icon { transform: none; }
-  @starting-style { .reveal, .detail:not([hidden]), dialog[open], .toast, .page.enter, .save-bar, .link-done-mark { opacity: 0; transform: none; } }
+  @starting-style { .reveal, .detail:not([hidden]), dialog[open], .toast, .page.enter, .save-bar, .link-done-mark, .say, .disclosure[open] > .form { opacity: 0; transform: none; filter: none; } }
+  .disclosure-chev { transition: none; }
   dialog, dialog[open] { transform: none; }
   .toast.leaving { transform: none; }
   .sidebar { transition-property: opacity, visibility !important; }
@@ -871,5 +927,6 @@ dialog[open]::backdrop { opacity: 1; transition-duration: var(--t-base); }
   .input:hover:not(:disabled):not(:focus) { border-color: var(--ink-3); }
   .chart-legend button:hover { border-color: var(--line-strong); }
   .chart summary:hover { border-color: var(--line-strong); color: var(--ink); }
+  .disclosure > summary:hover { color: var(--accent); }
   .topbar .btn:hover:not(:disabled), .sheet-head .btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.18); }
 }

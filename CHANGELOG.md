@@ -61,6 +61,13 @@ starts at schema 7; there is nothing to upgrade from.
   sealed at rest and never shown again. Two new permissions per person, on by default: use
   speakers, and play music services. `compose.music-assistant.yaml` runs Music Assistant beside
   Trackside. See [music-assistant.md](docs/ops/music-assistant.md).
+- Music services through Music Assistant: Tracks lists the streaming services you connected
+  in Music Assistant, searches them next to your library (results stay apart, and a song you
+  own is shown as your copy), and opens their albums, artists, playlists and saved items. A
+  slow service no longer holds up a search: after 5 seconds the others' results come back.
+  Turn it off per person with the "play music services" permission, or hide a service with
+  `music_assistant.hidden_services`. Nothing from a service is stored except cover thumbnails, which the artwork cache
+  keeps re-encoded under its usual size limit.
 - Optional acquisition through yt-dlp, off unless an admin turns it on. Playing a song the
   server doesn't have streams it through yt-dlp without keeping it; only Get adds a song to the
   library.

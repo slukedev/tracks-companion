@@ -13,7 +13,9 @@ use trackside_auth::{Principal, Scopes};
 use trackside_core::control::{ScanKind, ScanTrigger};
 use trackside_core::records::{AudioFormat, Codec, Container, Song, SongFile};
 use trackside_core::repo::{albums, artists, folders, songs};
-use trackside_core::{Access, AlbumId, ArtistId, ArtworkId, ExternalArtId, PublicId, SongId};
+use trackside_core::{
+    Access, AlbumId, ArtistId, ArtworkId, CatalogArtId, ExternalArtId, PublicId, SongId,
+};
 use trackside_media::{
     ClientProfile, Decision, DecisionReason, DirectPlay, Disposition, HlsInput, HlsJobId, HlsOwner,
     HlsPart, MediaError, Priority, Profile,
@@ -622,9 +624,56 @@ async fn artwork(
     if id.starts_with(['e', 'E']) {
         return external_artwork(&state, &principal, &id, query.size, request).await;
     }
+    if id.starts_with(['m', 'M']) {
+        return catalog_artwork(&state, &principal, &id, query.size, request).await;
+    }
     let artwork = resolve_artwork(&state, &principal, &id).await?;
     let (parts, _) = request.into_parts();
     Ok(state.media.artwork(&artwork, query.size, &parts).await?)
+}
+
+/// A streaming-catalog image (an `m...` id, contract 2.6): for users with `features.catalog`
+/// (a media token carries only stream and download, so this asks whether Music Assistant is
+/// set up and the user may play services). Served from the artwork cache; on a miss, and
+/// only while Trackside knows the address Music Assistant gave for it, fetched once,
+/// checked and kept re-encoded. Anything that cannot be fetched or is not an image is `404`.
+async fn catalog_artwork(
+    state: &ApiState,
+    principal: &Principal,
+    raw: &str,
+    size: Option<u32>,
+    request: Request,
+) -> ApiResult<Response> {
+    let id: CatalogArtId = path_id(raw)?;
+    let catalog = state
+        .assistant
+        .catalog()
+        .filter(|_| state.assistant.enabled() && principal.permissions.can_play_services)
+        .ok_or_else(ApiError::not_found)?;
+    let (parts, _) = request.into_parts();
+    match state.media.catalog_artwork(&id, size, &parts).await {
+        Err(MediaError::NotFound) => {}
+        other => return Ok(other?),
+    }
+    if catalog.art_source(&id).is_none() {
+        return Err(ApiError::not_found());
+    }
+    state.auth.catalog_art_fetch(principal)?;
+    let bytes = match catalog.fetch_art(&id).await {
+        Ok(bytes) => bytes,
+        Err(trackside_core::catalog::CatalogError::Unavailable) => {
+            return Err(ApiError::catalog_unavailable());
+        }
+        Err(e) => {
+            tracing::debug!(%id, error = %e, "catalog image not fetched");
+            return Err(ApiError::not_found());
+        }
+    };
+    if let Err(e) = state.media.store_catalog_artwork(&id, bytes).await {
+        tracing::debug!(%id, error = %e, "catalog image refused");
+        return Err(ApiError::not_found());
+    }
+    Ok(state.media.catalog_artwork(&id, size, &parts).await?)
 }
 
 /// The cover of a song suggested to request (an `e...` id): for users who may request, and
