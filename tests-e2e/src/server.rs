@@ -85,31 +85,40 @@ const DEFAULTS: &[(&str, &str)] = &[
     ("TRACKSIDE_MEDIA__CACHE_MIN_FREE", "0"),
 ];
 
+/// Which pipe a log line came from. The two are read by separate threads, so lines of one
+/// can land between consecutive lines of the other; anything read as a sequence (the setup
+/// banner) is read from its own stream.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stream {
+    Stdout,
+    Stderr,
+}
+
 /// The process's log lines, as they arrive.
 #[derive(Debug, Default)]
 struct Logs {
-    lines: Mutex<Vec<String>>,
+    lines: Mutex<Vec<(Stream, String)>>,
     changed: Condvar,
     /// Output streams still open; none once the process has exited.
     open: std::sync::atomic::AtomicUsize,
 }
 
 impl Logs {
-    fn push(&self, line: String) {
+    fn push(&self, stream: Stream, line: String) {
         if std::env::var_os("TRACKSIDE_E2E_LOGS").is_some() {
             eprintln!("[trackside] {line}");
         }
         self.lines
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .push(line);
+            .push((stream, line));
         self.changed.notify_all();
     }
 
     fn wait_for<T>(
         &self,
         timeout: Duration,
-        mut find: impl FnMut(&[String]) -> Option<T>,
+        mut find: impl FnMut(&[(Stream, String)]) -> Option<T>,
     ) -> Option<T> {
         let deadline = Instant::now() + timeout;
         let mut lines = self.lines.lock().unwrap_or_else(PoisonError::into_inner);
@@ -179,25 +188,31 @@ impl Server {
             .spawn()
             .with_context(|| format!("cannot start {}", spec.bin.display()))?;
         let logs = Arc::new(Logs::default());
-        for stream in [
-            child
-                .stderr
-                .take()
-                .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
-            child
-                .stdout
-                .take()
-                .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
+        for (kind, stream) in [
+            (
+                Stream::Stderr,
+                child
+                    .stderr
+                    .take()
+                    .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
+            ),
+            (
+                Stream::Stdout,
+                child
+                    .stdout
+                    .take()
+                    .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
+            ),
         ]
         .into_iter()
-        .flatten()
+        .filter_map(|(kind, stream)| Some((kind, stream?)))
         {
             let logs = Arc::clone(&logs);
             logs.open.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             std::thread::spawn(move || {
                 for line in BufReader::new(stream).lines() {
                     match line {
-                        Ok(line) => logs.push(line),
+                        Ok(line) => logs.push(kind, line),
                         Err(_) => break,
                     }
                 }
@@ -207,7 +222,7 @@ impl Server {
             });
         }
         let addr = logs.wait_for(Duration::from_secs(60), |lines| {
-            lines.iter().find_map(|line| {
+            lines.iter().find_map(|(_, line)| {
                 let fields = log_fields(line)?;
                 if fields.get("message")?.as_str()? != "listening" {
                     return None;
@@ -267,7 +282,9 @@ impl Server {
             .lines
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+            .iter()
+            .map(|(_, line)| line.clone())
+            .collect()
     }
 
     pub fn log_text(&self) -> String {
@@ -276,18 +293,17 @@ impl Server {
 
     /// Waits for a log line `matches` accepts.
     pub fn wait_log(&self, timeout: Duration, matches: impl Fn(&str) -> bool) -> Option<String> {
-        self.logs
-            .wait_for(timeout, |lines| lines.iter().find(|l| matches(l)).cloned())
+        self.logs.wait_for(timeout, |lines| {
+            lines
+                .iter()
+                .find(|(_, l)| matches(l))
+                .map(|(_, l)| l.clone())
+        })
     }
 
     /// The setup token from the first-run banner in the log.
     pub fn setup_token(&self) -> Option<String> {
-        self.logs.wait_for(Duration::from_secs(10), |lines| {
-            let at = lines
-                .iter()
-                .position(|l| l.contains("enter this setup token:"))?;
-            lines.get(at + 1).map(|l| l.trim().to_owned())
-        })
+        self.logs.wait_for(Duration::from_secs(10), setup_token_in)
     }
 
     /// Asks the process to stop with SIGTERM and waits for it.
@@ -364,8 +380,44 @@ impl Server {
     }
 }
 
+/// The line after the banner's "enter this setup token:" on stderr, where the banner is
+/// printed. Log lines from stdout may sit between the two in the merged list.
+fn setup_token_in(lines: &[(Stream, String)]) -> Option<String> {
+    let mut stderr = lines
+        .iter()
+        .filter(|(stream, _)| *stream == Stream::Stderr)
+        .map(|(_, line)| line);
+    stderr.find(|l| l.contains("enter this setup token:"))?;
+    stderr.next().map(|l| l.trim().to_owned())
+}
+
 impl Drop for Server {
     fn drop(&mut self) {
         self.kill();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_setup_token_is_read_from_stderr_whatever_stdout_interleaves() {
+        let banner =
+            "Trackside needs an admin account. Open http://h/setup and enter this setup token:";
+        let lines = [
+            (Stream::Stderr, String::from(banner)),
+            (
+                Stream::Stdout,
+                String::from(r#"{"fields":{"message":"setup token printed"}}"#),
+            ),
+            (Stream::Stderr, String::from("  ABCD-EFGH")),
+        ];
+        assert_eq!(setup_token_in(&lines).as_deref(), Some("ABCD-EFGH"));
+        assert_eq!(
+            setup_token_in(&lines[..2]),
+            None,
+            "waits for the token line"
+        );
     }
 }
