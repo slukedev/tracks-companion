@@ -1027,9 +1027,13 @@ impl Auth {
         &self,
         principal: &Principal,
     ) -> Result<tokio::sync::OwnedSemaphorePermit, AuthError> {
-        self.streams
-            .try_take(principal.access.user)
+        self.user_stream_slot(principal.access.user)
             .ok_or(AuthError::rate_limited(Duration::from_secs(1)))
+    }
+
+    /// [`Self::stream_slot`] for a stream no request holds, such as a playing relay.
+    pub fn user_stream_slot(&self, user: UserKey) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        self.streams.try_take(user)
     }
 
     /// Takes one of the user's 16 event-stream slots; the slot frees when the stream ends.

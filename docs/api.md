@@ -101,8 +101,8 @@ Contents:
     `tls: true` entries of `GET /server/urls` (`url`, `kind`, `tls`, `fingerprint`?), so a
     refused client can switch without signing in first. They come from the server's own list,
     never from the request.
-- **Concurrency per user.** At most 8 streams and downloads at once (including instant play
-  and Subsonic `stream`, `download` and `hls`) and 3 transcodes at once (HLS jobs, transcoded
+- **Concurrency per user.** At most 8 streams and downloads at once (including instant play,
+  a playing relay session and Subsonic `stream`, `download` and `hls`) and 3 transcodes at once (HLS jobs, transcoded
   downloads, Subsonic conversions) per user. Only a request that starts an encoder takes a
   transcode slot: waiting for a transcode that is cached or already being made takes none, and
   a transcoded download takes its stream slot once the file is ready to send. Over that, `429 rate_limited` with
@@ -2784,7 +2784,9 @@ device key with `stream` and `features.catalog.relay`; `relay_cellular` for `tie
 
 Limits: 1 session per device (reused), 3 per user (`music_assistant.relay_max_per_user`),
 `music_assistant.relay_max_sessions` per server (default 4). Over one: `409 conflict`,
-`details.reason = "relay_limit"`, `details.limit`. Errors: `403 forbidden` for a session, an
+`details.reason = "relay_limit"`, `details.limit`. A `playing` session holds one of its user's
+stream slots (section 2) until it pauses or ends; when none is free Trackside pauses the queue,
+as a stream request would get `429`. Errors: `403 forbidden` for a session, an
 API key or a user without `can_play_services`; `422 unsupported` with `details.capability`
 `relay` (Music Assistant has no Sendspin server) or `relay_cellular` (no ffmpeg); `503
 catalog_unavailable`; `429 rate_limited` past 10 `POST` and `PATCH` a minute together.

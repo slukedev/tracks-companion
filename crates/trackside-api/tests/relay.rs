@@ -992,6 +992,107 @@ async fn nobody_listening_pauses_music_assistant() -> TestResult {
     Ok(())
 }
 
+/// The stream slots of `username` still free, taking none for long.
+fn free_stream_slots(server: &Server, username: &str) -> Result<usize, Error> {
+    let name = username.to_owned();
+    let user = server
+        .test
+        .db
+        .read_blocking(move |c| trackside_core::repo::users::by_username(c, &name))?
+        .ok_or("no such user")?;
+    let taken: Vec<_> = std::iter::from_fn(|| server.auth.user_stream_slot(user.key)).collect();
+    Ok(taken.len())
+}
+
+async fn until_free_slots(server: &Server, username: &str, wanted: usize) -> TestResult {
+    let deadline = tokio::time::Instant::now() + PATIENCE;
+    loop {
+        let free = free_stream_slots(server, username)?;
+        if free == wanted {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() > deadline {
+            return Err(format!("{free} stream slots free, wanted {wanted}").into());
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_playing_relay_holds_a_stream_slot_until_it_pauses_or_ends() -> TestResult {
+    let mut rig = rig(|_, _| {}).await?;
+    let key = rig.server.device_key("luke", "iphone").await?;
+    let session = open(&rig.server, &key).await?;
+    let path = format!("/relay/sessions/{}", session["id"].as_str().ok_or("id")?);
+    let mut conn = join(&mut rig).await;
+    rig.server
+        .until(&key, &path, |_, s| s["state"] == "ready")
+        .await?;
+    assert_eq!(free_stream_slots(&rig.server, "luke")?, 8, "ready holds none");
+
+    play_tone(&mut conn).await;
+    rig.server
+        .until(&key, &path, |_, s| s["state"] == "playing")
+        .await?;
+    until_free_slots(&rig.server, "luke", 7).await?;
+
+    conn.send("stream/end", json!({})).await;
+    rig.server
+        .until(&key, &path, |_, s| s["state"] == "paused")
+        .await?;
+    until_free_slots(&rig.server, "luke", 8).await?;
+
+    play_tone(&mut conn).await;
+    until_free_slots(&rig.server, "luke", 7).await?;
+    let (status, _) = rig
+        .server
+        .call(&key, reqwest::Method::DELETE, &path, None)
+        .await?;
+    assert_eq!(status, 204);
+    until_free_slots(&rig.server, "luke", 8).await?;
+    assert!(
+        rig.fake.received_named("player_queues/pause").is_empty(),
+        "within the limit nothing is paused"
+    );
+    rig.server.assistant.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_relay_over_the_users_stream_limit_pauses_music_assistant() -> TestResult {
+    let mut rig = rig(|_, _| {}).await?;
+    let key = rig.server.device_key("luke", "iphone").await?;
+    let session = open(&rig.server, &key).await?;
+    let path = format!("/relay/sessions/{}", session["id"].as_str().ok_or("id")?);
+    let mut conn = join(&mut rig).await;
+    let user = rig
+        .server
+        .test
+        .db
+        .read_blocking(|c| trackside_core::repo::users::by_username(c, "luke"))?
+        .ok_or("luke")?;
+    let streams: Vec<_> =
+        std::iter::from_fn(|| rig.server.auth.user_stream_slot(user.key)).collect();
+    assert_eq!(streams.len(), 8);
+
+    play_tone(&mut conn).await;
+    let paused = rig.fake.wait_for("player_queues/pause", 1).await;
+    assert_eq!(paused[0].args["queue_id"], conn.client_id().as_str());
+    rig.server
+        .until(&key, &path, |_, s| s["state"] == "playing")
+        .await?;
+
+    drop(streams);
+    conn.send("stream/end", json!({})).await;
+    rig.server
+        .until(&key, &path, |_, s| s["state"] == "paused")
+        .await?;
+    play_tone(&mut conn).await;
+    until_free_slots(&rig.server, "luke", 7).await?;
+    rig.server.assistant.shutdown().await;
+    Ok(())
+}
+
 #[tokio::test]
 async fn sessions_end_when_music_assistant_goes_away() -> TestResult {
     let mut rig = rig(|_, _| {}).await?;

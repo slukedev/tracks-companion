@@ -45,6 +45,9 @@ responses carry `Cache-Control: no-store`.
 - If the connection to Music Assistant drops, Trackside reconnects and resumes playback. If
   Music Assistant stays away for 30 seconds, or its address or token changes, the phones'
   relays end and the apps fall back to the calm "not available" state.
+- A playing relay counts as one of its owner's eight streams at once, like any other stream
+  from Trackside, until it pauses or ends. If the person already has eight going, Trackside
+  pauses the phone's player in Music Assistant.
 - Each phone is only visible to its owner: other people never see it among the speakers or
   in Music Assistant groups through Trackside.
 - When the server stops, every relay says goodbye to Music Assistant first.
@@ -62,6 +65,7 @@ responses carry `Cache-Control: no-store`.
 | It ends with `failed` after 30 seconds | Music Assistant did not activate the player; its log (Sendspin provider) says why. Guest players that only play are normally approved automatically |
 | Cellular quality is missing | ffmpeg is not installed (the `slim` image) |
 | "Too many listeners" | the server limit is reached; raise `relay_max_sessions` if the machine and your services allow it, or `music_assistant.relay_max_per_user` for one person's devices |
+| The phone's music pauses as soon as it starts | that person already has eight streams going (other apps or downloads); one has to finish first |
 | The phone's music stops after 30 seconds in the background | the app stopped fetching audio, so Trackside paused Music Assistant; it resumes when the app plays again |
 | Phones can't relay with an `https` Music Assistant behind a private CA | the relay trusts the system certificate store only; add the CA to the system store |
 

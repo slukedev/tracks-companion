@@ -560,10 +560,27 @@ impl Inner {
 
     /// Announces every change of a session to its owner until it ends, then takes its
     /// speaker away.
+    ///
+    /// While playing, the session holds one of its user's stream slots (contract 3.7). With
+    /// none free it asks Music Assistant to pause, as a stream request would get `429`.
     async fn follow_relay(self: Arc<Self>, meta: Meta) {
         let mut changes = meta.session.subscribe();
+        let mut slot = None;
         loop {
             let info = changes.borrow_and_update().clone();
+            if info.state == SessionState::Playing {
+                if slot.is_none() {
+                    slot = self.auth.user_stream_slot(meta.user);
+                    if slot.is_none() {
+                        tracing::info!(
+                            "relay over the user's stream limit, pausing its player"
+                        );
+                        self.pause_relay(&meta.player).await;
+                    }
+                }
+            } else {
+                slot = None;
+            }
             self.publish(vec![SpeakerEvent::Relay(Box::new(meta.view(&info)))]);
             if info.state == SessionState::Ended {
                 break;
@@ -572,6 +589,7 @@ impl Inner {
                 break;
             }
         }
+        drop(slot);
         if let Some(stored) = lock(&self.relay.sessions).get_mut(&meta.id) {
             stored.ended_at = Some(Instant::now());
         }
@@ -585,6 +603,16 @@ impl Inner {
         }
         drop(hub);
         self.refresh_speakers();
+    }
+
+    async fn pause_relay(&self, player: &str) {
+        let paused = match self.connected() {
+            Ok(client) => client.queue_pause(player).await.map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+        if let Err(error) = paused {
+            tracing::warn!(%error, "relay could not pause the player");
+        }
     }
 
     /// Ends the relays of revoked credentials and deletes the keys of devices that are gone.
