@@ -71,6 +71,60 @@ impl FakeServer {
     }
 }
 
+/// A `wss://` front for a [`FakeServer`], with a self-signed certificate for `localhost`.
+#[derive(Debug)]
+pub struct TlsFront {
+    pub url: String,
+    /// The certificate it presents, which a client must trust to get through.
+    pub certificate: rustls::pki_types::CertificateDer<'static>,
+    /// The same certificate in PEM.
+    pub pem: String,
+}
+
+impl FakeServer {
+    /// Terminates TLS in front of this server: every connection to the returned `wss://` URL
+    /// is decrypted and passed on to the fake.
+    pub async fn tls_front(&self) -> TlsFront {
+        let made = rcgen::generate_simple_self_signed(vec![String::from("localhost")])
+            .expect("self-signed certificate");
+        let certificate = made.cert.der().clone();
+        let pem = made.cert.pem();
+        let key = rustls::pki_types::PrivateKeyDer::Pkcs8(
+            rustls::pki_types::PrivatePkcs8KeyDer::from(made.signing_key.serialize_der()),
+        );
+        let config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("protocol versions")
+        .with_no_client_auth()
+        .with_single_cert(vec![certificate.clone()], key)
+        .expect("server certificate");
+        let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(config));
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let backend = self.addr;
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    let Ok(mut tls) = acceptor.accept(stream).await else {
+                        return;
+                    };
+                    if let Ok(mut plain) = TcpStream::connect(backend).await {
+                        let _ = tokio::io::copy_bidirectional(&mut tls, &mut plain).await;
+                    }
+                });
+            }
+        });
+        TlsFront {
+            url: format!("wss://localhost:{port}/sendspin"),
+            certificate,
+            pem,
+        }
+    }
+}
+
 /// What the fake puts into the handshake, to test the client's checks.
 #[derive(Clone, Debug)]
 pub struct HandshakeScript {

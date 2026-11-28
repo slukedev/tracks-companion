@@ -8,6 +8,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use rustls::ClientConfig;
+use rustls::pki_types::CertificateDer;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -103,15 +104,27 @@ impl Client {
     }
 }
 
-fn tls_config() -> Result<Arc<ClientConfig>, String> {
+/// The TLS setup for `wss://`: the workspace's rustls with ring, verified by the platform's
+/// certificate store, or by the custom CA alone when one is given.
+fn tls_config(custom: Option<&[CertificateDer<'static>]>) -> Result<Arc<ClientConfig>, String> {
     use rustls_platform_verifier::BuilderVerifierExt;
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let config = ClientConfig::builder_with_provider(provider)
+    let builder = ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
-        .map_err(|e| e.to_string())?
-        .with_platform_verifier()
-        .map_err(|e| e.to_string())?
-        .with_no_client_auth();
+        .map_err(|e| e.to_string())?;
+    let config = match custom {
+        Some(certificates) => {
+            let mut roots = rustls::RootCertStore::empty();
+            for certificate in certificates {
+                roots.add(certificate.clone()).map_err(|e| e.to_string())?;
+            }
+            builder.with_root_certificates(roots).with_no_client_auth()
+        }
+        None => builder
+            .with_platform_verifier()
+            .map_err(|e| e.to_string())?
+            .with_no_client_auth(),
+    };
     Ok(Arc::new(config))
 }
 
@@ -128,7 +141,10 @@ async fn supervise(
     mut commands: mpsc::Receiver<Command>,
     cancel: CancellationToken,
 ) {
-    let tls = config.url.starts_with("wss:").then(tls_config);
+    let tls = config
+        .url
+        .starts_with("wss:")
+        .then(|| tls_config(config.custom_ca.as_deref()));
     let mut rng = fastrand::Rng::new();
     let mut attempt = 0u32;
     let mut generation = 0u64;

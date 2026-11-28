@@ -1777,48 +1777,51 @@ fn admin_extras(s: &Seed) -> Result<Vec<(&'static str, serde_json::Value)>, serd
         (
             "admin/api-keys.json",
             serde_json::to_value(a::AdminKeys {
-                keys: vec![a::AdminKey {
-                    id: record.id.clone(),
-                    kind: record.kind.clone(),
-                    name: record.name.clone(),
-                    prefix: record.prefix.clone(),
-                    scopes: record.scopes.clone(),
-                    user: who.clone(),
-                    created_at: record.created_at,
-                    last_used_at: record.last_used_at,
-                    last_used_ip: record.last_used_ip.clone(),
-                    managed_by: None,
-                }, {
-                    let service = service_account();
-                    let managed = ApiKeyRow {
-                        id: id("key music assistant"),
-                        user: service.key,
-                        device: None,
-                        kind: KeyKind::ApiKey,
-                        name: String::from(trackside_assistant::SERVICE_DISPLAY_NAME),
-                        prefix: String::from("tsk_Qm3vXa"),
-                        scopes: Scopes::LIBRARY.union(Scopes::STREAM).to_string(),
-                        created_at: at(-86_400 * 2),
-                        last_used_at: Some(at(-60)),
-                        last_used_ip: Some(String::from("192.168.1.20")),
-                        expires_at: None,
-                        revoked_at: None,
-                        managed_by: Some(String::from(trackside_assistant::SERVICE)),
-                    };
-                    let record = map::key_record(&managed);
+                keys: vec![
                     a::AdminKey {
-                        id: record.id,
-                        kind: record.kind,
-                        name: record.name,
-                        prefix: record.prefix,
-                        scopes: record.scopes,
-                        user: map::user_ref(&service),
+                        id: record.id.clone(),
+                        kind: record.kind.clone(),
+                        name: record.name.clone(),
+                        prefix: record.prefix.clone(),
+                        scopes: record.scopes.clone(),
+                        user: who.clone(),
                         created_at: record.created_at,
                         last_used_at: record.last_used_at,
-                        last_used_ip: record.last_used_ip,
-                        managed_by: managed.managed_by,
-                    }
-                }],
+                        last_used_ip: record.last_used_ip.clone(),
+                        managed_by: None,
+                    },
+                    {
+                        let service = service_account();
+                        let managed = ApiKeyRow {
+                            id: id("key music assistant"),
+                            user: service.key,
+                            device: None,
+                            kind: KeyKind::ApiKey,
+                            name: String::from(trackside_assistant::SERVICE_DISPLAY_NAME),
+                            prefix: String::from("tsk_Qm3vXa"),
+                            scopes: Scopes::LIBRARY.union(Scopes::STREAM).to_string(),
+                            created_at: at(-86_400 * 2),
+                            last_used_at: Some(at(-60)),
+                            last_used_ip: Some(String::from("192.168.1.20")),
+                            expires_at: None,
+                            revoked_at: None,
+                            managed_by: Some(String::from(trackside_assistant::SERVICE)),
+                        };
+                        let record = map::key_record(&managed);
+                        a::AdminKey {
+                            id: record.id,
+                            kind: record.kind,
+                            name: record.name,
+                            prefix: record.prefix,
+                            scopes: record.scopes,
+                            user: map::user_ref(&service),
+                            created_at: record.created_at,
+                            last_used_at: record.last_used_at,
+                            last_used_ip: record.last_used_ip,
+                            managed_by: managed.managed_by,
+                        }
+                    },
+                ],
             })?,
         ),
         (

@@ -270,6 +270,7 @@ impl Relays {
         inner: &Arc<Inner>,
         ws_url: &str,
         token: &str,
+        custom_ca: Option<&trackside_mass::CustomCa>,
         max_sessions: u32,
         max_per_user: u32,
     ) -> Arc<RelayManager> {
@@ -277,6 +278,7 @@ impl Relays {
             format!("{}/sendspin", ws_url.strip_suffix("/ws").unwrap_or(ws_url))
         });
         let mut config = RelayConfig::new(url, Some(trackside_sendspin::Token::new(token)));
+        config.custom_ca = custom_ca.map(|ca| ca.certificates().into());
         config.ffmpeg.clone_from(&self.ffmpeg);
         config.fetch_timeout = self.tuning.fetch_timeout;
         config.paused_timeout = self.tuning.paused_timeout;
@@ -465,6 +467,7 @@ impl Inner {
                 self,
                 &ws_url,
                 &token,
+                effective.ca.as_ref(),
                 effective.relay_max_sessions,
                 per_user,
             )
@@ -572,9 +575,7 @@ impl Inner {
                 if slot.is_none() {
                     slot = self.auth.user_stream_slot(meta.user);
                     if slot.is_none() {
-                        tracing::info!(
-                            "relay over the user's stream limit, pausing its player"
-                        );
+                        tracing::info!("relay over the user's stream limit, pausing its player");
                         self.pause_relay(&meta.player).await;
                     }
                 }

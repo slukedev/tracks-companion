@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
-use trackside_sendspin::{self as sendspin, IdentityStore, PlayerTiming, Token};
+use trackside_sendspin::{self as sendspin, CertificateDer, IdentityStore, PlayerTiming, Token};
 
 use crate::epoch::Shape;
 use crate::session::{RelaySession, Settings};
@@ -21,6 +21,9 @@ pub struct RelayConfig {
     pub sendspin_url: String,
     /// The Music Assistant token for the proxy; `None` for a direct Sendspin server.
     pub token: Option<Token>,
+    /// For `wss://`: the certificates to trust instead of the platform's store (Music
+    /// Assistant's custom CA).
+    pub custom_ca: Option<Arc<[CertificateDer<'static>]>>,
     /// ffmpeg, for the cellular tier. Without it only lossless is offered.
     pub ffmpeg: Option<PathBuf>,
     pub timing: PlayerTiming,
@@ -56,6 +59,7 @@ impl RelayConfig {
         Self {
             sendspin_url: sendspin_url.into(),
             token,
+            custom_ca: None,
             ffmpeg: None,
             timing: PlayerTiming {
                 output_delay_ms: 4000,
@@ -271,6 +275,7 @@ impl RelayManager {
             &request.name,
         );
         sendspin_config.timing = self.config.timing;
+        sendspin_config.custom_ca.clone_from(&self.config.custom_ca);
         sendspin_config.hello.buffer_capacity = self.config.buffer_capacity;
         sendspin_config
             .hello

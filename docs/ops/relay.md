@@ -10,6 +10,9 @@ the audio on as it plays. This page is what a self-hoster needs to know about it
   Sendspin server through Music Assistant's own web port (`/sendspin`), with the same token, so
   no extra port has to be open. The Sendspin provider must be enabled in Music Assistant (it is
   by default).
+- For an `https` Music Assistant with a private CA or a self-signed certificate, the custom CA
+  set in Speakers (or `music_assistant.ca_file`) covers the relay too: like the main
+  connection, it then trusts that CA alone instead of the system certificate store.
 - For the cellular tier (AAC), ffmpeg. The `standard` and `acquire` images have it; on `slim`
   phones get the lossless tier only.
 - Nothing else. The relay needs no pairing: Music Assistant accepts it as a guest player because
@@ -61,12 +64,12 @@ responses carry `Cache-Control: no-store`.
 | Symptom | Likely cause |
 |---|---|
 | Phones can't play services; the dashboard says the relay is unsupported | Music Assistant older than 2.10, or its Sendspin provider is disabled |
+| Phones can't relay with an `https` Music Assistant, though speakers work | the relay could not verify the certificate; check the custom CA in Speakers covers the certificate Music Assistant presents on its web port |
 | The relay session ends with `failed` right away | the Music Assistant token was refused; set a new one in Speakers |
 | It ends with `failed` after 30 seconds | Music Assistant did not activate the player; its log (Sendspin provider) says why. Guest players that only play are normally approved automatically |
 | Cellular quality is missing | ffmpeg is not installed (the `slim` image) |
 | "Too many listeners" | the server limit is reached; raise `relay_max_sessions` if the machine and your services allow it, or `music_assistant.relay_max_per_user` for one person's devices |
 | The phone's music pauses as soon as it starts | that person already has eight streams going (other apps or downloads); one has to finish first |
 | The phone's music stops after 30 seconds in the background | the app stopped fetching audio, so Trackside paused Music Assistant; it resumes when the app plays again |
-| Phones can't relay with an `https` Music Assistant behind a private CA | the relay trusts the system certificate store only; add the CA to the system store |
 
 Tokens and player keys never appear in the server log.

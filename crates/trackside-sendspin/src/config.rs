@@ -1,4 +1,7 @@
+use std::sync::Arc;
 use std::time::Duration;
+
+use rustls::pki_types::CertificateDer;
 
 use zeroize::Zeroizing;
 
@@ -96,6 +99,9 @@ pub struct Config {
     pub give_up_after: Duration,
     /// The largest message, reassembled from fragments.
     pub max_message_bytes: usize,
+    /// For `wss://` with a private CA or a self-signed certificate: trust only these
+    /// certificates instead of the platform's store, as the Music Assistant client does.
+    pub custom_ca: Option<Arc<[CertificateDer<'static>]>>,
 }
 
 impl Config {
@@ -138,6 +144,7 @@ impl Config {
             retention: Duration::from_secs(180),
             give_up_after: Duration::from_mins(10),
             max_message_bytes: 4 << 20,
+            custom_ca: None,
         }
     }
 }

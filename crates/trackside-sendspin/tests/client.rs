@@ -679,3 +679,36 @@ async fn the_client_gives_up_after_its_window() {
     }
     assert!(stopped(&mut s.events).await.is_some());
 }
+
+#[tokio::test]
+async fn wss_trusts_the_custom_ca_alone_when_one_is_given() {
+    let mut server = FakeServer::start().await;
+    let front = server.tls_front().await;
+    let (handler, _events) = collect();
+    let cancel = CancellationToken::new();
+    let mut trusting = config(&server, Identity::generate().expect("key"));
+    trusting.url.clone_from(&front.url);
+    trusting.custom_ca = Some(vec![front.certificate.clone()].into());
+    let _client = Client::start(trusting, handler, cancel.clone());
+    let mut conn = server.accept().await;
+    assert_eq!(conn.expect_auth().await["token"], TOKEN);
+    cancel.cancel();
+
+    let (handler, mut events) = collect();
+    let cancel = CancellationToken::new();
+    let mut platform = config(&server, Identity::generate().expect("key"));
+    platform.url.clone_from(&front.url);
+    let _client = Client::start(platform, handler, cancel.clone());
+    let error = disconnected(&mut events).await;
+    assert!(
+        error.to_string().to_lowercase().contains("certificate"),
+        "without the CA the platform store refuses it: {error}"
+    );
+    assert!(
+        server
+            .try_accept(Duration::from_millis(300))
+            .await
+            .is_none()
+    );
+    cancel.cancel();
+}

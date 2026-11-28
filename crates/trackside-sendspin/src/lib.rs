@@ -39,4 +39,6 @@ pub use identity::{
     Identity, IdentityError, IdentityStore, MemoryIdentityStore, StoreFuture, load_or_create,
 };
 pub use noise::{NoiseError, SENTINEL_PSK, SUITE, psk_id_for};
+/// A trust anchor for [`Config::custom_ca`].
+pub use rustls::pki_types::CertificateDer;
 pub use wire::{Format, GroupUpdate, HelloInfo, PlayerTiming, StreamFormat};

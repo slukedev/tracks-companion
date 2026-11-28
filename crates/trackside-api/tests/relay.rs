@@ -455,16 +455,29 @@ async fn rig_with(
     model: Model,
     edit: impl FnOnce(&mut Config, &mut RelayTuning),
 ) -> Result<Rig, Error> {
-    let spin = FakeServer::start().await;
+    rig_on(FakeServer::start().await, model, json!({}), edit).await
+}
+
+/// A rig on `spin`, with `settings` added to the Music Assistant settings it saves.
+async fn rig_on(
+    spin: FakeServer,
+    model: Model,
+    settings: Value,
+    edit: impl FnOnce(&mut Config, &mut RelayTuning),
+) -> Result<Rig, Error> {
     let server = start(&spin, edit).await?;
     let fake = FakeAssistant::start(model).await;
     let cookie = server.setup_admin().await?;
+    let mut patch = json!({"url": fake.url(), "token": fake.token(), "auto_register": false});
+    if let (Some(patch), Some(extra)) = (patch.as_object_mut(), settings.as_object()) {
+        patch.extend(extra.clone());
+    }
     let (status, body) = server
         .admin(
             &cookie,
             reqwest::Method::PATCH,
             "/music-assistant",
-            Some(json!({"url": fake.url(), "token": fake.token(), "auto_register": false})),
+            Some(patch),
         )
         .await?;
     assert_eq!(status, 200, "{body}");
@@ -1028,7 +1041,11 @@ async fn a_playing_relay_holds_a_stream_slot_until_it_pauses_or_ends() -> TestRe
     rig.server
         .until(&key, &path, |_, s| s["state"] == "ready")
         .await?;
-    assert_eq!(free_stream_slots(&rig.server, "luke")?, 8, "ready holds none");
+    assert_eq!(
+        free_stream_slots(&rig.server, "luke")?,
+        8,
+        "ready holds none"
+    );
 
     play_tone(&mut conn).await;
     rig.server
@@ -1089,6 +1106,45 @@ async fn a_relay_over_the_users_stream_limit_pauses_music_assistant() -> TestRes
         .await?;
     play_tone(&mut conn).await;
     until_free_slots(&rig.server, "luke", 7).await?;
+    rig.server.assistant.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_relay_trusts_music_assistants_custom_ca() -> TestResult {
+    let spin = FakeServer::start().await;
+    let front = spin.tls_front().await;
+    let url = front.url.clone();
+    let mut rig = rig_on(spin, model(), json!({"ca_pem": front.pem}), |_, relay| {
+        relay.sendspin_url = Some(url);
+    })
+    .await?;
+    let key = rig.server.device_key("luke", "iphone").await?;
+    let session = open(&rig.server, &key).await?;
+    let path = format!("/relay/sessions/{}", session["id"].as_str().ok_or("id")?);
+    let _conn = join(&mut rig).await;
+    rig.server
+        .until(&key, &path, |_, s| s["state"] == "ready")
+        .await?;
+    rig.server.assistant.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn without_the_custom_ca_the_relay_refuses_a_private_certificate() -> TestResult {
+    let spin = FakeServer::start().await;
+    let front = spin.tls_front().await;
+    let url = front.url.clone();
+    let mut rig = rig_on(spin, model(), json!({}), |_, relay| {
+        relay.sendspin_url = Some(url);
+    })
+    .await?;
+    let key = rig.server.device_key("luke", "iphone").await?;
+    open(&rig.server, &key).await?;
+    assert!(
+        rig.spin.try_accept(Duration::from_secs(1)).await.is_none(),
+        "the platform store does not know the certificate"
+    );
     rig.server.assistant.shutdown().await;
     Ok(())
 }
