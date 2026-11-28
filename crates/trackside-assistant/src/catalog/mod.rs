@@ -1,6 +1,7 @@
 //! The streaming catalog over the same Music Assistant connection as speakers (contract
 //! section 2): the services connected in Music Assistant, search across them, item detail,
-//! each service's saved library and the images Music Assistant names for them.
+//! each service's saved library, their recommendations ([`recommend`]) and the images Music
+//! Assistant names for them.
 //!
 //! A search asks every service on its own, at most [`MAX_CALLS`] Music Assistant requests at
 //! once across all callers, and waits until [`SEARCH_WAIT`] for the slowest; a service that
@@ -13,8 +14,10 @@
 pub(crate) mod art;
 mod cache;
 pub(crate) mod convert;
+mod recommend;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -27,8 +30,8 @@ use trackside_core::assistant::SpeakersState;
 use trackside_core::catalog::{
     ARTIST_ALBUMS, ARTIST_TOP_TRACKS, AccountState, CatalogDetail, CatalogEntry, CatalogError,
     CatalogKind, CatalogKinds, CatalogPage, CatalogResults, CatalogSearch, CatalogService,
-    CatalogTrack, LibraryPage, PAGE_LIMIT_MAX, SEARCH_LIMIT_MAX, SEARCH_WAIT, ServiceCapability,
-    ServiceList, ServiceOutcome, ServiceSearchState,
+    CatalogTrack, LibraryPage, PAGE_LIMIT_MAX, Recommendations, SEARCH_LIMIT_MAX, SEARCH_WAIT,
+    ServiceCapability, ServiceList, ServiceOutcome, ServiceSearchState,
 };
 use trackside_core::catalog_ref::CatalogRef;
 use trackside_core::{Access, CatalogArtId, ServiceId, UserKey};
@@ -84,6 +87,9 @@ struct SearchKey {
 pub(crate) struct State {
     searches: Mutex<TtlCache<SearchKey, Arc<CatalogResults>>>,
     lists: Mutex<TtlCache<String, Arc<Vec<MediaItem>>>>,
+    recommendations: Mutex<TtlCache<recommend::Key, Arc<Recommendations>>>,
+    /// Counts [`State::services_changed`], so an answer read before a change is not kept.
+    services_generation: AtomicU64,
     art: Mutex<ArtBook>,
     configs: tokio::sync::Mutex<Option<(Instant, HashMap<String, ProviderConfig>)>>,
     calls: Semaphore,
@@ -96,6 +102,8 @@ impl Default for State {
         Self {
             searches: Mutex::new(TtlCache::new(SEARCHES_KEPT, SEARCH_ITEMS_KEPT)),
             lists: Mutex::new(TtlCache::new(LISTS_KEPT, LIST_ITEMS_KEPT)),
+            recommendations: Mutex::new(TtlCache::new(recommend::KEPT, recommend::ITEMS_KEPT)),
+            services_generation: AtomicU64::new(0),
             art: Mutex::new(ArtBook::new(ART_REMEMBERED)),
             configs: tokio::sync::Mutex::new(None),
             calls: Semaphore::new(MAX_CALLS),
@@ -110,6 +118,15 @@ impl State {
     pub(crate) fn reset(&self) {
         lock(&self.searches).clear();
         lock(&self.lists).clear();
+        self.services_changed();
+    }
+
+    /// Forgets the recommendations, which depend on the services listed and their sign-in
+    /// states: called whenever `catalog_services` is announced.
+    pub(crate) fn services_changed(&self) {
+        let mut kept = lock(&self.recommendations);
+        self.services_generation.fetch_add(1, Ordering::SeqCst);
+        kept.clear();
     }
 }
 
@@ -173,6 +190,9 @@ fn capabilities(p: &ProviderInstance) -> Vec<ServiceCapability> {
     }
     if has("library_radios") || has("radio") {
         out.push(ServiceCapability::Radio);
+    }
+    if has("recommendations") {
+        out.push(ServiceCapability::Recommendations);
     }
     if has("search") {
         out.push(ServiceCapability::Search);
@@ -962,13 +982,14 @@ mod tests {
     fn capabilities_come_from_the_provider_features() {
         let p = provider(
             json!({"type": "music", "domain": "spotify", "instance_id": "s",
-            "supported_features": ["search", "library_tracks", "library_playlists", "artist_toptracks", "similar_tracks"]}),
+            "supported_features": ["search", "library_tracks", "library_playlists", "artist_toptracks", "similar_tracks", "recommendations"]}),
         );
         assert_eq!(
             capabilities(&p),
             [
                 ServiceCapability::Library,
                 ServiceCapability::Playlists,
+                ServiceCapability::Recommendations,
                 ServiceCapability::Search,
                 ServiceCapability::Similar,
                 ServiceCapability::TopTracks

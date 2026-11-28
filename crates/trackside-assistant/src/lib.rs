@@ -45,7 +45,7 @@ use trackside_core::assistant::{
 };
 use trackside_core::catalog::{
     CatalogDetail, CatalogError, CatalogKind, CatalogPage, CatalogResults, CatalogSearch,
-    LibraryPage, ServiceList,
+    LibraryPage, Recommendations, RecommendationsQuery, ServiceList,
 };
 use trackside_core::config::Secret;
 use trackside_core::relay::{
@@ -282,12 +282,17 @@ impl Inner {
         self.db.clock().now()
     }
 
+    /// Announces `catalog_services`, forgetting first what depends on the services.
+    fn catalog_services_changed(&self, state: SpeakersState) {
+        self.catalog.services_changed();
+        self.events.publish(ServerEvent::CatalogServices { state });
+    }
+
     fn publish(&self, events: Vec<SpeakerEvent>) {
         self.hub_changed.notify_waiters();
         for event in events {
             if let SpeakerEvent::State { state, .. } = &event {
-                self.events
-                    .publish(ServerEvent::CatalogServices { state: *state });
+                self.catalog_services_changed(*state);
             }
             self.events.publish(ServerEvent::Speaker(self.owned(event)));
         }
@@ -654,7 +659,7 @@ impl Inner {
             self.publish(events);
             if catalog_changed {
                 let state = lock(&self.conn).list.state;
-                self.events.publish(ServerEvent::CatalogServices { state });
+                self.catalog_services_changed(state);
             }
             if connected {
                 let me = Arc::clone(&self);
@@ -928,7 +933,7 @@ impl Inner {
         if change.hidden_services.is_some() {
             self.catalog.reset();
             let state = lock(&self.conn).list.state;
-            self.events.publish(ServerEvent::CatalogServices { state });
+            self.catalog_services_changed(state);
         }
         if reconnect {
             if url_changed {
@@ -1221,6 +1226,14 @@ impl CatalogControl for Inner {
         page: CatalogPage,
     ) -> BoxFuture<'a, Result<LibraryPage, CatalogError>> {
         Box::pin(self.catalog_library(service, kind, page))
+    }
+
+    fn recommendations<'a>(
+        &'a self,
+        caller: &'a Access,
+        query: RecommendationsQuery,
+    ) -> BoxFuture<'a, Result<Recommendations, CatalogError>> {
+        Box::pin(self.catalog_recommendations(caller, query))
     }
 
     fn art_source(&self, id: &CatalogArtId) -> Option<String> {

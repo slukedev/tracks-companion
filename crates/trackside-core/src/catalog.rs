@@ -1,6 +1,6 @@
 //! The streaming catalog as the HTTP crates see it (contract section 2): the services
 //! connected in Music Assistant, search across them, item detail, each service's saved
-//! library, and the artwork Music Assistant names for them.
+//! library, the services' recommendations, and the artwork Music Assistant names for them.
 //!
 //! Nothing here downloads, stores or exports audio. Items play on speakers inside Music
 //! Assistant, or on a phone through the relay; the only bytes Trackside fetches are artwork
@@ -11,7 +11,7 @@ use std::time::Duration;
 use crate::access::Access;
 use crate::assistant::SpeakersState;
 use crate::control::BoxFuture;
-use crate::ids::{CatalogArtId, ServiceId};
+use crate::ids::{CatalogArtId, ServiceId, ShelfId};
 use crate::time::Millis;
 
 /// How long a search waits for the slowest service.
@@ -27,6 +27,15 @@ pub const ARTIST_TOP_TRACKS: usize = 20;
 pub const ARTIST_ALBUMS: usize = 100;
 /// The longest search text accepted.
 pub const MAX_QUERY_LEN: usize = 200;
+/// How long recommendations wait for Music Assistant, rows and their items together.
+pub const RECOMMENDATIONS_WAIT: Duration = Duration::from_secs(5);
+/// The default and the largest `limit` of recommendations: items per shelf.
+pub const RECOMMENDATIONS_LIMIT: u32 = 20;
+pub const RECOMMENDATIONS_LIMIT_MAX: u32 = 50;
+/// The most shelves an answer holds.
+pub const MAX_SHELVES: usize = 30;
+/// The most services a request may name.
+pub const MAX_SERVICES: usize = 50;
 
 macro_rules! wire_enum {
     ($(#[$meta:meta])* $name:ident { $($variant:ident => $text:literal),+ $(,)? }) => {
@@ -54,6 +63,7 @@ wire_enum!(
         Library => "library",
         Playlists => "playlists",
         Radio => "radio",
+        Recommendations => "recommendations",
         Search => "search",
         Similar => "similar",
         TopTracks => "top_tracks",
@@ -338,6 +348,60 @@ impl CatalogResults {
     }
 }
 
+wire_enum!(
+    /// How a shelf is meant to be shown: a row of tiles, or a timeline of what was played
+    /// last (Music Assistant's `RecommendationFolderType`).
+    ShelfKind {
+        Default => "default",
+        Timeline => "timeline",
+    }
+);
+
+/// `GET /catalog/recommendations`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct RecommendationsQuery {
+    /// `None`: every signed-in service that recommends.
+    pub services: Option<Vec<ServiceId>>,
+    /// Items per shelf.
+    pub limit: u32,
+}
+
+/// One recommendation row of one service, with the items the catalog shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Shelf {
+    pub id: ShelfId,
+    pub service: ServiceId,
+    /// As Music Assistant names the row, usually in English.
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub kind: ShelfKind,
+    /// Never empty.
+    pub items: Vec<CatalogEntry>,
+}
+
+/// The services' recommendations, in Music Assistant's order (one row of each service in
+/// turn).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Recommendations {
+    pub shelves: Vec<Shelf>,
+    pub services: Vec<ServiceOutcome>,
+    /// False when Music Assistant did not answer for some row in time.
+    pub complete: bool,
+}
+
+impl Recommendations {
+    /// Every track on every shelf, for naming owned songs.
+    pub fn tracks(&self) -> impl Iterator<Item = &CatalogTrack> {
+        self.shelves
+            .iter()
+            .flat_map(|s| s.items.iter())
+            .filter_map(|item| match item {
+                CatalogEntry::Track(track) => Some(track),
+                _ => None,
+            })
+    }
+}
+
 /// A cursor page.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CatalogPage {
@@ -422,6 +486,14 @@ pub trait CatalogControl: Send + Sync + 'static {
         kind: CatalogKind,
         page: CatalogPage,
     ) -> BoxFuture<'a, Result<LibraryPage, CatalogError>>;
+
+    /// The services' recommendation rows with their items, waiting at most
+    /// [`RECOMMENDATIONS_WAIT`].
+    fn recommendations<'a>(
+        &'a self,
+        caller: &'a Access,
+        query: RecommendationsQuery,
+    ) -> BoxFuture<'a, Result<Recommendations, CatalogError>>;
 
     /// The image address an `m` id was derived from, while it is known.
     fn art_source(&self, id: &CatalogArtId) -> Option<String>;

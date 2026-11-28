@@ -286,6 +286,12 @@ public_id!(
     RelaySessionId,
     'h'
 );
+public_id!(
+    /// A recommendation shelf: a Music Assistant recommendation row, derived from the server,
+    /// the provider instance that owns the row and the row's id there.
+    ShelfId,
+    'w'
+);
 
 impl SongId {
     /// The id a song gets when it is first seen: `BLAKE3("song" ‖ digest)`.
@@ -382,6 +388,20 @@ impl ServiceId {
             b"service",
             server_id.as_bytes(),
             instance_id.as_bytes(),
+        ]))
+    }
+}
+
+impl ShelfId {
+    /// `BLAKE3("shelf" ‖ ma_server_id ‖ 0x1F ‖ provider_instance_id ‖ 0x1F ‖ row_item_id)`.
+    pub fn derive(server_id: &str, instance_id: &str, row_id: &str) -> Self {
+        Self::from_hash(&hash_parts(&[
+            b"shelf",
+            server_id.as_bytes(),
+            b"\x1f",
+            instance_id.as_bytes(),
+            b"\x1f",
+            row_id.as_bytes(),
         ]))
     }
 }

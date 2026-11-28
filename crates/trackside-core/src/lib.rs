@@ -40,8 +40,8 @@ pub use events::{Audience, EventBus, ServerEvent};
 pub use ids::{
     AcquisitionId, AlbumId, ArtistId, ArtworkId, AudioDigest, CandidateToken, CatalogArtId,
     DeviceId, DeviceKey, ExternalArtId, FolderId, IdError, ImportId, InviteId, KeyId, LibraryId,
-    LibraryKey, PairingId, PlaylistId, PublicId, RelaySessionId, ScanRunId, Seq, ServiceId, SongId,
-    SpeakerCommandId, SpeakerId, UserId, UserKey, random_id,
+    LibraryKey, PairingId, PlaylistId, PublicId, RelaySessionId, ScanRunId, Seq, ServiceId,
+    ShelfId, SongId, SpeakerCommandId, SpeakerId, UserId, UserKey, random_id,
 };
 pub use records::Page;
 pub use time::{Clock, Millis, SystemClock, TestClock};
