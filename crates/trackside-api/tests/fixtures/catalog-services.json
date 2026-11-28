@@ -1,0 +1,51 @@
+{
+  "services": [
+    {
+      "account": {
+        "state": "ok"
+      },
+      "capabilities": [
+        "library",
+        "playlists",
+        "radio",
+        "search",
+        "similar",
+        "top_tracks"
+      ],
+      "id": "bqtyy4kcexcsg6wa0y4w5",
+      "logo_key": "spotify",
+      "name": "Spotify",
+      "quality": "high"
+    },
+    {
+      "account": {
+        "state": "ok"
+      },
+      "capabilities": [
+        "library",
+        "playlists",
+        "search",
+        "top_tracks"
+      ],
+      "id": "bnr6z9ds6zzv5xjpv0j1s",
+      "logo_key": "tidal",
+      "name": "Tidal",
+      "quality": "lossless"
+    },
+    {
+      "account": {
+        "detail": "The sign-in expired.",
+        "state": "signed_out"
+      },
+      "capabilities": [
+        "library",
+        "search"
+      ],
+      "id": "br5wm04d54mx0cw00fwzr",
+      "logo_key": "qobuz",
+      "name": "Qobuz",
+      "quality": "lossless"
+    }
+  ],
+  "state": "ok"
+}

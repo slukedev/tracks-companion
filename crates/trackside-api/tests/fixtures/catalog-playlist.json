@@ -1,0 +1,34 @@
+{
+  "next_cursor": "eyJvIjoxMDB9",
+  "playlist": {
+    "artwork_id": "m78a6d72awx3fd6jkzaht",
+    "editable": false,
+    "kind": "playlist",
+    "name": "This Is Beyoncé",
+    "owner": "Spotify",
+    "ref": "mc1.cGxheWxpc3Qfc3BvdGlmeR8zN2k5ZFFaRjFEWDRzV1Nwd3EzTGlP",
+    "service_id": "bqtyy4kcexcsg6wa0y4w5",
+    "track_count": 50
+  },
+  "tracks": [
+    {
+      "album": "I Am... Sasha Fierce",
+      "album_ref": "mc1.YWxidW0fc3BvdGlmeR8zOVA3VkQ3cWxnM1owbHRxNjBlSHA3",
+      "artist": "Beyoncé",
+      "artists": [
+        {
+          "name": "Beyoncé",
+          "ref": "mc1.YXJ0aXN0H3Nwb3RpZnkfNnZXRE85NjlQdk5xTllISU9XNXYwbQ"
+        }
+      ],
+      "artwork_id": "myweqhq0j9dpzb5wt5pmr",
+      "duration_ms": 261640,
+      "kind": "track",
+      "ref": "mc1.dHJhY2sfc3BvdGlmeR8wV3FkMHpBNXdOcFFuUUJHRVVIMGY0",
+      "service_id": "bqtyy4kcexcsg6wa0y4w5",
+      "song_id": "sdjcz08vf67h7cx28snq6",
+      "song_key": "halo\u001fbeyonce",
+      "title": "Halo"
+    }
+  ]
+}

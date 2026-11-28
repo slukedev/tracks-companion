@@ -8,6 +8,7 @@ use http::{HeaderValue, StatusCode, header};
 use trackside_auth::{AuthError, LinkError};
 use trackside_core::DbError;
 use trackside_core::assistant::{AssistantError, SpeakerError};
+use trackside_core::catalog::CatalogError;
 use trackside_core::control::{AcquireError, ScanControlError};
 use trackside_core::sync::SyncError;
 use trackside_media::MediaError;
@@ -481,6 +482,40 @@ impl From<SpeakerError> for ApiError {
                 .with_details(details)
             }
             SpeakerError::Invalid { field, message } => Self::bad_field(field, message),
+            other => Self::internal(&other),
+        }
+    }
+}
+
+impl From<CatalogError> for ApiError {
+    fn from(error: CatalogError) -> Self {
+        use serde_json::json;
+        match error {
+            CatalogError::NotFound => Self::not_found(),
+            CatalogError::Unavailable => Self::catalog_unavailable(),
+            CatalogError::SignedOut { service } => {
+                let mut details = json!({ "reason": "service_signed_out" });
+                if let Some(service) = service {
+                    details["service_id"] = json!(service.to_string());
+                }
+                Self::new(
+                    StatusCode::CONFLICT,
+                    "conflict",
+                    "The music service is signed out.",
+                )
+                .with_details(details)
+            }
+            CatalogError::Unsupported { capability } => Self::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "unsupported",
+                "The music service can't do that.",
+            )
+            .with_details(json!({ "capability": capability })),
+            CatalogError::Invalid { field, message } => Self::bad_field(field, message),
+            CatalogError::Failed(message) => {
+                tracing::warn!(%message, "a catalog request failed");
+                Self::catalog_unavailable()
+            }
             other => Self::internal(&other),
         }
     }

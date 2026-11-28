@@ -156,6 +156,9 @@ pub struct SearchResults {
     pub artists: Option<Section<Artist>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external: Option<ExternalSection>,
+    /// Streaming-service results (contract 2.3), never mixed into the library sections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog: Option<super::catalog::CatalogSearch>,
 }
 
 /// An item in `GET /me/stars`: a song, album or artist.
