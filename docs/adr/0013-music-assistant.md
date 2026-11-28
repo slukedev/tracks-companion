@@ -47,6 +47,12 @@ the same thing the service's own app does.
   through it. The relay is real time only and memory-bounded; segments are never written to
   disk and never offered for download. Acquisition (ADR-0006) keeps its sources and never takes
   MA as one.
+- **Artwork is the one exception, and only as thumbnails.** Catalog images are fetched only
+  from addresses MA gave for an item (MA's image proxy, or a public `https` URL; private
+  addresses other than MA's are refused), checked by their magic bytes, decoded and kept
+  re-encoded as JPEG of at most 1200 pixels in the existing artwork cache, under its byte cap
+  and LRU eviction. No original image bytes, metadata or audio from a service are stored;
+  search answers, track lists and image addresses stay in memory.
 - MA is optional. Without it nothing changes, `/me` offers no speakers or catalog, and a build
   can leave it out (`assistant` feature of `trackside-server`).
 
@@ -111,6 +117,6 @@ is listening, the way the service's own app listens; downloading is not, and sta
 
 1. [x] `trackside-mass` client, `trackside-assistant` adapter, `/speakers` and
    `/admin/music-assistant` (api.md sections 16 and 20).
-2. [ ] Streaming catalog routes over the same client.
+2. [x] Streaming catalog routes over the same client (api.md section 21).
 3. [ ] Relay wiring for phones (docs/ops/relay.md).
 4. [ ] Dashboard Speakers page.
