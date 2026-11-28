@@ -536,6 +536,10 @@ async fn registered(server: &Server, cookie: &str) -> Result<Value, Error> {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the registration and its key, step by step"
+)]
 async fn trackside_registers_itself_with_a_key_that_only_reads_and_streams() -> TestResult {
     let (server, fake, cookie) = connected().await?;
     let view = registered(&server, &cookie).await?;
@@ -629,30 +633,6 @@ async fn trackside_registers_itself_with_a_key_that_only_reads_and_streams() -> 
         )
         .await?;
     assert_eq!(status, 409, "a service account has no password");
-    let user_path = format!("/users/{}", service["id"].as_str().unwrap_or_default());
-    for change in [
-        json!({"role": "admin"}),
-        json!({"permissions": {"can_download": true}}),
-    ] {
-        let (status, body) = server
-            .admin(
-                &cookie,
-                reqwest::Method::PATCH,
-                &user_path,
-                Some(change.clone()),
-            )
-            .await?;
-        assert_eq!(status, 409, "{change}: {body}");
-        assert_eq!(
-            body["error"]["details"]["reason"], "service_account",
-            "{change}"
-        );
-    }
-    let (_, unchanged) = server
-        .admin(&cookie, reqwest::Method::GET, &user_path, None)
-        .await?;
-    assert_eq!(unchanged["role"], "member");
-    assert_eq!(unchanged["permissions"]["can_download"], false);
 
     // Unregistering removes the source and revokes the key.
     let (status, _) = server
@@ -1303,6 +1283,48 @@ async fn a_reinstalled_music_assistant_at_the_same_address_gets_a_new_key() -> T
             .contains("\"status\":\"ok\"")
     );
     assert_eq!(live_managed_keys(&server, &cookie).await?, 1);
+    server.assistant.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_service_accounts_role_and_permissions_are_fixed() -> TestResult {
+    let (server, _fake, cookie) = connected().await?;
+    let view = registered(&server, &cookie).await?;
+    let service = &view["service_user"];
+    let user_path = format!("/users/{}", service["id"].as_str().unwrap_or_default());
+    for change in [
+        json!({"role": "admin"}),
+        json!({"permissions": {"can_download": true}}),
+    ] {
+        let (status, body) = server
+            .admin(
+                &cookie,
+                reqwest::Method::PATCH,
+                &user_path,
+                Some(change.clone()),
+            )
+            .await?;
+        assert_eq!(status, 409, "{change}: {body}");
+        assert_eq!(
+            body["error"]["details"]["reason"], "service_account",
+            "{change}"
+        );
+    }
+    let (_, unchanged) = server
+        .admin(&cookie, reqwest::Method::GET, &user_path, None)
+        .await?;
+    assert_eq!(unchanged["role"], "member");
+    assert_eq!(unchanged["permissions"]["can_download"], false);
+    let (status, body) = server
+        .admin(
+            &cookie,
+            reqwest::Method::PATCH,
+            &user_path,
+            Some(json!({"display_name": "MA"})),
+        )
+        .await?;
+    assert_eq!(status, 200, "{body}");
     server.assistant.shutdown().await;
     Ok(())
 }
