@@ -53,6 +53,10 @@ pub struct Model {
     pub configs: Vec<Value>,
     /// Commands answered with this error code and details instead.
     pub failures: HashMap<String, (i64, String)>,
+    /// The `data` an error of [`Self::failures`] carries, by command.
+    pub failure_data: HashMap<String, Value>,
+    /// How many more times a command of [`Self::failures`] fails; without an entry, always.
+    pub failures_left: HashMap<String, u32>,
     /// New connections are closed at once while false.
     pub reachable: bool,
     /// `music/search` answers by provider instance id (a `SearchResults` object).
@@ -91,6 +95,8 @@ impl Default for Model {
             providers: Vec::new(),
             configs: Vec::new(),
             failures: HashMap::new(),
+            failure_data: HashMap::new(),
+            failures_left: HashMap::new(),
             reachable: true,
             search: HashMap::new(),
             items: HashMap::new(),
@@ -593,8 +599,19 @@ fn event(name: &str, object_id: &str, data: Value) -> Value {
 #[expect(clippy::too_many_lines, reason = "one table of commands")]
 fn answer(shared: &Shared, id: &str, command: &str, args: &Value) -> (Value, Vec<Value>) {
     let mut model = shared.model();
-    if let Some((code, details)) = model.failures.get(command) {
-        return (error(id, *code, details), Vec::new());
+    if let Some((code, details)) = model.failures.get(command).cloned() {
+        let mut answer = error(id, code, &details);
+        if let Some(data) = model.failure_data.get(command) {
+            answer["data"] = data.clone();
+        }
+        if let Some(left) = model.failures_left.get_mut(command) {
+            *left = left.saturating_sub(1);
+            if *left == 0 {
+                model.failures.remove(command);
+                model.failures_left.remove(command);
+            }
+        }
+        return (answer, Vec::new());
     }
     let admin = model.role == "admin";
     let player_id = args["player_id"]

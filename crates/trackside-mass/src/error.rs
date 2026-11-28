@@ -117,6 +117,9 @@ impl std::fmt::Display for ErrorCode {
 pub struct ServerError {
     pub code: ErrorCode,
     pub details: Option<String>,
+    /// Structured details some errors carry (`ProviderStreamHeld` names the player that holds
+    /// the stream: `queue_id`, `player_name`, `provider_instance`).
+    pub data: Option<serde_json::Value>,
 }
 
 /// Why a command got no usable answer.
@@ -156,6 +159,14 @@ impl RequestError {
     pub fn code(&self) -> Option<ErrorCode> {
         match self {
             Self::Server(e) => Some(e.code),
+            _ => None,
+        }
+    }
+
+    /// The structured details of an error answer, when it has them.
+    pub fn data(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Server(e) => e.data.as_ref(),
             _ => None,
         }
     }

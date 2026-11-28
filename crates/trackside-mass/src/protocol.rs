@@ -59,11 +59,13 @@ pub(crate) fn parse(text: &str) -> Result<Incoming, serde_json::Error> {
             Some(Value::String(s)) => Some(s),
             _ => None,
         };
+        let data = map.remove("data").filter(Value::is_object);
         return Ok(Incoming::Error {
             message_id: message_id.unwrap_or_default(),
             error: ServerError {
                 code: ErrorCode::from_code(code),
                 details,
+                data,
             },
         });
     }
@@ -111,6 +113,24 @@ mod tests {
             panic!("not an error")
         };
         assert_eq!(error.code, ErrorCode::InvalidToken);
+        assert_eq!(error.data, None);
+    }
+
+    #[test]
+    fn a_held_stream_names_its_holder() {
+        let parsed = parse(
+            r#"{"message_id":"9","error_code":29,"details":"Spotify is already playing on Kitchen",
+                "data":{"queue_id":"kitchen","player_name":"Kitchen","provider_instance":"spotify--a"}}"#,
+        )
+        .expect("parses");
+        let Incoming::Error { error, .. } = parsed else {
+            panic!("not an error")
+        };
+        assert_eq!(error.code, ErrorCode::ProviderStreamHeld);
+        assert_eq!(
+            error.data.as_ref().and_then(|d| d["queue_id"].as_str()),
+            Some("kitchen")
+        );
     }
 
     #[test]

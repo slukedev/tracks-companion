@@ -339,6 +339,35 @@ impl Client {
         self.listing(&command, args.into()).await
     }
 
+    /// Adds an item to Music Assistant's library (`music/library/add_item`), which also adds it
+    /// to the provider's own library in the background where the provider can edit that.
+    pub async fn library_add(&self, uri: &str) -> Result<(), RequestError> {
+        self.unit(
+            "music/library/add_item",
+            Args::new().set("item", uri).into(),
+        )
+        .await
+    }
+
+    /// Removes a library item (`music/library/remove_item`), and from the libraries of the
+    /// providers it is in where they can edit them. `recursive` also removes what depends on
+    /// it (an album's tracks); without it Music Assistant refuses while anything does.
+    pub async fn library_remove(
+        &self,
+        media_type: &MediaType,
+        library_item_id: &str,
+        recursive: bool,
+    ) -> Result<(), RequestError> {
+        if matches!(media_type, MediaType::Other(_) | MediaType::Unknown) {
+            return Err(RequestError::InvalidArgument("not a library media type"));
+        }
+        let args = Args::new()
+            .set("media_type", text(media_type))
+            .set("library_item_id", library_item_id)
+            .set("recursive", recursive);
+        self.unit("music/library/remove_item", args.into()).await
+    }
+
     /// The recommendation rows of every provider that offers them, the library's own
     /// included, in Music Assistant's interleaved order (`music/recommendations`). Rows that
     /// do not decode are dropped.
@@ -479,6 +508,12 @@ impl Client {
     pub async fn queue_pause(&self, queue_id: &str) -> Result<(), RequestError> {
         let args = Args::new().set("queue_id", queue_id);
         self.unit("player_queues/pause", args.into()).await
+    }
+
+    /// Stops the queue (`player_queues/stop`).
+    pub async fn queue_stop(&self, queue_id: &str) -> Result<(), RequestError> {
+        let args = Args::new().set("queue_id", queue_id);
+        self.unit("player_queues/stop", args.into()).await
     }
 
     pub async fn queue_shuffle(&self, queue_id: &str, enabled: bool) -> Result<(), RequestError> {
