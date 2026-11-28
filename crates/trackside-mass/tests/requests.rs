@@ -109,6 +109,69 @@ async fn an_answer_larger_than_the_limit_is_refused() {
 }
 
 #[tokio::test]
+async fn a_chunked_answer_over_its_byte_limit_is_refused() {
+    let mut server = FakeServer::start().await;
+    let mut options = server.options();
+    options.max_result_bytes = 4096;
+    let client = Client::start(options);
+    let mut conn = server.accept_ready().await;
+    wait_state(&client, ConnectionState::is_connected).await;
+
+    let call = tokio::spawn({
+        let client = client.clone();
+        async move { client.call::<Vec<String>>("big", None).await }
+    });
+    let sent = conn.recv().await;
+    let chunk = json!(["x".repeat(1500)]);
+    for _ in 0..3 {
+        conn.reply_partial(&sent.id, chunk.clone()).await;
+    }
+    let error = call.await.expect("joined").expect_err("too many bytes");
+    assert!(
+        matches!(error, RequestError::TooManyBytes { limit: 4096, .. }),
+        "{error:?}"
+    );
+    client.shutdown().await;
+}
+
+#[tokio::test]
+async fn chunked_answers_together_stay_under_the_assembling_limit() {
+    let mut server = FakeServer::start().await;
+    let mut options = server.options();
+    options.max_result_bytes = 1 << 20;
+    options.max_assembling_bytes = 4096;
+    let client = Client::start(options);
+    let mut conn = server.accept_ready().await;
+    wait_state(&client, ConnectionState::is_connected).await;
+
+    let first = tokio::spawn({
+        let client = client.clone();
+        async move { client.call::<Vec<String>>("one", None).await }
+    });
+    let one = conn.recv().await;
+    let second = tokio::spawn({
+        let client = client.clone();
+        async move { client.call::<Vec<String>>("two", None).await }
+    });
+    let two = conn.recv().await;
+    let chunk = json!(["x".repeat(1500)]);
+    conn.reply_partial(&one.id, chunk.clone()).await;
+    conn.reply_partial(&one.id, chunk.clone()).await;
+    conn.reply_partial(&two.id, chunk.clone()).await;
+    let error = second
+        .await
+        .expect("joined")
+        .expect_err("over the shared limit");
+    assert!(
+        matches!(error, RequestError::TooManyBytes { limit: 4096, .. }),
+        "{error:?}"
+    );
+    conn.reply(&one.id, json!([])).await;
+    assert_eq!(first.await.expect("joined").expect("answer").len(), 2);
+    client.shutdown().await;
+}
+
+#[tokio::test]
 async fn error_answers_keep_their_code_and_details() {
     let mut server = FakeServer::start().await;
     let (client, mut conn) = connected(&mut server).await;

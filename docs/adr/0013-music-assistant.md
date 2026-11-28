@@ -27,7 +27,8 @@ the same thing the service's own app does.
 ## Decision
 
 - Trackside talks to one MA server (`trackside-mass`, a WebSocket client built to run for
-  years: supervised reconnects, tolerant decoding of MA 2.10 and 2.11, bounded requests, a token
+  years: supervised reconnects, tolerant decoding of MA 2.10 and 2.11, bounded requests and answers (8 MiB a message,
+  16 MiB a chunked answer, 32 MiB of answers being assembled at once), a token
   that never reaches a log). The apps never talk to MA; every call and image goes through
   Trackside, under its own accounts, permissions and rate limits.
 - **Speakers.** MA's players appear in Tracks' Devices. Trackside turns MA's player and queue

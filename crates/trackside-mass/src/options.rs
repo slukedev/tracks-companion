@@ -43,6 +43,10 @@ pub struct Options {
     pub max_message_bytes: usize,
     /// The most items a chunked answer may assemble.
     pub max_result_items: usize,
+    /// The most bytes of messages a chunked answer may assemble.
+    pub max_result_bytes: usize,
+    /// The most bytes all chunked answers being assembled may hold together.
+    pub max_assembling_bytes: usize,
     /// For `wss://` with a private CA or a self-signed certificate: trust only these
     /// certificates instead of the platform's store.
     pub custom_ca: Option<CustomCa>,
@@ -119,8 +123,10 @@ impl Options {
             incompatible_retry: Duration::from_mins(15),
             stable_after: Duration::from_secs(30),
             event_capacity: 1024,
-            max_message_bytes: 64 << 20,
+            max_message_bytes: 8 << 20,
             max_result_items: 1_000_000,
+            max_result_bytes: 16 << 20,
+            max_assembling_bytes: 32 << 20,
             custom_ca: None,
         }
     }

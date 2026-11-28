@@ -141,6 +141,10 @@ pub enum RequestError {
     },
     #[error("the answer to {command} has more than {limit} items")]
     TooLarge { command: String, limit: usize },
+    /// The parts of a chunked answer add up to more than `limit` bytes, or every answer
+    /// being assembled together would.
+    #[error("the answer to {command} is larger than {limit} bytes")]
+    TooManyBytes { command: String, limit: usize },
     #[error("{0}")]
     InvalidArgument(&'static str),
     #[error("the Music Assistant client has shut down")]

@@ -221,6 +221,8 @@ struct Pending {
     timeout: Duration,
     key: Key,
     chunks: Option<Vec<Value>>,
+    /// Bytes of the messages in `chunks`.
+    chunk_bytes: usize,
     _permit: OwnedSemaphorePermit,
 }
 
@@ -352,6 +354,7 @@ impl Actor<'_> {
                 timeout: request.timeout,
                 key,
                 chunks: None,
+                chunk_bytes: 0,
                 _permit: request.permit,
             },
         );
@@ -364,7 +367,7 @@ impl Actor<'_> {
                 message_id,
                 result,
                 partial,
-            }) => self.on_result(&message_id, result, partial),
+            }) => self.on_result(&message_id, result, partial, text.len()),
             Ok(Incoming::Error { message_id, error }) => match self.finish(&message_id) {
                 Some(pending) => {
                     let _ = pending.reply.send(Err(RequestError::Server(error)));
@@ -393,8 +396,11 @@ impl Actor<'_> {
         }
     }
 
-    fn on_result(&mut self, id: &str, result: Value, partial: bool) {
+    fn on_result(&mut self, id: &str, result: Value, partial: bool, bytes: usize) {
         let limit = self.link.options.max_result_items;
+        let byte_limit = self.link.options.max_result_bytes;
+        let assembling_limit = self.link.options.max_assembling_bytes;
+        let assembling: usize = self.pending.values().map(|p| p.chunk_bytes).sum();
         let Some(pending) = self.pending.get_mut(id) else {
             tracing::trace!(id, "answer for a request nobody waits for");
             return;
@@ -402,6 +408,25 @@ impl Actor<'_> {
         if !partial && pending.chunks.is_none() {
             if let Some(pending) = self.finish(id) {
                 let _ = pending.reply.send(Ok(result));
+            }
+            return;
+        }
+        pending.chunk_bytes = pending.chunk_bytes.saturating_add(bytes);
+        let over = if pending.chunk_bytes > byte_limit {
+            Some(byte_limit)
+        } else if assembling.saturating_add(bytes) > assembling_limit {
+            Some(assembling_limit)
+        } else {
+            None
+        };
+        if let Some(limit) = over {
+            drop(result);
+            if let Some(pending) = self.finish(id) {
+                tracing::warn!(command = %pending.command, "Music Assistant answer over its byte limit");
+                let _ = pending.reply.send(Err(RequestError::TooManyBytes {
+                    command: pending.command,
+                    limit,
+                }));
             }
             return;
         }
