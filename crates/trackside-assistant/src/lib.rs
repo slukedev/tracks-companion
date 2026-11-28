@@ -17,8 +17,12 @@
 mod commands;
 mod convert;
 mod hub;
+mod identities;
 mod registration;
+mod relay;
 mod settings;
+
+pub use relay::RelayTuning;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
@@ -36,9 +40,13 @@ use trackside_core::assistant::{
     SpeakersState, TESTED_SCHEMA,
 };
 use trackside_core::config::Secret;
+use trackside_core::relay::{
+    RelayBody, RelayCaller, RelayControl, RelayError, RelayOpen, RelayOpened, RelayPart,
+    RelayTier, RelayView,
+};
 use trackside_core::{
-    Access, BoxFuture, CatalogArtId, Config, ConfigReport, Db, EventBus, Millis, ServerEvent,
-    ServiceId, SongId, SpeakerId,
+    Access, BoxFuture, CatalogArtId, Config, ConfigReport, Db, DeviceKey, EventBus, Millis,
+    RelaySessionId, ServerEvent, ServiceId, SongId, SpeakerId, UserKey,
 };
 use trackside_mass::models::{ProviderType, ServerInfo};
 use trackside_mass::{Client, ConnectError, Endpoint, Options, Session, Token, Update};
@@ -51,7 +59,7 @@ use crate::settings::Effective;
 pub const SERVICE: &str = "music_assistant";
 
 /// Waits a test may shorten.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Tuning {
     /// How long a lost connection reads `connecting` before `unavailable`.
     pub unavailable_after: Duration,
@@ -59,6 +67,7 @@ pub struct Tuning {
     pub command_timeout: Duration,
     /// Reconnect backoff and the wait after a refused token.
     pub retry: Duration,
+    pub relay: RelayTuning,
 }
 
 impl Default for Tuning {
@@ -67,6 +76,7 @@ impl Default for Tuning {
             unavailable_after: Duration::from_secs(30),
             command_timeout: Duration::from_secs(10),
             retry: Duration::from_secs(5),
+            relay: RelayTuning::default(),
         }
     }
 }
@@ -154,6 +164,9 @@ pub(crate) struct Inner {
     reconfigure_lock: tokio::sync::Mutex<()>,
     shutdown: CancellationToken,
     tasks: TaskTracker,
+    relay: relay::Relays,
+    /// Told whenever the speakers' state may have changed.
+    hub_changed: tokio::sync::Notify,
 }
 
 /// Music Assistant for Trackside. Cheap to clone.
@@ -179,6 +192,15 @@ impl Assistant {
         if let Some(error) = &effective.ca_error {
             tracing::warn!(%error, "the Music Assistant certificate authority cannot be used");
         }
+        let identities = Arc::new(identities::SealedIdentities::new(
+            deps.db.clone(),
+            Arc::clone(&deps.auth),
+        ));
+        if let Err(error) = identities.load_all().await {
+            tracing::warn!(%error, "cannot read the relay player keys");
+        }
+        let ffmpeg = trackside_relay::find_ffmpeg(deps.config.media.ffmpeg_path.as_deref());
+        let relay = relay::Relays::new(identities, ffmpeg, deps.tuning.relay.clone());
         let inner = Arc::new(Inner {
             db: deps.db,
             auth: deps.auth,
@@ -199,7 +221,14 @@ impl Assistant {
             reconfigure_lock: tokio::sync::Mutex::new(()),
             shutdown: deps.shutdown,
             tasks: TaskTracker::new(),
+            relay,
+            hub_changed: tokio::sync::Notify::new(),
         });
+        lock(&inner.hub)
+            .relay_players
+            .extend(inner.relay.identities.player_ids());
+        inner.sweep_identities().await;
+        inner.tasks.spawn(Arc::clone(&inner).follow_revocations());
         inner.reconfigure().await;
         Self { inner }
     }
@@ -209,8 +238,10 @@ impl Assistant {
         lock(&self.inner.link).as_ref().map(|l| l.client.clone())
     }
 
-    /// Disconnects and waits for every task.
+    /// Ends every relay with a goodbye to Music Assistant, disconnects and waits for every
+    /// task.
     pub async fn shutdown(&self) {
+        self.inner.shutdown_relays().await;
         let link = lock(&self.inner.link).take();
         if let Some(link) = link {
             link.cancel.cancel();
@@ -234,8 +265,31 @@ impl Inner {
     }
 
     fn publish(&self, events: Vec<SpeakerEvent>) {
+        self.hub_changed.notify_waiters();
         for event in events {
-            self.events.publish(ServerEvent::Speaker(event));
+            self.events.publish(ServerEvent::Speaker(self.owned(event)));
+        }
+    }
+
+    /// Ends relays of revoked credentials, and drops the keys of revoked devices.
+    async fn follow_revocations(self: Arc<Self>) {
+        let mut events = self.events.subscribe();
+        loop {
+            let event = tokio::select! {
+                () = self.shutdown.cancelled() => return,
+                event = events.recv() => event,
+            };
+            match event {
+                Ok(event) => {
+                    if let ServerEvent::CredentialRevoked { user, device } = &*event {
+                        self.on_revoked(*user, *device).await;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    self.sweep_identities().await;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+            }
         }
     }
 
@@ -315,8 +369,10 @@ impl Inner {
             }
         }
         let (Some(endpoint), Some(token)) = (endpoint, effective.token.clone()) else {
+            self.rebuild_relay(None);
             return;
         };
+        self.rebuild_relay(Some((endpoint.ws_url(), token.expose().to_owned())));
         let mut options = Options::new(endpoint.clone(), token);
         options.custom_ca.clone_from(&effective.ca);
         options.request_timeout = self.tuning.command_timeout;
@@ -427,6 +483,9 @@ impl Inner {
                         state: conn.list.state,
                         since: conn.list.since,
                     });
+                    if conn.list.state == SpeakersState::Unavailable {
+                        self.end_relays(trackside_relay::EndReason::AssistantUnavailable);
+                    }
                 }
             }
             if !state.is_connected() {
@@ -451,6 +510,7 @@ impl Inner {
                         let now = self.now();
                         conn.list = ListState { state: SpeakersState::Unavailable, since: Some(now) };
                         drop(conn);
+                        self.end_relays(trackside_relay::EndReason::AssistantUnavailable);
                         self.publish(vec![SpeakerEvent::State {
                             state: SpeakersState::Unavailable,
                             since: Some(now),
@@ -654,7 +714,7 @@ impl Inner {
                     && !hidden.contains(&p.instance_id)
             })
             .count();
-        let speakers = hub.speakers().len();
+        let speakers = hub.speakers().iter().filter(|s| s.relay.is_none()).count();
         (
             Some(u32::try_from(services).unwrap_or(u32::MAX)),
             Some(u32::try_from(speakers).unwrap_or(u32::MAX)),
@@ -693,9 +753,13 @@ impl Inner {
             }),
             hidden_services: effective.hidden_services.clone(),
             lan_url: self.lan_url(),
-            relays_active: 0,
+            relays_active: self.relay.active(),
             relays_max: effective.relay_max_sessions,
-            server: session.map(|s| Self::server_facts(&s.server)),
+            server: session.map(|s| {
+                let mut facts = Self::server_facts(&s.server);
+                facts.relay_supported = self.relay_supported();
+                facts
+            }),
             services,
             speakers,
             url_source: effective.url_source,
@@ -823,10 +887,15 @@ impl Inner {
             || fresh.enabled != effective.enabled
             || fresh.ca != effective.ca;
         let reregister = fresh.lan_url != effective.lan_url;
+        let fresh_max = fresh.relay_max_sessions;
         *self
             .effective
             .write()
             .unwrap_or_else(PoisonError::into_inner) = fresh;
+        self.relay.set_limits(
+            fresh_max,
+            self.config.music_assistant.relay_max_per_user,
+        );
         if reconnect {
             self.reconfigure().await;
         } else if reregister || (change.auto_register == Some(true)) {
@@ -956,7 +1025,11 @@ impl Inner {
         let (server_id, ours, counts) = {
             let hub = lock(&self.hub);
             let mut counts: HashMap<String, u32> = HashMap::new();
-            for player in hub.players.values().filter(|p| convert::visible(p)) {
+            for player in hub
+                .players
+                .values()
+                .filter(|p| convert::visible(p) && !hub.is_relay(&p.player_id))
+            {
                 *counts.entry(player.provider.clone()).or_default() += 1;
             }
             (
@@ -1002,11 +1075,15 @@ impl Inner {
         })
     }
 
-    fn list_for(&self) -> SpeakerList {
+    fn list_for(&self, caller: &Access) -> SpeakerList {
         let conn = lock(&self.conn).clone();
         let speakers = match conn.list.state {
             SpeakersState::Unavailable => Vec::new(),
-            _ => lock(&self.hub).speakers(),
+            _ => lock(&self.hub)
+                .speakers()
+                .into_iter()
+                .filter(|s| s.relay.as_ref().is_none_or(|r| r.user == caller.user))
+                .collect(),
         };
         SpeakerList {
             speakers,
@@ -1015,11 +1092,25 @@ impl Inner {
         }
     }
 
-    fn speaker(&self, id: &SpeakerId) -> Result<Arc<Speaker>, SpeakerError> {
+    fn speaker(&self, caller: &Access, id: &SpeakerId) -> Result<Arc<Speaker>, SpeakerError> {
+        if self.relay.owner_of(id).is_some_and(|u| u != caller.user) {
+            return Err(SpeakerError::NotFound);
+        }
         if lock(&self.conn).list.state == SpeakersState::Unavailable {
             return Err(SpeakerError::Unavailable);
         }
-        lock(&self.hub).speaker(id).ok_or(SpeakerError::NotFound)
+        if let Some(speaker) = lock(&self.hub).speaker(id) {
+            return Ok(speaker);
+        }
+        let server_id = lock(&self.hub).server_id.clone();
+        match (self.relay.live(id), server_id) {
+            (Some(live), Some(_)) => Ok(Arc::new(convert::relay_placeholder(
+                id.clone(),
+                &live.name,
+                &live.tag,
+            ))),
+            _ => Err(SpeakerError::NotFound),
+        }
     }
 }
 
@@ -1071,25 +1162,29 @@ impl AssistantControl for Assistant {
         self.inner.effective().active()
     }
 
-    fn speakers<'a>(&'a self, _caller: &'a Access) -> BoxFuture<'a, SpeakerList> {
-        Box::pin(async move { self.inner.list_for() })
+    fn relay_supported(&self) -> bool {
+        self.inner.relay_supported()
+    }
+
+    fn speakers<'a>(&'a self, caller: &'a Access) -> BoxFuture<'a, SpeakerList> {
+        Box::pin(async move { self.inner.list_for(caller) })
     }
 
     fn speaker<'a>(
         &'a self,
-        _caller: &'a Access,
+        caller: &'a Access,
         id: &'a SpeakerId,
     ) -> BoxFuture<'a, Result<Arc<Speaker>, SpeakerError>> {
-        Box::pin(async move { self.inner.speaker(id) })
+        Box::pin(async move { self.inner.speaker(caller, id) })
     }
 
     fn queue<'a>(
         &'a self,
-        _caller: &'a Access,
+        caller: &'a Access,
         id: &'a SpeakerId,
         page: QueuePage,
     ) -> BoxFuture<'a, Result<SpeakerQueue, SpeakerError>> {
-        Box::pin(async move { self.inner.queue(id, page).await })
+        Box::pin(async move { self.inner.queue(caller, id, page).await })
     }
 
     fn command<'a>(
@@ -1143,7 +1238,7 @@ impl AssistantControl for Assistant {
             AssistantOverview {
                 state: status.state,
                 registration,
-                relays: status.configured.then_some(0),
+                relays: status.configured.then_some(status.relays_active),
                 services: status.services,
                 speakers: status.speakers,
             }
@@ -1152,5 +1247,68 @@ impl AssistantControl for Assistant {
 
     fn catalog(&self) -> Option<&dyn CatalogControl> {
         Some(&*self.inner)
+    }
+
+    fn relay(&self) -> Option<&dyn RelayControl> {
+        Some(self)
+    }
+}
+
+impl RelayControl for Assistant {
+    fn supported(&self) -> bool {
+        self.inner.relay_supported()
+    }
+
+    fn cellular(&self) -> bool {
+        self.inner.relay.cellular()
+    }
+
+    fn open<'a>(
+        &'a self,
+        caller: &'a RelayCaller,
+        open: RelayOpen,
+    ) -> BoxFuture<'a, Result<RelayOpened, RelayError>> {
+        Box::pin(async move { self.inner.open_relay(caller, open).await })
+    }
+
+    fn sessions(&self, user: UserKey) -> Vec<RelayView> {
+        self.inner.relay.sessions(user)
+    }
+
+    fn session(&self, user: UserKey, id: &RelaySessionId) -> Option<RelayView> {
+        self.inner.relay.session(user, id)
+    }
+
+    fn set_tier(
+        &self,
+        caller: &RelayCaller,
+        id: &RelaySessionId,
+        tier: RelayTier,
+    ) -> Result<RelayView, RelayError> {
+        self.inner.relay.set_tier(caller, id, tier)
+    }
+
+    fn close<'a>(
+        &'a self,
+        user: UserKey,
+        id: &'a RelaySessionId,
+    ) -> BoxFuture<'a, Result<(), RelayError>> {
+        Box::pin(async move { self.inner.relay.close(user, id).await })
+    }
+
+    fn fetch<'a>(
+        &'a self,
+        device: DeviceKey,
+        id: &'a RelaySessionId,
+        generation: u32,
+        part: RelayPart,
+        query: &'a str,
+    ) -> BoxFuture<'a, Result<RelayBody, RelayError>> {
+        Box::pin(async move {
+            self.inner
+                .relay
+                .fetch(device, id, generation, part, query)
+                .await
+        })
     }
 }

@@ -1,10 +1,10 @@
 //! Music Assistant players and queues as Trackside speakers (contract 1.1 to 1.4).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use trackside_core::assistant::{
     Availability, Capability, CatalogItem, GroupRole, LibrarySong, MediaInfo, NowPlaying, Origin,
-    PlayContext, PlayState, Playback, Repeat, Speaker, SpeakerGroup, SpeakerKind,
+    PlayContext, PlayState, Playback, Repeat, Speaker, SpeakerGroup, SpeakerKind, SpeakerRelay,
 };
 use trackside_core::catalog_ref::{CatalogRef, RefKind};
 use trackside_core::{
@@ -30,6 +30,8 @@ pub(crate) struct View<'a> {
     pub songs: &'a HashMap<SongId, Placement>,
     pub contexts: &'a HashMap<String, PlayContext>,
     pub endpoint: Option<&'a Endpoint>,
+    /// Relay players: shown only to their owners, never as grouping targets.
+    pub relay_players: &'a HashSet<String>,
 }
 
 /// Catalog art found while converting: the `m` id and the address it names.
@@ -42,6 +44,70 @@ pub(crate) fn speaker_id(server_id: &str, player_id: &str) -> SpeakerId {
 /// Players Trackside never shows: disabled, hidden in Music Assistant, or protocol-only.
 pub(crate) fn visible(player: &Player) -> bool {
     player.enabled && !player.hide_in_ui && player.player_type != PlayerType::Protocol
+}
+
+/// What a relay speaker offers while available (contract 3.3): no volume, mute, power or
+/// grouping, the phone's own volume applies.
+pub(crate) const RELAY_CAPABILITIES: [Capability; 9] = [
+    Capability::NextPrevious,
+    Capability::Pause,
+    Capability::Play,
+    Capability::Queue,
+    Capability::Repeat,
+    Capability::Seek,
+    Capability::Shuffle,
+    Capability::Stop,
+    Capability::Transfer,
+];
+
+/// A relay player's speaker as its owner sees it.
+pub(crate) fn as_relay(mut speaker: Speaker, relay: &SpeakerRelay) -> Speaker {
+    speaker.kind = SpeakerKind::Phone;
+    speaker.protocol = String::from("relay");
+    speaker.manufacturer = None;
+    speaker.model = None;
+    speaker.capabilities = if speaker.availability == Availability::Unavailable {
+        Vec::new()
+    } else {
+        speaker.availability = Availability::Available;
+        RELAY_CAPABILITIES.to_vec()
+    };
+    speaker.powered = None;
+    speaker.volume = None;
+    speaker.muted = None;
+    speaker.group = None;
+    speaker.group_volume = None;
+    speaker.can_group_with = Vec::new();
+    speaker.relay = Some(relay.clone());
+    speaker
+}
+
+/// A relay speaker before Music Assistant lists its player (the phone is still joining).
+pub(crate) fn relay_placeholder(id: SpeakerId, name: &str, relay: &SpeakerRelay) -> Speaker {
+    as_relay(
+        Speaker {
+            id,
+            name: name.to_owned(),
+            kind: SpeakerKind::Phone,
+            protocol: String::from("relay"),
+            manufacturer: None,
+            model: None,
+            availability: Availability::Available,
+            capabilities: Vec::new(),
+            powered: None,
+            volume: None,
+            muted: None,
+            group: None,
+            group_volume: None,
+            can_group_with: Vec::new(),
+            playback: None,
+            now_playing: None,
+            context: None,
+            relay: None,
+            revision: 0,
+        },
+        relay,
+    )
 }
 
 fn protocol(domain: &str) -> &'static str {
@@ -59,6 +125,11 @@ fn protocol(domain: &str) -> &'static str {
 }
 
 impl View<'_> {
+    /// A player anyone may see: [`visible`] and not a relay's.
+    pub fn shown(&self, player: &Player) -> bool {
+        visible(player) && !self.relay_players.contains(&player.player_id)
+    }
+
     fn provider(&self, instance_id: &str) -> Option<&ProviderInstance> {
         self.providers.iter().find(|p| p.instance_id == instance_id)
     }
@@ -302,13 +373,15 @@ impl View<'_> {
         let mut out = BTreeSet::new();
         for entry in &player.can_group_with {
             if let Some(other) = self.players.get(entry) {
-                if other.player_id != player.player_id && visible(other) {
+                if other.player_id != player.player_id && self.shown(other) {
                     out.insert(speaker_id(self.server_id, &other.player_id));
                 }
                 continue;
             }
             for other in self.players.values() {
-                if other.provider == *entry && other.player_id != player.player_id && visible(other)
+                if other.provider == *entry
+                    && other.player_id != player.player_id
+                    && self.shown(other)
                 {
                     out.insert(speaker_id(self.server_id, &other.player_id));
                 }
@@ -467,6 +540,7 @@ impl View<'_> {
             playback,
             now_playing,
             capabilities: capabilities.into_iter().collect(),
+            relay: None,
             revision: 0,
         }
     }

@@ -8,13 +8,15 @@
 //! pause, seek and item changes, when the position drifts from where it should be, and every
 //! [`HEARTBEAT`] while playing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::time::Instant;
-use trackside_core::assistant::{PlayContext, PlayState, Speaker, SpeakerEvent, SpeakersState};
+use trackside_core::assistant::{
+    PlayContext, PlayState, Speaker, SpeakerEvent, SpeakerRelay, SpeakersState,
+};
 use trackside_core::{CatalogArtId, Millis, SongId, SpeakerId};
 use trackside_mass::models::{Player, PlayerQueue, ProviderInstance};
 use trackside_mass::{Endpoint, Event, Snapshot};
@@ -72,6 +74,11 @@ pub(crate) struct Hub {
     entries: HashMap<String, Entry>,
     by_speaker: HashMap<SpeakerId, String>,
     pub loaded: bool,
+    /// Relay players with a live session, shown to their owner only.
+    pub relays: HashMap<String, SpeakerRelay>,
+    /// Every relay player Trackside has a key for, live or not: never shown to anyone else
+    /// and never offered for grouping.
+    pub relay_players: HashSet<String>,
 }
 
 impl Hub {
@@ -85,6 +92,7 @@ impl Hub {
             songs: &self.songs,
             contexts: &self.contexts,
             endpoint: self.endpoint.as_ref(),
+            relay_players: &self.relay_players,
         })
     }
 
@@ -93,12 +101,18 @@ impl Hub {
         let songs = std::mem::take(&mut self.songs);
         let art = std::mem::take(&mut self.art);
         let contexts = std::mem::take(&mut self.contexts);
+        let relays = std::mem::take(&mut self.relays);
+        let relay_players = std::mem::take(&mut self.relay_players);
         let same_server = server_id.is_some() && server_id == self.server_id;
         *self = Self {
             server_id,
             endpoint,
+            relay_players,
             ..Self::default()
         };
+        if same_server {
+            self.relays = relays;
+        }
         if same_server {
             self.songs = songs;
             self.art = art;
@@ -182,6 +196,11 @@ impl Hub {
         self.entries.get(player).map(|e| Arc::clone(&e.current))
     }
 
+    /// Whether a player is a relay's (any phone's).
+    pub fn is_relay(&self, player_id: &str) -> bool {
+        self.relay_players.contains(player_id) || self.relays.contains_key(player_id)
+    }
+
     pub fn speakers(&self) -> Vec<Arc<Speaker>> {
         let mut list: Vec<Arc<Speaker>> = self
             .entries
@@ -206,8 +225,14 @@ impl Hub {
         let fresh: Vec<(String, Speaker)> = self
             .players
             .values()
-            .filter(|p| convert::visible(p))
-            .map(|p| (p.player_id.clone(), view.speaker(p, &mut art)))
+            .filter_map(|p| {
+                let speaker = match self.relays.get(&p.player_id) {
+                    Some(relay) => convert::as_relay(view.speaker(p, &mut art), relay),
+                    None if view.shown(p) => view.speaker(p, &mut art),
+                    None => return None,
+                };
+                Some((p.player_id.clone(), speaker))
+            })
             .collect();
         self.remember_art(art);
         let mut seen = std::collections::HashSet::new();

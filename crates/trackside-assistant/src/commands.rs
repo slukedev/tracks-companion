@@ -62,6 +62,8 @@ struct Target {
     leader: String,
     queue: String,
     speaker: Arc<Speaker>,
+    /// A phone that is still joining: Music Assistant does not list this player yet.
+    joining: bool,
 }
 
 fn unsupported(capability: Capability) -> SpeakerError {
@@ -141,9 +143,32 @@ struct Cursor {
 }
 
 impl Inner {
-    fn target(&self, id: &SpeakerId) -> Result<Target, SpeakerError> {
+    /// What Music Assistant knows the speaker by. Another user's relay speaker does not exist
+    /// for the caller; their own whose session ended is `RelayEnded`.
+    fn target(&self, caller: &Access, id: &SpeakerId) -> Result<Target, SpeakerError> {
+        let owner = self.relay.owner_of(id);
+        if owner.is_some_and(|u| u != caller.user) {
+            return Err(SpeakerError::NotFound);
+        }
         let hub = lock(&self.hub);
-        let speaker = hub.speaker(id).ok_or(SpeakerError::NotFound)?;
+        let Some(speaker) = hub.speaker(id) else {
+            drop(hub);
+            return match (self.relay.live(id), owner) {
+                (Some(live), _) => Ok(Target {
+                    speaker: Arc::new(crate::convert::relay_placeholder(
+                        id.clone(),
+                        &live.name,
+                        &live.tag,
+                    )),
+                    leader: live.player.clone(),
+                    queue: live.player.clone(),
+                    player: live.player,
+                    joining: true,
+                }),
+                (None, Some(_)) => Err(SpeakerError::RelayEnded),
+                (None, None) => Err(SpeakerError::NotFound),
+            };
+        };
         let player = hub.player_of(id).ok_or(SpeakerError::NotFound)?;
         let view = hub.view().ok_or(SpeakerError::Unavailable)?;
         let leader = view.leader_of(player);
@@ -155,16 +180,18 @@ impl Inner {
             leader: leader.player_id.clone(),
             queue,
             speaker,
+            joining: false,
         })
     }
 
     pub(crate) async fn queue(
         &self,
+        caller: &Access,
         id: &SpeakerId,
         page: QueuePage,
     ) -> Result<SpeakerQueue, SpeakerError> {
         let client = self.connected()?;
-        let target = self.target(id)?;
+        let target = self.target(caller, id)?;
         need(&target.speaker, Capability::Queue)?;
         let (total, current, shuffle, repeat, version) = {
             let hub = lock(&self.hub);
@@ -241,7 +268,11 @@ impl Inner {
         command: SpeakerCommand,
     ) -> Result<CommandAccepted, SpeakerError> {
         let client = self.connected()?;
-        let target = self.target(id)?;
+        let target = self.target(caller, id)?;
+        let mut joining: Vec<String> = Vec::new();
+        if target.joining {
+            joining.push(target.player.clone());
+        }
         let now = self.now();
         let speaker = &target.speaker;
         if speaker.availability == Availability::Unavailable {
@@ -363,7 +394,10 @@ impl Inner {
                 keep_playing_here,
             } => {
                 need(speaker, Capability::Transfer)?;
-                let destination = self.target(&to)?;
+                let destination = self.target(caller, &to)?;
+                if destination.joining {
+                    joining.push(destination.player.clone());
+                }
                 if destination.speaker.availability == Availability::Unavailable {
                     return Err(SpeakerError::Offline);
                 }
@@ -414,12 +448,28 @@ impl Inner {
             },
         );
         match slot {
-            Some(slot) => self.coalesce(&client, id, slot, calls, command_id.clone()),
-            None => {
+            Some(slot) if joining.is_empty() => {
+                self.coalesce(&client, id, slot, calls, command_id.clone());
+            }
+            _ => {
                 let me = Arc::clone(self);
                 let command = command_id.clone();
                 let timeout = settle.min(self.tuning.command_timeout.max(Duration::from_secs(1)));
+                let player_wait = self.relay.tuning().player_wait;
                 self.tasks.spawn(async move {
+                    let deadline = tokio::time::Instant::now() + player_wait;
+                    for player in &joining {
+                        if !me.wait_for_player(player, deadline).await {
+                            me.finish(
+                                &command,
+                                Err(CommandFailure {
+                                    code: "timed_out",
+                                    message: String::from("The phone did not join in time."),
+                                }),
+                            );
+                            return;
+                        }
+                    }
                     let outcome = run(&client, &calls, timeout).await;
                     me.finish(&command, outcome);
                 });
