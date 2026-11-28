@@ -139,7 +139,8 @@ pub fn visible_event(event: &ServerEvent, filter: &EventFilter) -> Outgoing {
             }),
         },
         ServerEvent::Speaker(event)
-            if filter.speakers || matches!(event, trackside_core::assistant::SpeakerEvent::Relay(_)) =>
+            if filter.speakers
+                || matches!(event, trackside_core::assistant::SpeakerEvent::Relay(_)) =>
         {
             match crate::routes::speakers::event_body_on(
                 event,

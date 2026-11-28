@@ -2165,8 +2165,14 @@ fn fixtures_deserialize_into_their_wire_types() -> TestResult {
         ("error-slow-down.json", back::<wire::ErrorEnvelope>),
         ("error-link-used.json", back::<wire::ErrorEnvelope>),
         ("relay-session.json", back::<wire::relay::RelaySession>),
-        ("relay-session-starting.json", back::<wire::relay::RelaySession>),
-        ("relay-session-ended.json", back::<wire::relay::RelaySession>),
+        (
+            "relay-session-starting.json",
+            back::<wire::relay::RelaySession>,
+        ),
+        (
+            "relay-session-ended.json",
+            back::<wire::relay::RelaySession>,
+        ),
         ("relay-speaker.json", back::<wire::speakers::Speaker>),
         (
             "catalog-services.json",

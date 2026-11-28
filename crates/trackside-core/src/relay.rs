@@ -139,7 +139,9 @@ impl RelayPart {
             "init.mp4" => Some(Self::Init),
             _ => {
                 let number = name.strip_suffix(".m4s")?;
-                if number.is_empty() || number.len() > 19 || !number.bytes().all(|b| b.is_ascii_digit())
+                if number.is_empty()
+                    || number.len() > 19
+                    || !number.bytes().all(|b| b.is_ascii_digit())
                 {
                     return None;
                 }
@@ -239,7 +241,14 @@ mod tests {
         assert_eq!(RelayPart::parse("index.m3u8"), Some(RelayPart::Media));
         assert_eq!(RelayPart::parse("init.mp4"), Some(RelayPart::Init));
         assert_eq!(RelayPart::parse("14.m4s"), Some(RelayPart::Segment(14)));
-        for bad in [".m4s", "-1.m4s", "+1.m4s", "1.mp4", "seg-1.m4s", "99999999999999999999.m4s"] {
+        for bad in [
+            ".m4s",
+            "-1.m4s",
+            "+1.m4s",
+            "1.mp4",
+            "seg-1.m4s",
+            "99999999999999999999.m4s",
+        ] {
             assert_eq!(RelayPart::parse(bad), None, "{bad}");
         }
     }

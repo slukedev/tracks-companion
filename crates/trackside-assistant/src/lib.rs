@@ -49,8 +49,8 @@ use trackside_core::catalog::{
 };
 use trackside_core::config::Secret;
 use trackside_core::relay::{
-    RelayBody, RelayCaller, RelayControl, RelayError, RelayOpen, RelayOpened, RelayPart,
-    RelayTier, RelayView,
+    RelayBody, RelayCaller, RelayControl, RelayError, RelayOpen, RelayOpened, RelayPart, RelayTier,
+    RelayView,
 };
 use trackside_core::{
     Access, BoxFuture, CatalogArtId, Config, ConfigReport, Db, DeviceKey, EventBus, Millis,
@@ -919,10 +919,8 @@ impl Inner {
             .effective
             .write()
             .unwrap_or_else(PoisonError::into_inner) = fresh;
-        self.relay.set_limits(
-            fresh_max,
-            self.config.music_assistant.relay_max_per_user,
-        );
+        self.relay
+            .set_limits(fresh_max, self.config.music_assistant.relay_max_per_user);
         if change.hidden_services.is_some() {
             self.catalog.reset();
             let state = lock(&self.conn).list.state;

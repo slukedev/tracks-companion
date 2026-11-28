@@ -64,6 +64,7 @@ pub mod build {
         status_body as music_assistant_body, test_body as music_assistant_test_body,
     };
     pub use crate::routes::public::capabilities_body;
+    pub use crate::routes::relay::session_body as relay_session_body;
     pub use crate::routes::settings::{LASTFM_API_KEY, apply_stored_auth, stored_secret};
     pub use crate::routes::social::{check_listen, listen_result};
     pub use crate::routes::speakers::{
@@ -71,7 +72,6 @@ pub mod build {
         event_body as speaker_event_body, event_body_on as speaker_event_body_on,
         queue_body as speaker_queue_body, speaker_body, speaker_body_on, speakers_body,
     };
-    pub use crate::routes::relay::session_body as relay_session_body;
     pub use crate::routes::stats::{
         DayBuckets, day_buckets, listening_body, requests_body, storage_body, streams_body,
     };

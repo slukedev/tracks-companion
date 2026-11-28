@@ -250,10 +250,7 @@ pub fn event_body_on(
             if view.user != access.user {
                 return None;
             }
-            (
-                "relay",
-                data(&super::relay::session_body(view, base_path)),
-            )
+            ("relay", data(&super::relay::session_body(view, base_path)))
         }
         SpeakerEvent::Removed(id) => (
             "speaker_removed",
@@ -738,7 +735,14 @@ async fn transfer(
         )
         .await;
     }
-    to_this_device(&state, &principal, request, &id, (&method, &uri, &headers, &body)).await
+    to_this_device(
+        &state,
+        &principal,
+        request,
+        &id,
+        (&method, &uri, &headers, &body),
+    )
+    .await
 }
 
 /// Moves the queue to the calling device's relay, creating or reusing it (contract 1.7).
@@ -794,10 +798,7 @@ async fn to_this_device(
                 .session(caller.user, &opened.session.id)
                 .unwrap_or(opened.session);
             let mut reply = command_body_on(&accepted, &access, Some(caller.device));
-            reply.relay = Some(super::relay::session_body(
-                &view,
-                &state.server.base_path,
-            ));
+            reply.relay = Some(super::relay::session_body(&view, &state.server.base_path));
             Ok((StatusCode::ACCEPTED, serde_json::to_value(reply)?))
         },
     )

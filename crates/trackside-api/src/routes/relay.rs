@@ -35,10 +35,7 @@ const MAX_NAME: usize = 64;
 pub(super) fn routes() -> Router<ApiState> {
     Router::new()
         .route("/relay/sessions", post(open).get(list))
-        .route(
-            "/relay/sessions/{id}",
-            get(one).patch(patch).delete(close),
-        )
+        .route("/relay/sessions/{id}", get(one).patch(patch).delete(close))
         .route("/relay/{id}/{generation}/{file}", get(fetch))
 }
 
@@ -285,7 +282,9 @@ async fn fetch(
         .fetch(*device, &id, generation, part, &query)
         .await?
     {
-        RelayBody::Playlist(text) => no_store(text.into_response(), "application/vnd.apple.mpegurl"),
+        RelayBody::Playlist(text) => {
+            no_store(text.into_response(), "application/vnd.apple.mpegurl")
+        }
         RelayBody::Media(bytes) => no_store(Body::from(bytes).into_response(), "audio/mp4"),
     };
     Ok(response)

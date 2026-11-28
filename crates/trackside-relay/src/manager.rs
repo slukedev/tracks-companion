@@ -180,8 +180,10 @@ impl RelayManager {
     /// Changes the server and per-user limits for sessions opened from now on; running
     /// sessions keep going.
     pub fn set_limits(&self, max_sessions: usize, max_per_user: usize) {
-        self.max_sessions.store(max_sessions.max(1), Ordering::Relaxed);
-        self.max_per_user.store(max_per_user.max(1), Ordering::Relaxed);
+        self.max_sessions
+            .store(max_sessions.max(1), Ordering::Relaxed);
+        self.max_per_user
+            .store(max_per_user.max(1), Ordering::Relaxed);
     }
 
     /// The server and per-user limits in force.

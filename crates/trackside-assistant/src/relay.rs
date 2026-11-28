@@ -15,8 +15,8 @@ use std::time::Duration;
 use tokio::time::Instant;
 use trackside_core::assistant::{SpeakerEvent, SpeakerRelay};
 use trackside_core::relay::{
-    RelayBody, RelayCaller, RelayError, RelayFormat, RelayOpen, RelayOpened, RelayPart,
-    RelayState, RelayTier, RelayView,
+    RelayBody, RelayCaller, RelayError, RelayFormat, RelayOpen, RelayOpened, RelayPart, RelayState,
+    RelayTier, RelayView,
 };
 use trackside_core::{DeviceKey, Millis, RelaySessionId, SpeakerId, UserKey, random_id};
 use trackside_relay::{
@@ -274,10 +274,7 @@ impl Relays {
         max_per_user: u32,
     ) -> Arc<RelayManager> {
         let url = self.tuning.sendspin_url.clone().unwrap_or_else(|| {
-            format!(
-                "{}/sendspin",
-                ws_url.strip_suffix("/ws").unwrap_or(ws_url)
-            )
+            format!("{}/sendspin", ws_url.strip_suffix("/ws").unwrap_or(ws_url))
         });
         let mut config = RelayConfig::new(url, Some(trackside_sendspin::Token::new(token)));
         config.ffmpeg.clone_from(&self.ffmpeg);
@@ -447,7 +444,8 @@ impl Inner {
     /// Ends every relay session in the background, keeping the manager.
     pub(crate) fn end_relays(self: &Arc<Self>, reason: EndReason) {
         if let Some(manager) = self.relay.manager() {
-            self.tasks.spawn(async move { manager.shutdown(reason).await });
+            self.tasks
+                .spawn(async move { manager.shutdown(reason).await });
         }
     }
 
@@ -463,8 +461,13 @@ impl Inner {
         let effective = self.effective();
         let per_user = self.config.music_assistant.relay_max_per_user;
         let fresh = connection.map(|(ws_url, token)| {
-            self.relay
-                .build(self, &ws_url, &token, effective.relay_max_sessions, per_user)
+            self.relay.build(
+                self,
+                &ws_url,
+                &token,
+                effective.relay_max_sessions,
+                per_user,
+            )
         });
         if let Some(old) = self.relay.replace(fresh) {
             self.tasks
@@ -547,7 +550,8 @@ impl Inner {
         self.refresh_speakers();
         let me = Arc::clone(self);
         let watched = meta.clone();
-        self.tasks.spawn(async move { me.follow_relay(watched).await });
+        self.tasks
+            .spawn(async move { me.follow_relay(watched).await });
         Ok(RelayOpened {
             session: meta.view(&session.info()),
             created: true,

@@ -557,9 +557,7 @@ fn relay(access: &Access) -> Result<Out, serde_json::Error> {
         )
         .is_none()
     );
-    assert!(
-        build::speaker_event_body(&SpeakerEvent::Relay(Box::new(playing)), &other).is_none()
-    );
+    assert!(build::speaker_event_body(&SpeakerEvent::Relay(Box::new(playing)), &other).is_none());
     Ok(out)
 }
 

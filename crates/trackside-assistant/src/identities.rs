@@ -156,10 +156,7 @@ impl IdentityStore for SealedIdentities {
         Box::pin(async move {
             let key = row(owner);
             let secret = Zeroizing::new(STANDARD.encode(identity.secret_bytes().as_slice()));
-            let sealed = self
-                .auth
-                .seal_setting(&key, &secret)
-                .map_err(store_error)?;
+            let sealed = self.auth.seal_setting(&key, &secret).map_err(store_error)?;
             let value = STANDARD.encode(sealed);
             self.db
                 .write(move |tx| settings::put(tx, &key, &value))

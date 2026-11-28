@@ -39,6 +39,9 @@ trackside-media = { workspace = true, features = ["testing"] }
 trackside-subsonic.workspace = true
 trackside-assistant.workspace = true
 trackside-mass = { workspace = true, features = ["testing"] }
+trackside-sendspin = { workspace = true, features = ["testing"] }
+trackside-relay.workspace = true
+bytes.workspace = true
 tempfile.workspace = true
 reqwest.workspace = true
 rustls.workspace = true

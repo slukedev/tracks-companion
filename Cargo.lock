@@ -3769,6 +3769,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.23.1",
+ "bytes",
  "futures-util",
  "http",
  "image",
@@ -3794,6 +3795,8 @@ dependencies = [
  "trackside-core",
  "trackside-mass",
  "trackside-media",
+ "trackside-relay",
+ "trackside-sendspin",
  "trackside-subsonic",
  "uuid",
  "zeroize",
