@@ -259,7 +259,7 @@ pub struct LinkStartRequest {
 /// A device link just started. The device shows `user_code` and a QR of `link_url` (or of
 /// `verification_url` for a phone without Tracks), and polls with `device_code` every
 /// `interval_s` seconds.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkStart {
     pub device_code: String,
     /// `XXXX-XXXX`.
@@ -272,6 +272,15 @@ pub struct LinkStart {
     pub expires_at: Time,
 }
 
+impl std::fmt::Debug for LinkStart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LinkStart")
+            .field("interval_s", &self.interval_s)
+            .field("expires_at", &self.expires_at)
+            .finish_non_exhaustive()
+    }
+}
+
 /// `POST /link/lookup`, `/link/approve` and `/link/deny`. The dash and case are optional.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkCodeRequest {
@@ -279,9 +288,15 @@ pub struct LinkCodeRequest {
 }
 
 /// `POST /link/poll`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkPollRequest {
     pub device_code: String,
+}
+
+impl std::fmt::Debug for LinkPollRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LinkPollRequest { device_code: <redacted> }")
+    }
 }
 
 /// `pending` (looked up), `approved` or `denied` (just decided).
@@ -509,4 +524,30 @@ pub struct NewKey {
     pub name: String,
     #[serde(default)]
     pub scopes: Option<Vec<String>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn link_codes_never_show_in_debug_output() {
+        let start = LinkStart {
+            device_code: String::from("dc-secret-7Qx"),
+            user_code: String::from("WXYZ-2345"),
+            verification_url: String::from("http://h/link?code=WXYZ-2345"),
+            link_url: String::from("tracks://link?code=WXYZ-2345"),
+            interval_s: 5,
+            expires_at: Time(trackside_core::Millis(0)),
+        };
+        let shown = format!("{start:?}");
+        assert!(
+            !shown.contains("dc-secret") && !shown.contains("WXYZ"),
+            "{shown}"
+        );
+        let poll = LinkPollRequest {
+            device_code: String::from("dc-secret-7Qx"),
+        };
+        assert!(!format!("{poll:?}").contains("dc-secret"));
+    }
 }

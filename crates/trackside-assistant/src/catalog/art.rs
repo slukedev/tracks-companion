@@ -97,14 +97,33 @@ fn public_v4(ip: Ipv4Addr) -> bool {
 }
 
 fn public_v6(ip: Ipv6Addr) -> bool {
-    let first = ip.segments()[0];
+    let seg = ip.segments();
+    let first = seg[0];
+    let embedded_v4 = |high: u16, low: u16| {
+        let [a, b] = high.to_be_bytes();
+        let [c, d] = low.to_be_bytes();
+        Ipv4Addr::new(a, b, c, d)
+    };
+    // IPv4-compatible `::a.b.c.d` (deprecated, but some stacks still route it as IPv4).
+    if seg[..6].iter().all(|&s| s == 0) {
+        return public_v4(embedded_v4(seg[6], seg[7]));
+    }
+    // 6to4 carries the IPv4 address it reaches.
+    if first == 0x2002 && !public_v4(embedded_v4(seg[1], seg[2])) {
+        return false;
+    }
     !(ip.is_loopback()
         || ip.is_unspecified()
         || ip.is_multicast()
         || (first & 0xfe00) == 0xfc00
         || (first & 0xffc0) == 0xfe80
-        || (first == 0x2001 && ip.segments()[1] == 0x0db8)
-        || (first == 0x0064 && ip.segments()[1] == 0xff9b))
+        || (first & 0xffc0) == 0xfec0
+        || (first == 0x0100 && seg[1..4].iter().all(|&s| s == 0))
+        || (first == 0x2001 && seg[1] < 0x0200)
+        || (first == 0x2001 && seg[1] == 0x0db8)
+        || (first & 0xfff0) == 0x3ff0
+        || first == 0x5f00
+        || (first == 0x0064 && seg[1] == 0xff9b))
 }
 
 /// Checks an address Music Assistant gave before anything is sent to it. Names other than
@@ -126,6 +145,11 @@ pub(crate) fn check(source: &str, home: Option<&Home>) -> Result<Url, Refusal> {
         .trim_start_matches('[')
         .trim_end_matches(']')
         .to_ascii_lowercase();
+    // Music Assistant's name resolves to private addresses too ([`PublicOnly`]), so it is
+    // reached only on its own scheme and port.
+    if home.is_some_and(|h| h.host == host) {
+        return Err(Refusal::Private);
+    }
     if host == "localhost" || host.ends_with(".localhost") {
         return Err(Refusal::Private);
     }
@@ -279,9 +303,47 @@ mod tests {
             ("https://[fd00::5]/a.jpg", Refusal::Private),
             ("https://[::ffff:10.0.0.1]/a.jpg", Refusal::Private),
             ("https://0.0.0.0/a.jpg", Refusal::Private),
+            ("https://[::10.0.0.1]/a.jpg", Refusal::Private),
+            ("https://[::127.0.0.1]/a.jpg", Refusal::Private),
+            ("https://[fec0::1]/a.jpg", Refusal::Private),
+            ("https://[64:ff9b::a00:1]/a.jpg", Refusal::Private),
+            ("https://[64:ff9b:1::a00:1]/a.jpg", Refusal::Private),
+            ("https://[2002:a00:1::1]/a.jpg", Refusal::Private),
+            ("https://[2001::1]/a.jpg", Refusal::Private),
+            ("https://[100::1]/a.jpg", Refusal::Private),
+            ("https://[3fff::1]/a.jpg", Refusal::Private),
+            ("https://[5f00::1]/a.jpg", Refusal::Private),
             ("not a url", Refusal::Invalid),
         ] {
             assert_eq!(check(source, Some(&home())).err(), Some(why), "{source}");
+        }
+    }
+
+    #[test]
+    fn public_ipv6_and_ipv4_in_ipv6_stay_reachable() {
+        for source in [
+            "https://[2606:4700::6810:84e5]/a.jpg",
+            "https://[::93.184.216.34]/a.jpg",
+            "https://[2002:5db8:d822::1]/a.jpg",
+        ] {
+            assert!(check(source, None).is_ok(), "{source}");
+        }
+    }
+
+    #[test]
+    fn music_assistants_name_is_exempt_only_on_its_own_port() {
+        let named = Home {
+            scheme: "https",
+            host: String::from("ma.local"),
+            port: 8095,
+        };
+        assert!(check("https://ma.local:8095/imageproxy/ab", Some(&named)).is_ok());
+        for source in [
+            "https://ma.local:22/x",
+            "https://ma.local/x",
+            "http://ma.local:8095/x",
+        ] {
+            assert!(check(source, Some(&named)).is_err(), "{source}");
         }
     }
 
