@@ -438,7 +438,7 @@ async fn run(
     state.auth.speaker_command(principal, starts)?;
     let access = principal.access.clone();
     let device = principal.device.as_ref().map(|(key, _)| *key);
-    idempotency::once(
+    idempotency::once_in_memory(
         state,
         access.user,
         headers,
@@ -773,7 +773,7 @@ async fn to_this_device(
     state.auth.speaker_command(principal, true)?;
     let access = principal.access.clone();
     let keep_playing_here = request.keep_playing_here;
-    idempotency::once(
+    idempotency::once_in_memory(
         state,
         access.user,
         headers,

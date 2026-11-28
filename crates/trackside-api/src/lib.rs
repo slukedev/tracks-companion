@@ -304,6 +304,8 @@ pub struct LocalState {
     cloud_limiter: trackside_cloud::PushLimiter,
     /// The opened Apple Music key and the token it signed last.
     developer_tokens: routes::apple_music::DeveloperTokens,
+    /// `Idempotency-Key` replays that must not reach the disk.
+    idempotent: routes::idempotency::MemoryReplays,
     shutdown: CancellationToken,
 }
 

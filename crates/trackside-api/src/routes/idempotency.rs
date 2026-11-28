@@ -8,8 +8,10 @@ use axum::body::Body;
 use axum::response::{IntoResponse, Response};
 use http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use sha2::{Digest, Sha256};
-use trackside_core::UserKey;
+use std::collections::HashMap;
+
 use trackside_core::repo::idempotency::{self, StoredResponse};
+use trackside_core::{Millis, UserKey};
 
 use super::{read, write};
 use crate::ApiState;
@@ -75,9 +77,77 @@ fn replayed(status: u16, body: Vec<u8>) -> Response {
     response
 }
 
+/// Where replays are kept.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Store {
+    Database,
+    /// In memory only, for answers that carry streaming-service metadata (ADR-0013): lost on
+    /// restart, which only makes a late retry run again.
+    Memory,
+}
+
 /// Runs `create` once per key: replays a stored success, refuses a reused key, stores a new
 /// success. `create` returns the status and the JSON body.
 pub async fn once<F, Fut>(
+    state: &ApiState,
+    user: UserKey,
+    headers: &HeaderMap,
+    method: &Method,
+    path: &str,
+    body: &[u8],
+    create: F,
+) -> ApiResult<Response>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = ApiResult<(StatusCode, serde_json::Value)>>,
+{
+    run(
+        Store::Database,
+        state,
+        user,
+        headers,
+        method,
+        path,
+        body,
+        create,
+    )
+    .await
+}
+
+/// [`once`] keeping the replay in memory, never on disk: for speaker commands and the relay,
+/// whose answers name what a streaming service plays.
+pub async fn once_in_memory<F, Fut>(
+    state: &ApiState,
+    user: UserKey,
+    headers: &HeaderMap,
+    method: &Method,
+    path: &str,
+    body: &[u8],
+    create: F,
+) -> ApiResult<Response>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = ApiResult<(StatusCode, serde_json::Value)>>,
+{
+    run(
+        Store::Memory,
+        state,
+        user,
+        headers,
+        method,
+        path,
+        body,
+        create,
+    )
+    .await
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "once's arguments and where to keep the replay"
+)]
+async fn run<F, Fut>(
+    store: Store,
     state: &ApiState,
     user: UserKey,
     headers: &HeaderMap,
@@ -95,8 +165,14 @@ where
         return Ok((status, axum::Json(value)).into_response());
     };
     let hash = request_hash(method, path, body);
-    let lookup = key.clone();
-    let stored = read(state, move |c| idempotency::get(c, user, &lookup)).await?;
+    let now = state.db.clock().now();
+    let stored = match store {
+        Store::Database => {
+            let lookup = key.clone();
+            read(state, move |c| idempotency::get(c, user, &lookup)).await?
+        }
+        Store::Memory => state.local.idempotent.get(user, &key, now),
+    };
     if let Some(stored) = stored {
         return match compare(&stored, &hash) {
             Replay::Replay { status, body } => Ok(replayed(status, body)),
@@ -113,10 +189,17 @@ where
         request_hash: hash,
         status: status.as_u16(),
         body: bytes.clone(),
-        created_at: state.db.clock().now(),
+        created_at: now,
     };
-    if let Err(e) = write(state, move |tx| idempotency::put(tx, user, &key, &response)).await {
-        tracing::warn!(error = %e, "idempotent response not stored");
+    match store {
+        Store::Database => {
+            if let Err(e) =
+                write(state, move |tx| idempotency::put(tx, user, &key, &response)).await
+            {
+                tracing::warn!(error = %e, "idempotent response not stored");
+            }
+        }
+        Store::Memory => state.local.idempotent.put(user, key, response),
     }
     let mut out = (status, Body::from(bytes)).into_response();
     out.headers_mut().insert(
@@ -126,10 +209,46 @@ where
     Ok(out)
 }
 
+/// Replays kept in memory, 24 hours like the stored ones, and at most [`MEMORY_CAP`].
+#[derive(Debug, Default)]
+pub struct MemoryReplays(std::sync::Mutex<HashMap<(UserKey, String), StoredResponse>>);
+
+const MEMORY_CAP: usize = 4096;
+const KEPT_MS: i64 = 24 * 3600 * 1000;
+
+impl MemoryReplays {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(UserKey, String), StoredResponse>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn get(&self, user: UserKey, key: &str, now: Millis) -> Option<StoredResponse> {
+        self.lock()
+            .get(&(user, key.to_owned()))
+            .filter(|r| now.0 - r.created_at.0 < KEPT_MS)
+            .cloned()
+    }
+
+    fn put(&self, user: UserKey, key: String, response: StoredResponse) {
+        let mut map = self.lock();
+        let now = response.created_at;
+        map.retain(|_, r| now.0 - r.created_at.0 < KEPT_MS);
+        if map.len() >= MEMORY_CAP
+            && let Some(oldest) = map
+                .iter()
+                .min_by_key(|(_, r)| r.created_at)
+                .map(|(k, _)| k.clone())
+        {
+            map.remove(&oldest);
+        }
+        map.entry((user, key)).or_insert(response);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use trackside_core::Millis;
 
     #[test]
     fn same_request_replays_and_a_different_one_mismatches() {

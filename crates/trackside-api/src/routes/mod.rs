@@ -9,7 +9,7 @@ pub(crate) mod catalog;
 pub(crate) mod cloud;
 pub(crate) mod enrichment;
 mod events;
-mod idempotency;
+pub(crate) mod idempotency;
 pub(crate) mod library;
 pub(crate) mod link;
 pub(crate) mod media;

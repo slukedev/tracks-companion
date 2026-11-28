@@ -214,6 +214,8 @@ until the next full listing. Cursors are valid for 24 hours; an expired cursor g
   response is stored for 24 hours per user and replayed for a repeat with the same key and the
   same method, path and body; a different request with the same key is `409
   idempotency_mismatch`. Marked "idempotent with key" below.
+- Speaker commands and `POST /relay/sessions` keep their replays in memory only, since their
+  answers name what a streaming service plays: the same rules, but a restart forgets them.
 - Listens are idempotent per item by `client_listen_id` and need no header.
 - `PUT` and `DELETE` are naturally idempotent.
 
@@ -507,7 +509,10 @@ These need a recent password check when the caller is a session (keys always pas
 - `POST /admin/users/{id}/password-reset`, `DELETE /admin/users/{id}`;
 - `PATCH /admin/settings` with any `auth.*` key or `enrichment.lastfm_api_key`;
 - `GET /admin/backups/{name}` (download) and `DELETE /admin/backups/{name}`;
-- `PATCH /admin/acquire/providers/{name}` with `api_key`.
+- `PATCH /admin/acquire/providers/{name}` with `api_key`;
+- `PATCH /admin/music-assistant` with `token`, `ca_pem`, a new `lan_url`, or a new `url` while
+  a token is set; `POST /admin/music-assistant/test` with a `url` other than the saved one and
+  no `token` (the saved token would go there).
 
 The dashboard asks for the password when it gets `reauth_required`, calls `/auth/reauth`, and
 repeats the request.
@@ -1674,8 +1679,10 @@ AdminUser:
 
 A service account Trackside made for an integration carries `"service": "music_assistant"`: it
 has no password, cannot sign in (`password-reset` is `409`, `details.reason =
-"service_account"`), and its keys work on `/rest` only. It is not counted in
-`overview.users.count`. Its key appears in `GET /admin/api-keys` with `"managed_by":
+"service_account"`), and its keys work on `/rest` only. Its role and permissions are fixed
+(member, none): a `PATCH` changing them is `409`, `details.reason = "service_account"`; its
+display name, libraries and `disabled` can change. It never counts as an admin. It is not
+counted in `overview.users.count`. Its key appears in `GET /admin/api-keys` with `"managed_by":
 "music_assistant"`; revoking it there stops speakers playing the library until Trackside
 registers again.
 
@@ -1815,9 +1822,9 @@ token is never returned** by any endpoint, in logs or in errors: only `token_set
 | Method and path | Body or result |
 |---|---|
 | `GET /admin/music-assistant` | the connection, below |
-| `PATCH /admin/music-assistant` | any of `url`, `token`, `enabled`, `auto_register`, `lan_url`, `ca_pem`, `hidden_services`, `relay_max_sessions` → `200` with the `GET` shape. `token`, and `url` while a token is set, need a recent password. `null` clears `url`, `token`, `lan_url` and `ca_pem`. Unknown fields are `400`. A field set in the configuration is `409`, `details.reason = "set_by_config"`. Trackside reconnects in the background |
+| `PATCH /admin/music-assistant` | any of `url`, `token`, `enabled`, `auto_register`, `lan_url`, `ca_pem`, `hidden_services`, `relay_max_sessions` → `200` with the `GET` shape. `token`, `ca_pem`, a new `lan_url`, and a new `url` while a token is set, need a recent password. A new `url` unregisters from the Music Assistant at the old address first (its source is removed where it can be reached, and its key revoked); with `auto_register` Trackside registers again at the new one. `null` clears `url`, `token`, `lan_url` and `ca_pem`. Unknown fields are `400`. A field set in the configuration is `409`, `details.reason = "set_by_config"`. Trackside reconnects in the background |
 | `DELETE /admin/music-assistant` | recent password; unregisters, forgets the address and token, disconnects. `204` |
-| `POST /admin/music-assistant/test` | `{"url"?, "token"?}` (the saved values otherwise): connects once, reads the server info, authenticates, counts players and providers. `200` with `{"ok", "detail", "elapsed_ms", "players"?, "providers"?, "server"?}`; 6 a minute per admin |
+| `POST /admin/music-assistant/test` | `{"url"?, "token"?}` (the saved values otherwise; a `url` other than the saved one without `token` needs a recent password): connects once, reads the server info, authenticates, counts players and providers. `200` with `{"ok", "detail", "elapsed_ms", "players"?, "providers"?, "server"?}`; 6 a minute per admin |
 | `GET /admin/music-assistant/registration` | the registration, below |
 | `POST /admin/music-assistant/registration` | recent password; registers again in the background with a new key, then revokes the old one. `202` with the registration in `registering` |
 | `DELETE /admin/music-assistant/registration` | recent password; removes the source from Music Assistant and revokes the key. `204` |
@@ -1893,6 +1900,9 @@ Registration (`admin/music-assistant-registration.json`, and
   playlists or scrobbles: Subsonic error 50), download or request. Which libraries Music
   Assistant sees is the service account's library access (`PUT /admin/users/{id}/libraries`;
   all libraries at first). The secret goes only to Music Assistant's provider setup.
+- One registration has one live key. Registering again revokes every older Music Assistant
+  key, and a connection to a Music Assistant with another server id (another box, or a
+  reinstall) revokes the old key and forgets the old registration before anything else.
 
 Providers (`admin/music-assistant-providers.json`): music providers with `instance_id`,
 `domain`, `name`, `available`, `streaming`, `hidden` (in `hidden_services`), `service_id` for
@@ -2551,7 +2561,8 @@ Commands to a relay speaker whose session ended are `409`, `details.reason = "re
 
 Rate limits per user: 10 commands a second with bursts of 30, and 30 `play` or `transfer` a
 minute; `429 rate_limited` with `Retry-After`. Every command route accepts `Idempotency-Key`
-(section 3): a retry with the same key gets the stored `202`, and the command is not sent again.
+(section 3): a retry with the same key gets the remembered `202` (kept in memory, not on disk),
+and the command is not sent again.
 
 ### 20.4 Events
 

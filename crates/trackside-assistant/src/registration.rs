@@ -9,11 +9,11 @@
 use std::sync::Arc;
 
 use trackside_auth::Scopes;
-use trackside_core::Millis;
 use trackside_core::assistant::{
     AssistantError, RegistrationKey, RegistrationState, RegistrationView, ServiceUser,
 };
 use trackside_core::repo::{keys, users};
+use trackside_core::{KeyId, Millis};
 use trackside_mass::{
     ErrorCode, OPENSUBSONIC_DOMAIN, OpenSubsonicSource, RequestError, SetupError, Token,
 };
@@ -169,11 +169,21 @@ impl Inner {
         let Some(session) = self.session() else {
             return;
         };
-        let record = settings::load_registration(&self.db)
-            .await
-            .ok()
-            .flatten()
-            .filter(|r| r.server_id == session.server.server_id);
+        let record = settings::load_registration(&self.db).await.ok().flatten();
+        let record = match record {
+            Some(r) if r.server_id != session.server.server_id => {
+                // Another Music Assistant now: the old one must not keep a working key.
+                tracing::info!("Music Assistant changed; revoking the old server's key");
+                self.revoke_managed_keys(None).await;
+                if let Err(e) = settings::save_registration(&self.db, None).await {
+                    tracing::warn!(error = %e, "could not forget the old registration");
+                    return;
+                }
+                lock(&self.hub).ours = None;
+                None
+            }
+            other => other,
+        };
         let admin = session.user.as_ref().and_then(|u| u.role.as_deref()) == Some("admin");
         let configs = if admin {
             match client
@@ -377,13 +387,38 @@ impl Inner {
                 "Could not save the registration: {e}."
             )));
         }
-        if let Some(previous) = previous
-            && previous.key_id != record.key_id
-            && let Err(e) = self.auth.revoke_key(None, &previous.key_id).await
-        {
-            tracing::debug!(error = %e, "the previous Music Assistant key was already gone");
-        }
+        self.revoke_managed_keys(Some(&record.key_id)).await;
         Ok(record)
+    }
+
+    /// Revokes every live key made for Music Assistant except `keep`: one registration has
+    /// one key, and keys of earlier ones (another server, a lost record) must not keep working.
+    async fn revoke_managed_keys(&self, keep: Option<&KeyId>) {
+        let keep = keep.cloned();
+        let stale = self
+            .db
+            .read(move |c| {
+                Ok(keys::list(c, None)?
+                    .into_iter()
+                    .filter(|k| {
+                        k.revoked_at.is_none()
+                            && k.managed_by.as_deref() == Some(SERVICE)
+                            && Some(&k.id) != keep.as_ref()
+                    })
+                    .map(|k| k.id)
+                    .collect::<Vec<_>>())
+            })
+            .await;
+        match stale {
+            Ok(stale) => {
+                for id in stale {
+                    if let Err(e) = self.auth.revoke_key(None, &id).await {
+                        tracing::warn!(error = %e, "could not revoke an old Music Assistant key");
+                    }
+                }
+            }
+            Err(e) => tracing::warn!(error = %e, "cannot list the Music Assistant keys"),
+        }
     }
 
     /// Removes the source from Music Assistant (when it can be reached) and revokes the key.

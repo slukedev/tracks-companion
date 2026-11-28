@@ -279,6 +279,11 @@ impl Auth {
                     return Err(DbError::Forbidden);
                 }
                 let current = users::get(tx.conn(), user)?.ok_or(DbError::NotFound)?;
+                if current.service.is_some()
+                    && (patch.role.is_some() || patch.permissions.is_some())
+                {
+                    return Err(DbError::Conflict(String::from("service_account")));
+                }
                 let demotes = current.role == Role::Admin && patch.role == Some(Role::Member);
                 let disables = current.disabled_at.is_none() && patch.disabled == Some(true);
                 if demotes || disables {

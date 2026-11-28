@@ -629,6 +629,30 @@ async fn trackside_registers_itself_with_a_key_that_only_reads_and_streams() -> 
         )
         .await?;
     assert_eq!(status, 409, "a service account has no password");
+    let user_path = format!("/users/{}", service["id"].as_str().unwrap_or_default());
+    for change in [
+        json!({"role": "admin"}),
+        json!({"permissions": {"can_download": true}}),
+    ] {
+        let (status, body) = server
+            .admin(
+                &cookie,
+                reqwest::Method::PATCH,
+                &user_path,
+                Some(change.clone()),
+            )
+            .await?;
+        assert_eq!(status, 409, "{change}: {body}");
+        assert_eq!(
+            body["error"]["details"]["reason"], "service_account",
+            "{change}"
+        );
+    }
+    let (_, unchanged) = server
+        .admin(&cookie, reqwest::Method::GET, &user_path, None)
+        .await?;
+    assert_eq!(unchanged["role"], "member");
+    assert_eq!(unchanged["permissions"]["can_download"], false);
 
     // Unregistering removes the source and revokes the key.
     let (status, _) = server
@@ -976,6 +1000,16 @@ async fn idempotent_play_requests_are_replayed() -> TestResult {
     assert_eq!(ids[0], ids[1]);
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(fake.received_named("player_queues/play_media").len(), 1);
+    let stored: i64 = server.test.db.read_blocking(|c| {
+        c.query_row("SELECT count(*) FROM idempotency_keys", [], |row| {
+            row.get(0)
+        })
+        .map_err(Into::into)
+    })?;
+    assert_eq!(
+        stored, 0,
+        "speaker answers name what plays: replays stay in memory"
+    );
     server.assistant.shutdown().await;
     Ok(())
 }
@@ -1125,6 +1159,150 @@ async fn speaker_commands_are_rate_limited_per_user() -> TestResult {
     assert!(statuses[..30].iter().all(|s| *s == 202), "{statuses:?}");
     assert!(statuses.contains(&429), "{statuses:?}");
     let _ = futures_util::stream::empty::<()>().next().await;
+    server.assistant.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_token_goes_nowhere_new_without_a_recent_password() -> TestResult {
+    let (server, fake, cookie) = connected().await?;
+    let elsewhere = FakeAssistant::start(model()).await;
+    server.test.clock.advance(Duration::from_mins(11));
+    let post = |body: Value| {
+        server.admin(
+            &cookie,
+            reqwest::Method::POST,
+            "/music-assistant/test",
+            Some(body),
+        )
+    };
+    let (status, body) = post(json!({"url": elsewhere.url()})).await?;
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(body["error"]["code"], "reauth_required");
+    let (status, body) = post(json!({"url": fake.url()})).await?;
+    assert_eq!((status, &body["ok"]), (200, &json!(true)), "{body}");
+    let (status, body) = post(json!({"url": elsewhere.url(), "token": elsewhere.token()})).await?;
+    assert_eq!((status, &body["ok"]), (200, &json!(true)), "{body}");
+
+    let patch = |body: Value| {
+        server.admin(
+            &cookie,
+            reqwest::Method::PATCH,
+            "/music-assistant",
+            Some(body),
+        )
+    };
+    for change in [
+        json!({"ca_pem": "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n"}),
+        json!({"ca_pem": null}),
+        json!({"lan_url": "http://192.168.1.99:4747"}),
+        json!({"url": elsewhere.url()}),
+    ] {
+        let (status, body) = patch(change.clone()).await?;
+        assert_eq!(status, 403, "{change}: {body}");
+        assert_eq!(body["error"]["code"], "reauth_required", "{change}");
+    }
+    let (status, body) = patch(json!({"hidden_services": []})).await?;
+    assert_eq!(status, 200, "{body}");
+    server.assistant.shutdown().await;
+    Ok(())
+}
+
+async fn ping_with(server: &Server, secret: &str) -> Result<String, Error> {
+    Ok(server
+        .http
+        .get(format!(
+            "{}/rest/ping.view?apiKey={secret}&f=json&c=ma&v=1.16.1",
+            server.host
+        ))
+        .send()
+        .await?
+        .text()
+        .await?)
+}
+
+async fn live_managed_keys(server: &Server, cookie: &str) -> Result<usize, Error> {
+    let (_, keys) = server
+        .admin(cookie, reqwest::Method::GET, "/api-keys", None)
+        .await?;
+    Ok(keys["keys"].as_array().map_or(0, |k| {
+        k.iter()
+            .filter(|k| k["managed_by"] == "music_assistant")
+            .count()
+    }))
+}
+
+#[tokio::test]
+async fn moving_to_another_music_assistant_retires_the_old_source_and_key() -> TestResult {
+    let (server, first, cookie) = connected().await?;
+    registered(&server, &cookie).await?;
+    let submitted = first.wait_for("config/flows/submit", 1).await;
+    let old = submitted[0].args["values"]["api_key"]
+        .as_str()
+        .ok_or("no key")?
+        .to_owned();
+    assert!(
+        ping_with(&server, &old)
+            .await?
+            .contains("\"status\":\"ok\"")
+    );
+
+    let mut other = model();
+    other.server_id = String::from("another-server");
+    let second = FakeAssistant::start(other).await;
+    server.connect(&cookie, &second).await?;
+    first.wait_for("config/providers/remove", 1).await;
+    let after = ping_with(&server, &old).await?;
+    assert!(after.contains("\"status\":\"failed\""), "{after}");
+    registered(&server, &cookie).await?;
+    let submitted = second.wait_for("config/flows/submit", 1).await;
+    let new = submitted[0].args["values"]["api_key"]
+        .as_str()
+        .ok_or("no key")?
+        .to_owned();
+    assert!(
+        ping_with(&server, &new)
+            .await?
+            .contains("\"status\":\"ok\"")
+    );
+    assert_eq!(live_managed_keys(&server, &cookie).await?, 1);
+    server.assistant.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_reinstalled_music_assistant_at_the_same_address_gets_a_new_key() -> TestResult {
+    let (server, fake, cookie) = connected().await?;
+    registered(&server, &cookie).await?;
+    let submitted = fake.wait_for("config/flows/submit", 1).await;
+    let old = submitted[0].args["values"]["api_key"]
+        .as_str()
+        .ok_or("no key")?
+        .to_owned();
+    fake.with(|m| m.server_id = String::from("reinstalled"));
+    fake.disconnect_all();
+    let deadline = tokio::time::Instant::now() + PATIENCE;
+    while !ping_with(&server, &old)
+        .await?
+        .contains("\"status\":\"failed\"")
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the old key still works"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let submitted = fake.wait_for("config/flows/submit", 2).await;
+    let new = submitted[1].args["values"]["api_key"]
+        .as_str()
+        .ok_or("no key")?
+        .to_owned();
+    assert!(
+        ping_with(&server, &new)
+            .await?
+            .contains("\"status\":\"ok\"")
+    );
+    assert_eq!(live_managed_keys(&server, &cookie).await?, 1);
     server.assistant.shutdown().await;
     Ok(())
 }

@@ -917,6 +917,7 @@ impl Inner {
             || fresh.enabled != effective.enabled
             || fresh.ca != effective.ca;
         let reregister = fresh.lan_url != effective.lan_url;
+        let url_changed = effective.url.is_some() && fresh.url != effective.url;
         let fresh_max = fresh.relay_max_sessions;
         *self
             .effective
@@ -930,6 +931,12 @@ impl Inner {
             self.events.publish(ServerEvent::CatalogServices { state });
         }
         if reconnect {
+            if url_changed {
+                // The source and its key belong to the Music Assistant at the old address.
+                if let Err(e) = self.unregister().await {
+                    tracing::warn!(error = %e, "could not unregister from the old Music Assistant");
+                }
+            }
             self.reconfigure().await;
         } else if reregister || (change.auto_register == Some(true)) {
             let me = Arc::clone(self);

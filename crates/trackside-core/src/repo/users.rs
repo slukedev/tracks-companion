@@ -369,7 +369,7 @@ pub fn set_libraries(
 /// Active (not disabled) admins.
 pub fn count_admins(c: &Connection) -> Result<u32, DbError> {
     let n: i64 = c
-        .prepare_cached("SELECT count(*) FROM users WHERE role = 'admin' AND disabled_at IS NULL")?
+        .prepare_cached("SELECT count(*) FROM users WHERE role = 'admin' AND disabled_at IS NULL AND service IS NULL")?
         .query_row([], |row| row.get(0))?;
     Ok(to_u32(n))
 }

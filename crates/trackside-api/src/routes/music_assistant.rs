@@ -277,6 +277,14 @@ pub fn overview_problems(overview: &AssistantOverview) -> Vec<Problem> {
     out
 }
 
+/// Whether a requested address is another than the one in force, as the settings store it.
+fn differs(requested: Option<&str>, current: Option<&str>) -> bool {
+    let requested = requested
+        .map(|s| s.trim().trim_end_matches('/'))
+        .filter(|s| !s.is_empty());
+    requested != current
+}
+
 async fn status(
     AdminSession(_): AdminSession,
     State(state): State<ApiState>,
@@ -292,10 +300,26 @@ async fn update(
     Json(body): Json<MusicAssistantPatch>,
 ) -> ApiResult<Response> {
     let before = state.assistant.status().await;
-    let url_changes = body.url.as_ref().is_some_and(|u| {
-        u.as_deref().map(|s| s.trim().trim_end_matches('/')) != before.url.as_deref()
-    });
-    if body.token.is_some() || (url_changes && before.token_set) {
+    let url_changes = body
+        .url
+        .as_ref()
+        .is_some_and(|u| differs(u.as_deref(), before.url.as_deref()));
+    let configured_lan = before
+        .lan_url
+        .as_ref()
+        .filter(|l| l.configured)
+        .map(|l| l.url.as_str());
+    let lan_changes = body
+        .lan_url
+        .as_ref()
+        .is_some_and(|u| differs(u.as_deref(), configured_lan));
+    // The token goes where `url` points, the CA decides who may receive it, and a new LAN
+    // address is where Music Assistant is told to send Trackside's key.
+    if body.token.is_some()
+        || (url_changes && before.token_set)
+        || body.ca_pem.is_some()
+        || lan_changes
+    {
         require_recent_auth(&state, &principal)?;
     }
     let token_changed = body.token.is_some();
@@ -358,6 +382,14 @@ async fn test(
     OptionalJson(body): OptionalJson<MusicAssistantTestRequest>,
 ) -> ApiResult<Response> {
     state.auth.assistant_test(&principal)?;
+    if body.token.is_none()
+        && let Some(url) = body.url.as_deref()
+    {
+        let before = state.assistant.status().await;
+        if before.token_set && differs(Some(url), before.url.as_deref()) {
+            require_recent_auth(&state, &principal)?;
+        }
+    }
     let result = state
         .assistant
         .test(body.url, body.token.map(Secret::new))

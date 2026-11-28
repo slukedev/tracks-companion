@@ -203,6 +203,12 @@ impl From<DbError> for ApiError {
 
 /// Core's conflicts carry a reason in their text; the dashboard has messages for a few.
 fn conflict_from_reason(reason: &str) -> ApiError {
+    if reason == "service_account" {
+        return ApiError::conflict(
+            "service_account",
+            "This account belongs to an integration; its role and permissions are fixed.",
+        );
+    }
     let lower = reason.to_ascii_lowercase();
     let code = if lower.contains("admin") {
         "last_admin"

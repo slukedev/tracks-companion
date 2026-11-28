@@ -155,7 +155,7 @@ async fn open(
     let access = principal.access.clone();
     let base = state.server.base_path.clone();
     let state = &state;
-    idempotency::once(
+    idempotency::once_in_memory(
         state,
         access.user,
         &headers,
