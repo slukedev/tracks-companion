@@ -41,7 +41,7 @@ impl FakeYtdlp {
 dir='{dir}'
 echo "$*" >> "$dir/calls"
 for a in "$@"; do
-  if [ "$a" = "--version" ]; then echo 2026.11.03; exit 0; fi
+  if [ "$a" = "--version" ]; then date -u +%Y.%m.%d; exit 0; fi
 done
 case " $* " in
   *" -J "*) cat <<'JSON'
