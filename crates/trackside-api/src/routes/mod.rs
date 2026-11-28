@@ -5,6 +5,7 @@ pub(crate) mod acquisition;
 pub(crate) mod addresses;
 pub(crate) mod admin;
 pub(crate) mod apple_music;
+pub(crate) mod catalog;
 pub(crate) mod cloud;
 pub(crate) mod enrichment;
 mod events;
@@ -59,6 +60,7 @@ pub(crate) fn router(state: ApiState) -> Router {
         .merge(cloud::routes())
         .merge(apple_music::routes())
         .merge(speakers::routes())
+        .merge(catalog::routes())
         .nest(
             "/admin",
             admin::routes()

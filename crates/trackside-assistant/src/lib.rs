@@ -11,9 +11,13 @@
 //! service account and a key scoped `library stream`, so the library plays on every speaker
 //! ([`registration`]).
 //!
+//! The streaming catalog ([`catalog`]) reads the services connected in Music Assistant over
+//! the same connection.
+//!
 //! No audio passes through here: speakers play streaming services in Music Assistant
 //! itself, and nothing from a streaming service is downloaded, stored or exported.
 
+mod catalog;
 mod commands;
 mod convert;
 mod hub;
@@ -34,6 +38,10 @@ use trackside_core::assistant::{
     MusicProvider, PlayerProvider, ProviderLists, QueuePage, RegistrationView, STABLE_SCHEMA,
     ServerFacts, Speaker, SpeakerCommand, SpeakerError, SpeakerEvent, SpeakerList, SpeakerQueue,
     SpeakersState, TESTED_SCHEMA,
+};
+use trackside_core::catalog::{
+    CatalogDetail, CatalogError, CatalogKind, CatalogPage, CatalogResults, CatalogSearch,
+    LibraryPage, ServiceList,
 };
 use trackside_core::config::Secret;
 use trackside_core::{
@@ -150,6 +158,7 @@ pub(crate) struct Inner {
     pending: Mutex<HashMap<trackside_core::SpeakerCommandId, Pending>>,
     slots: Mutex<HashMap<(SpeakerId, commands::Slot), commands::SlotState>>,
     reg: Mutex<RegState>,
+    catalog: catalog::State,
     reg_lock: tokio::sync::Mutex<()>,
     reconfigure_lock: tokio::sync::Mutex<()>,
     shutdown: CancellationToken,
@@ -195,6 +204,7 @@ impl Assistant {
             pending: Mutex::new(HashMap::new()),
             slots: Mutex::new(HashMap::new()),
             reg: Mutex::new(RegState::default()),
+            catalog: catalog::State::default(),
             reg_lock: tokio::sync::Mutex::new(()),
             reconfigure_lock: tokio::sync::Mutex::new(()),
             shutdown: deps.shutdown,
@@ -235,6 +245,10 @@ impl Inner {
 
     fn publish(&self, events: Vec<SpeakerEvent>) {
         for event in events {
+            if let SpeakerEvent::State { state, .. } = &event {
+                self.events
+                    .publish(ServerEvent::CatalogServices { state: *state });
+            }
             self.events.publish(ServerEvent::Speaker(event));
         }
     }
@@ -270,6 +284,7 @@ impl Inner {
             "Speakers aren't reachable right now.",
         );
         lock(&self.hub).reset(None, None);
+        self.catalog.reset();
         let effective = self.effective();
         let now = self.now();
         let (state, endpoint) = match (
@@ -478,6 +493,7 @@ impl Inner {
             };
             let mut queue_changed = None;
             let mut connected = false;
+            let mut catalog_changed = false;
             match update {
                 None => {
                     let now = self.now();
@@ -517,6 +533,7 @@ impl Inner {
                     hub.load(&snapshot);
                     if let Some(providers) = providers {
                         hub.providers = providers;
+                        catalog_changed = true;
                     }
                     if ours.is_some() {
                         hub.ours = ours;
@@ -526,6 +543,7 @@ impl Inner {
                     let epoch = self.now().0 as f64 / 1000.0;
                     queue_changed = lock(&self.hub).apply(&event, epoch);
                     if matches!(*event, trackside_mass::Event::ProvidersUpdated(_)) {
+                        catalog_changed = true;
                         let me = Arc::clone(&self);
                         self.tasks
                             .spawn(async move { me.check_registration(false).await });
@@ -566,6 +584,10 @@ impl Inner {
             }
             drop(hub);
             self.publish(events);
+            if catalog_changed {
+                let state = lock(&self.conn).list.state;
+                self.events.publish(ServerEvent::CatalogServices { state });
+            }
             if connected {
                 let me = Arc::clone(&self);
                 self.tasks
@@ -827,6 +849,11 @@ impl Inner {
             .effective
             .write()
             .unwrap_or_else(PoisonError::into_inner) = fresh;
+        if change.hidden_services.is_some() {
+            self.catalog.reset();
+            let state = lock(&self.conn).list.state;
+            self.events.publish(ServerEvent::CatalogServices { state });
+        }
         if reconnect {
             self.reconfigure().await;
         } else if reregister || (change.auto_register == Some(true)) {
@@ -1061,8 +1088,46 @@ async fn sleep_until(at: Option<Instant>) {
 }
 
 impl CatalogControl for Inner {
+    fn services<'a>(&'a self, _caller: &'a Access) -> BoxFuture<'a, ServiceList> {
+        Box::pin(self.service_list())
+    }
+
+    fn search<'a>(
+        &'a self,
+        caller: &'a Access,
+        query: CatalogSearch,
+    ) -> BoxFuture<'a, Result<CatalogResults, CatalogError>> {
+        Box::pin(self.catalog_search(caller, query))
+    }
+
+    fn item<'a>(
+        &'a self,
+        _caller: &'a Access,
+        reference: &'a str,
+        page: CatalogPage,
+    ) -> BoxFuture<'a, Result<CatalogDetail, CatalogError>> {
+        Box::pin(self.catalog_item(reference, page))
+    }
+
+    fn library<'a>(
+        &'a self,
+        _caller: &'a Access,
+        service: &'a ServiceId,
+        kind: CatalogKind,
+        page: CatalogPage,
+    ) -> BoxFuture<'a, Result<LibraryPage, CatalogError>> {
+        Box::pin(self.catalog_library(service, kind, page))
+    }
+
     fn art_source(&self, id: &CatalogArtId) -> Option<String> {
-        lock(&self.hub).art.get(id).cloned()
+        self.catalog_art_source(id)
+    }
+
+    fn fetch_art<'a>(
+        &'a self,
+        id: &'a CatalogArtId,
+    ) -> BoxFuture<'a, Result<Vec<u8>, CatalogError>> {
+        Box::pin(self.catalog_fetch_art(id))
     }
 }
 

@@ -181,7 +181,7 @@ Rules:
 | api | `/api/v1/*` handlers, wire types (serde), admin endpoints, SSE, fixtures for Tracks | domain logic beyond mapping |
 | cloud | the apps' synced records: merge rules, the per-user change seq, chunked writes, pruning, quotas, the device registry | HTTP, anything outside the `cloud_*` tables |
 | mass | the Music Assistant WebSocket API: connect, schema check, auth, reconnect, requests and chunked answers, events and snapshots, tolerant models | anything Trackside-specific |
-| assistant | speakers from players and queues, revisions, coalescing, commands and their outcomes, the connection settings (sealed token), registration as an OpenSubsonic source | HTTP, the relay, the catalog routes |
+| assistant | speakers from players and queues, revisions, coalescing, commands and their outcomes, the connection settings (sealed token), registration as an OpenSubsonic source, the streaming catalog (services, search fan-out and cache, items, ref resolution, fetching catalog images) | HTTP, the relay, the catalog routes, storing images |
 | sendspin | the Sendspin wire as a player: proxy auth, init exchange, Noise handshake and transport, framing, time filter, hello and activation, stream events, reconnects | anything after an audio chunk is handed on, keys at rest (an `IdentityStore` the server provides) |
 | relay | FLAC frame splitting, the fMP4 muxer (`fLaC`/`dfLa`, `mp4a`/`esds`), live playlists, epochs, the publication rule, byte caps, the cellular ffmpeg child, idle teardown, session limits | routes and auth (the API calls its fetch methods), Music Assistant's API (a `PlayerControl` the server provides) |
 | server | CLI, wiring, listeners, TLS, mDNS, scheduler, backups, health endpoints, dashboard asset serving, metrics text | domain logic |
@@ -1600,7 +1600,9 @@ Responses carry `Cache-Control: private, max-age=31536000, immutable` because id
 content-addressed. Missing artwork is a `404`, never a placeholder image. Covers fetched for
 suggestions (`e...` ids, section 5, Suggestions and enrichment) are served by the same route and
 resized the same way; unlike scanned originals they count toward the cache limit and can be
-evicted.
+evicted. Streaming-catalog images (`m...` ids, section 8, Streaming catalog) are kept the same
+way, but never as they came: they are decoded and stored re-encoded as JPEG of at most 1200
+pixels (`<id>.img`), the only bytes from a streaming service that reach the disk.
 
 ### Speakers
 
@@ -1632,6 +1634,46 @@ token or certificate authority, so no change needs a restart.
   `library stream`. It checks the registration on every connect and repairs it when MA lost
   the source or the key was revoked; registering again replaces the source and revokes the old
   key. A non-admin MA token reports `needs_admin`.
+
+### Streaming catalog
+
+The services connected in Music Assistant are browsed and searched over the same connection as
+speakers (api.md section 21, ADR 0013). `trackside-assistant` implements `CatalogControl`
+(core); the routes in `trackside-api` check `features.catalog`, count rate limits and name
+owned songs; the artwork cache in `trackside-media` keeps images.
+
+- **Services** are Music Assistant's streaming music providers, minus hidden ones, Trackside's
+  own OpenSubsonic registration and file or server sources. Sign-in states come from Music
+  Assistant's provider configs (admin tokens only), read at most every 30 s with a 2 s limit.
+  `b` ids are `BLAKE3("service" ‖ ma_server_id ‖ instance_id)`.
+- **Search** asks each service with its own `music/search` (the service plus Music
+  Assistant's library, so saved items keep their mapping), all inside the caller's request:
+  `join_all` with one deadline 5 s out, a server-wide semaphore of 8 Music Assistant requests,
+  and a client that disconnects drops the futures and so cancels its searches. Late services
+  are reported `timed_out`, failing ones `failed`; the rest are converted (song keys,
+  `album_key`, identities, refs, art ids) on the blocking pool and merged by interleaving each
+  section, best of each service first, without repeating a ref. A small TTL cache keyed by
+  user, folded query, kinds, services and limit holds answers for a minute (10 s when
+  incomplete), bounded by 256 entries and 20,000 items, least recently used out first.
+- **Owned songs.** The API looks up every `song_key` in the answer with one indexed query
+  restricted to the caller's libraries (`songs::ids_by_keys`) and fills `song_id`. Library
+  and catalog sections are never merged on the server.
+- **Items** decode the ref (`trackside_core::catalog_ref`) and resolve it as speakers do:
+  the named instance while it is listed and available, else another of its domain, else
+  `service_signed_out`. Albums come in disc and track order, artists capped at 20 top tracks
+  and 100 albums; a playlist's full track list is kept 5 minutes (32 lists, 50,000 tracks) so
+  paging with offset cursors (`{"o": n}`) reads Music Assistant once. Saved libraries page
+  Music Assistant's `library_items` for the instance, newest first.
+- **Artwork.** Converting an item records the image address Music Assistant gave (its image
+  proxy or a public URL) under its `m` id, in a two-generation map of 20,000 entries each. A
+  cache miss on `/art/m...` fetches that address only: Music Assistant's own host may be
+  private; any other must be `https` and resolve only to public addresses, which a custom
+  resolver enforces at connect time (so DNS cannot change the answer after the check), with
+  no redirects, no proxies, 5 s, 10 MiB and 4 fetches at once. The media crate checks the
+  magic bytes, decodes, re-encodes and stores it.
+- **Disk.** Nothing from a service is written to disk but those re-encoded images. Search
+  answers, track lists and image addresses live in memory and are lost on restart; an `m` id
+  whose image the cache still holds keeps working across restarts.
 
 ### Phone relay
 

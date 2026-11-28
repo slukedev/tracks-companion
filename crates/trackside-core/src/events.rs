@@ -76,6 +76,11 @@ pub enum ServerEvent {
     },
     /// Speakers changed (contract 1.8). Only for callers with `features.speakers`.
     Speaker(crate::assistant::SpeakerEvent),
+    /// The streaming services or their sign-in states may have changed (contract 2.2), or
+    /// Music Assistant's reachability did. Only for callers with `features.catalog`.
+    CatalogServices {
+        state: crate::assistant::SpeakersState,
+    },
 }
 
 /// A broadcast channel of [`ServerEvent`]s. Cloning shares the channel.

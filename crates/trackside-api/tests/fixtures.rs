@@ -1050,6 +1050,7 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
                 complete: true,
                 candidates: vec![map::candidate(&candidate(), None)],
             }),
+            catalog: None,
         },
     )?;
     put(
@@ -1062,8 +1063,15 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             albums: Some(wire::Section::new(Vec::new(), None)),
             artists: Some(wire::Section::new(vec![map::artist(&s.beyonce)], None)),
             external: None,
+            catalog: None,
         },
     )?;
+    for (name, value) in catalog::fixtures(wire::Section::new(
+        map::songs_with_me(std::slice::from_ref(&s.halo), &me_halo),
+        None,
+    ))? {
+        put(name, &value)?;
+    }
 
     let playlist = Playlist {
         id: id::<PlaylistId>("playlist late drive"),
@@ -1931,6 +1939,8 @@ fn uuid_of(text: &str) -> uuid::Uuid {
     uuid::Uuid::parse_str(text).unwrap_or_default()
 }
 
+#[path = "support/catalog_fixtures.rs"]
+mod catalog;
 #[path = "support/cloud_fixtures.rs"]
 mod cloud;
 #[path = "support/speaker_fixtures.rs"]
@@ -2069,6 +2079,10 @@ fn collect_songs<'v>(value: &'v serde_json::Value, out: &mut Vec<&'v serde_json:
 type Check = fn(&serde_json::Value) -> Result<serde_json::Value, serde_json::Error>;
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one list of fixtures and their types"
+)]
 fn fixtures_deserialize_into_their_wire_types() -> TestResult {
     fn back<T: serde::de::DeserializeOwned + Serialize>(
         value: &serde_json::Value,
@@ -2150,6 +2164,29 @@ fn fixtures_deserialize_into_their_wire_types() -> TestResult {
         ),
         ("error-slow-down.json", back::<wire::ErrorEnvelope>),
         ("error-link-used.json", back::<wire::ErrorEnvelope>),
+        (
+            "catalog-services.json",
+            back::<wire::catalog::CatalogServices>,
+        ),
+        (
+            "catalog-services-event.json",
+            back::<wire::catalog::CatalogServicesEvent>,
+        ),
+        ("catalog-search.json", back::<wire::catalog::CatalogSearch>),
+        (
+            "search-with-catalog.json",
+            back::<wire::library::SearchResults>,
+        ),
+        ("catalog-album.json", back::<wire::catalog::CatalogDetail>),
+        ("catalog-artist.json", back::<wire::catalog::CatalogDetail>),
+        (
+            "catalog-playlist.json",
+            back::<wire::catalog::CatalogDetail>,
+        ),
+        (
+            "catalog-library.json",
+            back::<wire::catalog::CatalogLibrary>,
+        ),
     ];
     for (name, check) in checks {
         let value = built.get(name).ok_or(*name)?;

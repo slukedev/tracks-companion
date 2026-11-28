@@ -11,7 +11,7 @@ use http::header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, ETAG};
 use http::request::Parts;
 use http::{Response, StatusCode};
 use image::{ImageFormat, ImageReader, Limits};
-use trackside_core::{ArtworkId, ExternalArtId, PublicId};
+use trackside_core::{ArtworkId, CatalogArtId, ExternalArtId, PublicId};
 
 use crate::MediaError;
 use crate::range::{RangeOutcome, evaluate};
@@ -29,6 +29,10 @@ pub const MAX_EXTERNAL_BYTES: usize = 2 * 1024 * 1024;
 /// [`MAX_EXTERNAL_DIMENSION`].
 pub const MIN_EXTERNAL_DIMENSION: u32 = 16;
 pub const MAX_EXTERNAL_DIMENSION: u32 = 4096;
+/// Catalog images (contract 2.6) larger than this are refused.
+pub const MAX_CATALOG_BYTES: usize = trackside_core::catalog::MAX_ART_BYTES;
+/// Catalog images are kept re-encoded as JPEG with no side longer than this.
+pub const CATALOG_KEPT_SIZE: u32 = 1200;
 const JPEG_QUALITY: u8 = 85;
 const IMMUTABLE: &str = "private, max-age=31536000, immutable";
 
@@ -203,6 +207,11 @@ impl ArtworkStore {
         self.shard(id.as_str()).join(format!("{id}.img"))
     }
 
+    /// Where a streaming-catalog image is stored, re-encoded.
+    pub fn catalog_path(&self, id: &CatalogArtId) -> PathBuf {
+        self.shard(id.as_str()).join(format!("{id}.img"))
+    }
+
     fn resized_path(&self, id: &str, size: u32) -> PathBuf {
         self.shard(id).join(format!("{id}-{size}.jpg"))
     }
@@ -226,6 +235,31 @@ impl ArtworkStore {
         write_atomic(&path, bytes)?;
         self.record_resized(&path, bytes.len() as u64);
         Ok(())
+    }
+
+    /// Checks and stores a streaming-catalog image: at most [`MAX_CATALOG_BYTES`], a JPEG,
+    /// PNG, WebP or GIF by its magic bytes, sides between [`MIN_EXTERNAL_DIMENSION`] and
+    /// [`MAX_DIMENSION`]. It is decoded and kept re-encoded as a JPEG of at most
+    /// [`CATALOG_KEPT_SIZE`], so nothing the service sent is stored as it came. It counts
+    /// toward the cache limit and is evicted like a resized copy. Blocking.
+    pub fn put_catalog(&self, id: &CatalogArtId, bytes: &[u8]) -> Result<(), MediaError> {
+        if bytes.len() > MAX_CATALOG_BYTES {
+            return Err(MediaError::TooLarge);
+        }
+        let (format, _, width, height) = inspect(bytes)?;
+        if width.min(height) < MIN_EXTERNAL_DIMENSION {
+            return Err(MediaError::Unsupported(String::from("image too small")));
+        }
+        let jpeg = resize_to_jpeg(bytes, format, width.max(height).min(CATALOG_KEPT_SIZE))?;
+        let path = self.catalog_path(id);
+        write_atomic(&path, &jpeg)?;
+        self.record_resized(&path, jpeg.len() as u64);
+        Ok(())
+    }
+
+    /// Whether a catalog image is held.
+    pub fn has_catalog(&self, id: &CatalogArtId) -> bool {
+        self.catalog_path(id).is_file()
     }
 
     /// Whether a fetched cover is held.
@@ -395,6 +429,19 @@ impl ArtworkStore {
         parts: &Parts,
     ) -> Result<Response<Body>, MediaError> {
         let path = self.external_path(id);
+        let response = self.respond_at(id.as_str(), &path, size, parts).await?;
+        self.touch(&path);
+        Ok(response)
+    }
+
+    /// [`Self::respond`] for a streaming-catalog image.
+    pub(crate) async fn respond_catalog(
+        &self,
+        id: &CatalogArtId,
+        size: Option<u32>,
+        parts: &Parts,
+    ) -> Result<Response<Body>, MediaError> {
+        let path = self.catalog_path(id);
         let response = self.respond_at(id.as_str(), &path, size, parts).await?;
         self.touch(&path);
         Ok(response)
@@ -798,6 +845,56 @@ mod tests {
             store.respond_external(&one, None, &get(&[])).await,
             Err(MediaError::NotFound)
         ));
+        Ok(())
+    }
+
+    fn jpeg(width: u32, height: u32) -> Vec<u8> {
+        let image = image::RgbImage::from_pixel(width, height, image::Rgb([200, 40, 90]));
+        let mut out = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 90)
+            .encode_image(&image)
+            .unwrap_or_default();
+        out
+    }
+
+    #[tokio::test]
+    async fn catalog_images_are_kept_re_encoded_and_bounded()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let store = ArtworkStore::new(dir.path(), 1 << 30);
+        let id = CatalogArtId::derive("http://ma.local:8095/imageproxy/x?size=0");
+        let svg = b"<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'/>".to_vec();
+        for (bytes, why) in [
+            (svg, "svg is never accepted"),
+            (b"GIF89a but not really".to_vec(), "a broken header"),
+            (huge_png_header(), "too large to decode"),
+            (png(8, 8), "too small"),
+            (vec![0u8; MAX_CATALOG_BYTES + 1], "too many bytes"),
+        ] {
+            assert!(store.put_catalog(&id, &bytes).is_err(), "{why}");
+            assert!(!store.has_catalog(&id), "{why}");
+        }
+
+        // A PNG is kept as a JPEG; a large one is kept at most CATALOG_KEPT_SIZE wide.
+        store.put_catalog(&id, &png(1600, 1600))?;
+        let kept = std::fs::read(store.catalog_path(&id))?;
+        assert_eq!(image::guess_format(&kept)?, ImageFormat::Jpeg);
+        let (width, height) = ImageReader::new(Cursor::new(&kept))
+            .with_guessed_format()?
+            .into_dimensions()?;
+        assert_eq!((width, height), (CATALOG_KEPT_SIZE, CATALOG_KEPT_SIZE));
+        let original = store.respond_catalog(&id, None, &get(&[])).await?;
+        assert_eq!(original.headers()[CONTENT_TYPE], "image/jpeg");
+        assert_eq!(original.headers()[CACHE_CONTROL], IMMUTABLE);
+        let small = store.respond_catalog(&id, Some(64), &get(&[])).await?;
+        assert_eq!(small.headers()[ETAG], format!("\"{id}-64\"").as_str());
+
+        // A JPEG is decoded and encoded again too, so its bytes never land as sent.
+        let sent = jpeg(300, 300);
+        let other = CatalogArtId::derive("https://i.scdn.co/image/ab67");
+        store.put_catalog(&other, &sent)?;
+        assert_ne!(std::fs::read(store.catalog_path(&other))?, sent);
+        assert!(store.resized_bytes() > 0, "counted toward the cache limit");
         Ok(())
     }
 
