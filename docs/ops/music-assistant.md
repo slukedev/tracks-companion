@@ -100,6 +100,32 @@ Assistant loses it. Speakers, Registration shows the state.
   Assistant runs on the same machine; the dashboard warns when it does not.
 - Register again rotates the key. Unregister removes the source and revokes the key.
 
+## Spotify
+
+Set Spotify up in Music Assistant (Settings, Providers, Spotify): it needs a Premium account.
+New setups use the Soloist playback backend, which needs your own Spotify developer API key and
+a pairing; Music Assistant's setup walks you through both. What changes in Tracks:
+
+- **One stream.** With Soloist, Spotify plays on one player at a time per account. Playing it
+  somewhere new (a speaker, a phone) stops it where it was, as Spotify's own apps do. Playing
+  in the Spotify app itself also takes the stream away from Music Assistant.
+- **Visible in Spotify.** While Music Assistant plays, your Spotify apps show a device called
+  "Music Assistant Playback"; pausing it there pauses the speaker or phone.
+- **Quality.** Tracks shows Spotify as lossless only when Soloist's audio quality is set to
+  lossless, which Trackside can only read with an admin Music Assistant token; otherwise high.
+- **Saving.** The heart on a Spotify song saves it to Liked Songs (and albums, artists and
+  playlists to your library), through Music Assistant. Keep Music Assistant's library sync-back
+  on for Spotify, or the change stays in Music Assistant.
+- **Radio and mixes.** Spotify radio uses Music Assistant's radio mode, which relies on a
+  Spotify endpoint new apps can no longer use, so it may stop working; Tracks then plays its
+  own radio. Your Discover Weekly, Release Radar and Daily Mixes show as Made for You once
+  Music Assistant has synced your saved playlists.
+- **Spotify Connect** is a separate Music Assistant plugin that makes speakers targets for the
+  Spotify app. Trackside does not use it; a speaker playing from the Spotify app shows what
+  plays, without Tracks' queue controls.
+- A lost pairing shows Spotify as signed out; a revoked one only shows as songs failing to
+  start. Pair again in Music Assistant.
+
 ## Who can use what
 
 Two permissions per person, both on by default (People): **Use speakers** (see and control

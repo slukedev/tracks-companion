@@ -68,9 +68,28 @@ starts at schema 7; there is nothing to upgrade from.
   Turn it off per person with the "play music services" permission, or hide a service with
   `music_assistant.hidden_services`. Nothing from a service is stored except cover thumbnails, which the artwork cache
   keeps re-encoded under its usual size limit.
+- Save to your music services: the heart on a Spotify song (or album, artist or playlist)
+  saves it to your Spotify library through Music Assistant, Liked Songs for songs, and taking
+  the heart off removes it. Works for every service Music Assistant can edit the library of.
+  Music Assistant writes the change to the service, unless its library sync-back is off.
+- A music service's quality is read per account where Music Assistant reports it: Spotify
+  shows as lossless only when its Soloist playback is set to lossless (Trackside needs an
+  admin token in Music Assistant to see that), and high otherwise.
+- Spotify radio: start a radio from a Spotify song, artist, album or playlist, filled with
+  Spotify's similar tracks by Music Assistant's radio mode. Spotify no longer offers that to
+  new apps, so it can fail; Tracks then plays its own radio from the song.
+- Spotify plays on one player at a time: playing it somewhere new takes it over and stops it
+  where it was, as Spotify's own apps do. When a play fails, Tracks is told why where Music
+  Assistant says (playing somewhere else, signed out, not playable, no radio).
+- Finding your songs at your music services: Tracks can look up many songs at once (for
+  playing from Spotify when you put it first). Each song is looked up once per service and
+  remembered for a day, and at most 60 new lookups a minute per person go to Music Assistant.
+- Queues: remove a song from a speaker's or the phone's queue, and start the next song held
+  and ready, so a music service song can follow one of your own without a gap.
 - Recommendations from your music services: Tracks can show the shelves Music Assistant gets
-  from them, such as Apple Music's stations for you and Spotify's mixes, with songs you own
-  shown as your copy. Music Assistant's own library rows are left out (Tracks has its own).
+  from them, such as Apple Music's stations for you, with songs you own shown as your copy.
+  Spotify's own mixes (Discover Weekly, Release Radar, the Daily Mixes) come as a Made for You
+  shelf, read from your saved playlists in Music Assistant without asking Spotify. Music Assistant's own library rows are left out (Tracks has its own).
   They are kept for 20 minutes, and read again when a service changes.
 - Music services on your phone: Tracks plays them on the phone through Trackside, which joins
   Music Assistant as a player for that phone and passes the audio on as it plays (lossless on

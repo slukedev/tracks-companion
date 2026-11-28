@@ -1628,6 +1628,16 @@ token or certificate authority, so no change needs a restart.
   expected state; the MA calls run in their own task with a timeout and the outcome is an event
   to the sender. Volume and seek are coalesced per speaker to one call per 100 ms with the latest
   value. A lost connection fails every pending command.
+- **Plays and their failures.** A `play` is one `player_queues/play_media` (with `radio_mode`
+  for a service radio, gated on the service's similar-tracks feature), then the start index or
+  seek, and for a held start a `player_queues/pause` right after. Its failure is told with a
+  reason taken only from Music Assistant's error code: `ProviderStreamHeld` (29) is
+  `service_busy`, with the holding queue from the error's `data` mapped to its speaker when the
+  sender may see it; sign-in and unplayable codes have theirs; a radio's other refusals are
+  `radio_unavailable`. With `takeover` a held stream stops the holding queue
+  (`player_queues/stop`) and the play is sent again, at most four times 400 ms apart while that
+  queue lets go; Music Assistant's one-stream limit itself is never worked around. A queue item
+  is removed with `player_queues/delete_item`, except the one playing.
 - **Connection.** `connecting` at once when the connection drops, `unavailable` after 30 s or at
   once when the token is refused; on return, every speaker is announced again.
 - **Registration.** Trackside adds itself to MA as an OpenSubsonic source through MA's setup
@@ -1645,7 +1655,10 @@ owned songs; the artwork cache in `trackside-media` keeps images.
 
 - **Services** are Music Assistant's streaming music providers, minus hidden ones, Trackside's
   own OpenSubsonic registration and file or server sources. Sign-in states come from Music
-  Assistant's provider configs (admin tokens only), read at most every 30 s with a 2 s limit.
+  Assistant's provider configs (admin tokens only), read at most every 30 s with a 2 s limit;
+  the same configs give an instance's quality where Music Assistant has a setting for it
+  (Spotify's Soloist `audio_quality`), else the domain's. `library_edit` and
+  `library_edit_kinds` come from the provider's `library_*_edit` features.
   `b` ids are `BLAKE3("service" ‖ ma_server_id ‖ instance_id)`.
 - **Search** asks each service with its own `music/search` (the service plus Music
   Assistant's library, so saved items keep their mapping), all inside the caller's request:
@@ -1677,8 +1690,28 @@ owned songs; the artwork cache in `trackside-media` keeps images.
   `ra.` dynamic playlist plays only as `playlist/ra.…` and a 2.11 station only as
   `radio/ra.…`. Answers are kept per user, services and limit for 20 minutes (10 s when a row
   timed out), 128 entries and 20,000 items, and cleared with every `catalog_services` event
-  and every reconnect. Shelf ids are `w` ids, `BLAKE3("shelf" ‖ ma_server_id ‖ 0x1F ‖
+  and every reconnect. For a Spotify service with a library, a Made for You row is added
+  ahead of its rows: one `music/playlists/library_items` of the instance (500 at most) in
+  parallel with the rows, filtered to the playlists owned by "Spotify" with the names of its
+  mixes, so the shelf costs Music Assistant one database listing and Spotify nothing. Shelf ids are `w` ids, `BLAKE3("shelf" ‖ ma_server_id ‖ 0x1F ‖
   instance_id ‖ 0x1F ‖ row_id)`.
+- **Saving** (`PUT`/`DELETE /catalog/items/{ref}/saved`) is a Music Assistant library edit:
+  `music/library/add_item` with the item's URI, which Music Assistant passes on to the
+  provider's own library in the background, and `music/library/remove_item` for the entry
+  `music/item_by_uri` answers. Because Music Assistant merges one song from several sources
+  into one entry, a removal goes ahead only when no other source's mapping of that entry is in
+  a library (Trackside's own registration included), and only tracks and playlists remove
+  recursively, so an album or artist entry that still holds saved items is refused rather
+  than emptied. `saved` on items is the instance mapping's `in_library` (or a like), left out
+  when Music Assistant does not set it.
+- **Matching** (`catalog/matching.rs`, `POST /catalog/match`) looks each song identity up
+  with one `music/search` for tracks limited to the service instance, under the same 8-request
+  semaphore and one 8 s deadline, and picks the same ISRC, else the same `song_key` within 10 s
+  of the length. Lookups are kept in a TTL cache keyed by instance, ISRC, song key and length
+  in tens of seconds (24 h found, 6 h nothing, 20,000 entries), shared across users since the
+  services are the household's accounts. The route counts the request as a catalog search
+  and hands the assistant a budget, the user's 60 uncached lookups a minute: once it is spent
+  the remaining lookups are answered `deferred` with a retry time instead of being sent.
 - **Artwork.** Converting an item records the image address Music Assistant gave (its image
   proxy or a public URL) under its `m` id, in a two-generation map of 20,000 entries each. A
   cache miss on `/art/m...` fetches that address only: Music Assistant's own host may be

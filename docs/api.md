@@ -157,7 +157,7 @@ display in Tracks. `details` is optional and code-specific.
 | 403 | `reauth_required` | a sensitive change from a session whose last password check is over 10 minutes old; `POST /auth/reauth` and retry (section 6) |
 | 404 | `not_found` | unknown id, or an id the caller cannot see (never `403`, to avoid leaking existence) |
 | 405 | `method_not_allowed` | |
-| 409 | `conflict` | uniqueness or a state conflict; `details.reason` is one of `username_taken`, `last_admin`, `running`, `set_by_config`, `not_writable`, `rejected`, `not_ready`, `link_used`, `service_account`, `not_set_up`, `failed`, or, for speakers (section 20), `speaker_offline`, `powered_off`, `service_signed_out` (`details.service_id`), `not_playable` (`details.song_id` or `details.ref`), or `conflict` |
+| 409 | `conflict` | uniqueness or a state conflict; `details.reason` is one of `username_taken`, `last_admin`, `running`, `set_by_config`, `not_writable`, `rejected`, `not_ready`, `link_used`, `service_account`, `not_set_up`, `failed`, or, for speakers (section 20), `speaker_offline`, `powered_off`, `service_signed_out` (`details.service_id`), `not_playable` (`details.song_id` or `details.ref`), `now_playing`, `relay_ended`, `relay_limit`, or `conflict`, or, for the catalog (section 21), `not_removable`. Failed speaker commands carry the same kind of reason in their event (20.3) |
 | 409 | `content_changed` | the file changed on disk since it was indexed; retry shortly |
 | 409 | `idempotency_mismatch` | an `Idempotency-Key` reused with a different request |
 | 410 | `sync_reset` | the cursor can no longer be served; take a snapshot |
@@ -169,7 +169,7 @@ display in Tracks. `details` is optional and code-specific.
 | 415 | `unsupported_media_type` | upload is not an allowed audio file |
 | 416 | `range_not_satisfiable` | |
 | 422 | `invalid_state` | e.g. cancelling a finished acquisition |
-| 422 | `unsupported` | the speaker lacks the capability a command needs; `details.capability`, and `details.speaker_id` when it is another speaker than the one in the path (section 20) |
+| 422 | `unsupported` | the speaker lacks the capability a command needs; `details.capability`, and `details.speaker_id` when it is another speaker than the one in the path, or `details.service_id` when it is the item's service (section 20) |
 | 429 | `rate_limited` | `Retry-After` says when |
 | 429 | `quota_exceeded` | acquisition quota; `details.resets_at` |
 | 500 | `internal` | a bug; logged with the request id |
@@ -789,8 +789,10 @@ guesser's music), so the risk is small; the numbers still keep it negligible:
              "urls": [{"url": "http://192.168.1.20:4747", "kind": "lan", "tls": false}]},
   "features": {"acquisition": {"instant_play": true, "external_play": true},
                "apple_music": {"developer_token": true},
-               "catalog": {"recommendations": true, "relay": true, "relay_cellular": true},
-               "speakers": {"control": true}}
+               "catalog": {"match": true, "radio": true, "recommendations": true,
+                           "relay": true, "relay_cellular": true, "save": true},
+               "speakers": {"control": true, "hold": true, "queue_remove": true,
+                            "takeover": true}}
 }
 ```
 
@@ -806,11 +808,16 @@ is left out for a session or an API key.
 
 `features.speakers` is present when Music Assistant is set up and enabled (section 16, Music
 Assistant), the user has `can_use_speakers` (admins always) and the credential has `library`;
-`control` is whether it also has `write`. `features.catalog` is present on the same terms with
-`can_play_services`; `recommendations` (always `true`; left out by older servers) when the
-server has `GET /catalog/recommendations` (21.8); `relay` when the credential is a device key
-with `stream` and the server can relay to phones, `relay_cellular` when it can also encode for
-cellular. Both stay while
+`control` is whether it also has `write`; `hold`, `takeover` and `queue_remove` (always `true`;
+left out by older servers) say `play` takes `hold` and `takeover`, failed commands carry
+`error.reason`, and `DELETE /speakers/{id}/queue/{item_id}` exists (20.3). `features.catalog`
+is present on the same terms with `can_play_services`; `recommendations` (always `true`; left
+out by older servers) when the server has `GET /catalog/recommendations` (21.8); `match` and
+`radio` (always `true`; left out by older servers) for `POST /catalog/match` (21.10) and
+`"radio": true` in `play` (20.3); `save` when the server has the save routes (21.9) and the
+credential has `write`; `relay` when the credential is a device key with `stream` and the
+server can relay to phones, `relay_cellular` when it can also encode for cellular. Apps treat
+a flag that is left out as "not supported" and hide the control. Both stay while
 Music Assistant is only unreachable, so apps show a calm empty state rather than a section that
 comes and goes. `can_use_speakers` and `can_play_services` default to on; older servers leave
 them out, which means on.
@@ -2534,12 +2541,14 @@ default 100. `{"current_index"?, "id", "items": [QueueItem], "next_cursor"?, "re
 | `DELETE /speakers/{id}/group` | none: leaves its group | `group` |
 | `POST /speakers/{id}/play` | below (fixture `speaker-play-request.json`) | `play` |
 | `POST /speakers/{id}/transfer` | `{"to": "o...", "keep_playing_here": false}` | `transfer` here, `play` there |
+| `DELETE /speakers/{id}/queue/{item_id}` | none: removes one queued item (`action: "remove"`) | `queue` |
 
 Every command answers **`202`** without waiting (fixture `speaker-command.json`): `{"action",
 "command_id", "settle_by", "speaker"}`, where `speaker` is the state Trackside expects after the
 command, at the revision it is based on; show it at once. The outcome follows as SSE
 `speaker_command` to the sender (`done`, or `failed` with `error.code`: `command_failed`,
-`timed_out`, `speakers_unavailable`, `conflict`; fixture `speaker-command-event.json`). Without
+`timed_out`, `speakers_unavailable`, `conflict`; fixture `speaker-command-event.json`). A failed
+`play` also carries `error.reason` where Music Assistant says why (below). Without
 either by `settle_by` (5 s; 15 s for `play` and `transfer`) re-read the speaker. Refusals before
 anything is sent are answered directly and never produce an event: `400`, `404`, `409`
 (`speaker_offline`, `powered_off`), `422 unsupported` (fixture `error-speaker-unsupported.json`),
@@ -2548,13 +2557,63 @@ anything is sent are answered directly and never produce an event: `400`, `404`,
 at most every 100 ms, and every coalesced command gets the same outcome.
 
 `play`: `{"items": [{"song_id"} | {"ref"}], "mode": "replace" | "next" | "add", "start_index",
-"position_ms", "shuffle"?, "repeat"?, "context"?}`. 1 to 1000 items, each exactly one of
+"position_ms", "shuffle"?, "repeat"?, "context"?, "radio"?, "hold"?, "takeover"?}`. 1 to 1000
+items, each exactly one of
 `song_id` (a library song the caller can see; it plays from Trackside's own source, so without a
 working registration it is `409 not_playable` with `details.song_id`) or `ref` (a catalog item,
 which needs `can_play_services`). Items the caller cannot play are skipped; with none left,
 `409` `not_playable` or `service_signed_out`. `next` and `add` need `queue` and ignore the start
 fields. A start after an album or playlist ref starts at the first item, since those expand
 inside Music Assistant.
+
+- `radio: true` (fixture `speaker-play-radio-request.json`) starts the service's own radio
+  from one item: exactly one `ref` of a track, artist, album or playlist, `mode` `replace` (or
+  left out), no `shuffle` and no `position_ms`; otherwise `400` with `details.field` `items`,
+  `mode` or `radio`. Music Assistant fills the queue with the service's similar tracks as it
+  plays (its radio mode). The ref's service must list `similar` (21.1), else `422
+  unsupported`, `details.capability = "similar"`, `details.service_id`. Music Assistant only
+  finds out whether it can make the radio once it asks the service, so that comes as the
+  outcome: `failed` with `error.reason = "radio_unavailable"` (Spotify's radio depends on an
+  endpoint Spotify no longer offers new apps, so it can stop working). Apps then quietly play
+  their own radio from the same song.
+- `hold: true` (fixture `speaker-play-held-request.json`; `mode` `replace` only, else `400`,
+  `details.field = "hold"`) loads the queue and pauses it at once at the start item: Music
+  Assistant has resolved the item and opened the service's stream when `play_media` answers,
+  and keeps a paused stream ready for its pause timeout (30 s by default). The `202` speaker
+  is `paused`; `POST /speakers/{id}/playback {"action": "play"}` starts it. This is the
+  hand-over start for the relay (22.5). There is no `start_at`: Music Assistant has no
+  scheduled start, so a server-side time could not be kept to; the relay's program date times
+  give the app the exact moment instead.
+- `takeover: true`: when Music Assistant refuses because another player holds the service's
+  only stream (Spotify allows one per account), Trackside stops that player's queue and sends
+  the play again, a few times over about 1.5 s while the other player lets go, never more.
+  Without it the outcome is `failed` with `error.reason = "service_busy"`; apps that want
+  Spotify's own behaviour ("play here, the other stops") retry the same `play` with
+  `takeover: true` and a new `Idempotency-Key`.
+
+A failed `play`'s `error` (fixture `speaker-command-failed-event.json`) is `{"code",
+"message", "reason"?, "service_id"?, "holder_id"?, "holder_name"?}`; `code` is as before, so
+older apps are unaffected. `reason` (open) is only what Music Assistant reports, never a guess:
+
+| `reason` | Music Assistant's answer | Also |
+|---|---|---|
+| `service_busy` | `ProviderStreamHeld` (29): another player plays the service's only stream | `service_id`; `holder_id` and `holder_name` when the caller may see that speaker |
+| `service_signed_out` | `LoginFailed` (6) or `ProviderPermissionDenied` (18) | `service_id` |
+| `not_playable` | `MediaNotFound`, `UnplayableMedia`, `InvalidProviderURI` or `InvalidProviderID` | `service_id` |
+| `radio_unavailable` | any other refusal of a `radio: true` play | `service_id` |
+
+`drm_failed`, `region_unavailable` and `subscription_required` are reserved: Music Assistant
+reports none of them as such today (a region or subscription problem comes as a sign-in or
+generic failure, and a stream that breaks after it started is not a command failure), so
+Trackside does not send them, but apps should handle them. Synchronous refusals keep their
+`409 conflict` `details.reason` (`not_playable`, `service_signed_out`, ...), with the same
+names.
+
+`DELETE /speakers/{id}/queue/{item_id}` removes one item, by the `item_id` of the queue
+(20.2); the queue changes with `speaker_queue`. The item playing now is `409 conflict`,
+`details.reason = "now_playing"` (skip it instead). Music Assistant ignores the removal of an
+item it already started loading (usually the next one), so re-read the queue on
+`speaker_queue` rather than assuming.
 
 `transfer` moves the queue, position, shuffle and repeat to `to` and stops this speaker unless
 `keep_playing_here`. `"to": "this_device"` moves it to the calling device's relay (section
@@ -2597,21 +2656,28 @@ addresses `m` ids come from live in memory only.
 Every enum and capability list is open; show a control only when its capability is listed.
 
 **CatalogService** (fixture `catalog-services.json`): `{"account": {"state", "detail"?},
-"capabilities"?, "id", "logo_key", "name", "quality"?}`.
+"capabilities"?, "id", "library_edit_kinds"?, "logo_key", "name", "quality"?}`.
 
 - `id`: a `b` id, `BLAKE3("service" ‖ ma_server_id ‖ provider_instance_id)`, stable while Music
   Assistant keeps the instance. `name`: the instance's name in Music Assistant. `logo_key`:
   Music Assistant's provider domain (`spotify`, `tidal`, `qobuz`, `deezer`, `soundcloud`,
   `apple_music`, ...), for the app's own glyph; Trackside serves no logos.
-- `capabilities` (sorted): `library` (21.5 works), `playlists`, `radio`, `recommendations`
-  (it has shelves in 21.8), `search`, `similar`, `top_tracks`, from the provider's features in
-  Music Assistant.
+- `capabilities` (sorted): `library` (21.5 works), `library_edit` (items can be saved to the
+  service's library, 21.9), `playlists`, `radio`, `recommendations` (it has shelves in 21.8),
+  `search`, `similar` (a `play` can start the service's radio from a ref, 20.3), `top_tracks`,
+  from the provider's features in Music Assistant.
+- `library_edit_kinds` (sorted, only with `library_edit`): the kinds Music Assistant can save
+  to and remove from this service's library, of `album`, `artist`, `playlist`, `track`. Show a
+  save control (the heart) only for an item whose kind is listed for its `service_id`.
 - `account.state`: `ok`, `signed_out` (sign in again in Music Assistant), `error`,
   `unavailable`; `detail` is English for logs. Sign-in states come from Music Assistant's
   provider configs, which only an admin token may read; with another token a service is `ok`
   while it is available and `unavailable` otherwise.
-- `quality`: the best the service delivers through Music Assistant (`lossless`, `high`,
-  `standard`), absent when unknown.
+- `quality`: the best this instance delivers through Music Assistant (`lossless`, `high`,
+  `standard`), absent when unknown. It is the instance's own setting where Music Assistant
+  reports one to an admin token: Spotify is `lossless` only while its Soloist backend is set to
+  lossless, and `high` otherwise (librespot, a lower setting, or a token that cannot read
+  provider configs). Other services by their domain.
 - Listed: Music Assistant's music providers that are streaming providers, except any the admin
   hid (`hidden_services`), Trackside's own OpenSubsonic registration, and file or server
   sources (filesystem, Subsonic, OpenSubsonic, Jellyfin, Plex) whatever they declare.
@@ -2619,17 +2685,19 @@ Every enum and capability list is open; show a control only when its capability 
 **CatalogTrack**: `{"kind": "track", "ref", "service_id", "title", "artist"?, "artists"?:
 [{"name", "ref"?}], "album"?, "album_ref"?, "artwork_id"?, "duration_ms"?, "explicit"?,
 "isrc"?, "track_number"?, "disc_number"?, "quality"?, "song_key"?, "song_id"?,
-"playable"?}`. `song_key` is `tracks_model::song_key(title, artist)`. `song_id` names a library
+"playable"?, "saved"?}`. `song_key` is `tracks_model::song_key(title, artist)`. `song_id` names a library
 song the caller can see with the same `song_key`, so the app can prefer the owned copy and
 avoid listing it twice. `explicit` is `explicit` or `clean`. `quality` from the format Music
 Assistant reports for the item. `playable: false` only when Music Assistant says the item
-cannot play.
+cannot play. `saved` (tracks, albums, artists and playlists) is whether the item is in the
+service's library in Music Assistant's synced copy (a liked item counts); it is left out when
+Music Assistant does not say, as for most search results, which is not the same as `false`.
 
 **CatalogAlbum**: `{"kind": "album", "ref", "service_id", "name", "artist"?, "artists"?,
-"year"?, "artwork_id"?, "track_count"?, "album_key"?}`. **CatalogArtist**: `{"kind": "artist",
-"ref", "service_id", "name", "identity"?, "artwork_id"?}`. **CatalogPlaylist**: `{"kind":
-"playlist", "ref", "service_id", "name", "owner"?, "track_count"?, "artwork_id"?,
-"editable"?}`. **CatalogRadio**: `{"kind": "radio", "ref", "service_id", "name",
+"year"?, "artwork_id"?, "track_count"?, "album_key"?, "saved"?}`. **CatalogArtist**: `{"kind":
+"artist", "ref", "service_id", "name", "identity"?, "artwork_id"?, "saved"?}`.
+**CatalogPlaylist**: `{"kind": "playlist", "ref", "service_id", "name", "owner"?,
+"track_count"?, "artwork_id"?, "editable"?, "saved"?}`. **CatalogRadio**: `{"kind": "radio", "ref", "service_id", "name",
 "artwork_id"?}`. `album_key` and `identity` are computed as for library albums and artists
 (section 4).
 
@@ -2730,9 +2798,10 @@ last sync.
 
 - On a speaker: `POST /speakers/{id}/play` with `ref` items (20.3). On this device: through
   the relay. There is no direct audio URL for a catalog item.
-- Rate limits per user: 30 searches a minute (`/catalog/search` and `/search` with `catalog`
-  together), 120 item, saved-library and recommendation reads a minute (together), 120
-  artwork cache misses a minute;
+- Rate limits per user: 30 searches a minute (`/catalog/search`, `/search` with `catalog` and
+  `/catalog/match` together), 120 item, saved-library, recommendation reads and saves a minute
+  (together), 60 match lookups not in memory a minute (21.10), 120 artwork cache misses a
+  minute;
   `429 rate_limited` with `Retry-After`.
 - Errors: `404` without `features.catalog`; `409 conflict` (`service_signed_out`); `422
   unsupported`; `503 catalog_unavailable` (fixture `error-catalog-unavailable.json`).
@@ -2740,9 +2809,9 @@ last sync.
 ### 21.8 `GET /api/v1/catalog/recommendations?services&limit` (scope: library)
 
 The services' own recommendations as shelves: Music Assistant's recommendation rows of the
-listed services, each with its items (Apple Music's stations for you, Spotify's and Tidal's
-mixes, Deezer's and YouTube Music's picks, and whatever else a service offers through Music
-Assistant). `/me` `features.catalog.recommendations` says the server has this route; older
+listed services, each with its items (Apple Music's stations for you, Tidal's mixes, Deezer's
+and YouTube Music's picks, Spotify's recently played, and whatever else a service offers
+through Music Assistant), and for Spotify a Made for You shelf of its mixes. `/me` `features.catalog.recommendations` says the server has this route; older
 servers leave it out, so apps hide their shelves there.
 
 - `services`: `b` ids, at most 50, default every listed service with `recommendations` and
@@ -2764,6 +2833,14 @@ servers leave it out, so apps hide their shelves there.
   (`editable: false`) and open with a batch of the station's tracks. Both play on a speaker or
   the relay. A ref kept from one is not guaranteed to work after Music Assistant moves to the
   other.
+- Made for You: Music Assistant gives Spotify no row of its personal mixes, but Spotify keeps
+  them among the user's saved playlists. For a Spotify service with `library`, the shelf
+  `{"title": "Made for You", "items": [CatalogPlaylist]}` (no `type`, no `subtitle`) holds the
+  saved playlists owned by "Spotify" named Discover Weekly, Release Radar, Daily Mix 1 to 6,
+  daylist, On Repeat, Repeat Rewind and Your Time Capsule, in that order. They come from one
+  listing of Music Assistant's synced library (at most 500 saved playlists, no call to
+  Spotify) read with the rows, and the shelf comes first among that service's shelves; it is
+  left out when none is saved. Its `id` is derived from the row id `trackside:made_for_you`.
 - Shelf `id`: a `w` id, `BLAKE3("shelf" ‖ ma_server_id ‖ 0x1F ‖ provider_instance_id ‖ 0x1F ‖
   row_id)`, stable while Music Assistant keeps the row (to remember a collapsed shelf, say).
   `title` and `subtitle` are Music Assistant's (usually English) and data on the wire. `type`:
@@ -2793,6 +2870,61 @@ Fixture `catalog-recommendations.json`:
               "title": "Jump back in", "subtitle": "Your recent rotation", "type": "timeline",
               "items": [CatalogTrack, CatalogAlbum, CatalogPlaylist, CatalogArtist]}]}
 ```
+
+### 21.9 `PUT` and `DELETE /api/v1/catalog/items/{ref}/saved` (scope: write)
+
+Saves the item to the service's own library through Music Assistant, or removes it from there:
+for Spotify a track goes to Liked Songs, an album to the saved albums, an artist to the
+followed artists and a playlist to the followed playlists. `/me` `features.catalog.save` says
+the server has these routes and the credential has `write`. Hear Less and Tracks' own likes
+stay in Tracks.
+
+- Answer `200` `{"ref", "saved", "service_id"}` (fixture `catalog-saved.json`), the state the
+  item is in afterwards. Both are idempotent: saving a saved item or removing one that is not
+  saved answers the same way.
+- `PUT` asks Music Assistant to add the item to its library (`music/library/add_item`), which
+  writes it to the service in the background. Music Assistant does not write to the service
+  when the service's library sync-back is off in its settings.
+- `DELETE` removes Music Assistant's library entry for the item when it is in that service's
+  library. When the same entry also holds the item for another source (Music Assistant merges
+  matching items from several sources into one entry, Trackside's own songs included), or an
+  album or artist entry still holds saved tracks or albums, nothing is removed: `409 conflict`,
+  `details.reason = "not_removable"`.
+- `422 unsupported` with `details.capability = "library_edit"` for a service or kind not in
+  `library_edit_kinds`; `409 conflict` `service_signed_out`; `404` for an item the service no
+  longer has; `503 catalog_unavailable`; `400` `details.field = "ref"`. Each request counts as
+  one of the 120 item reads a minute (21.7).
+
+### 21.10 `POST /api/v1/catalog/match` (scope: library)
+
+Finds many songs at the services in one request, for an app that plays a song from a service
+when the user prefers it there (Play From). `/me` `features.catalog.match` says the server has
+it.
+
+- Body (fixture `catalog-match-request.json`): `{"items": [{"id", "title", "artist", "album"?,
+  "duration_ms"?, "isrc"?}], "services"?: ["b..."]}`. 1 to 50 items; `id` is the app's own (1
+  to 64 characters, unique in the request) and comes back as it was; `title` and `artist` 1 to
+  500 characters. `services` as in 21.3, default every listed, signed-in service with
+  `search`. Otherwise `400`, `details.field` `items` or `services`.
+- Answer (fixture `catalog-match.json`): `{"complete", "results": [{"id", "matches":
+  [{"service_id", "state", "track"?}]}], "retry_after_s"?}`, the results in the order of the
+  items and the matches in the order of the services. `state`: `found` (with `track`, a
+  CatalogTrack with `song_id` when the caller owns the song), `none`, `timed_out`, `failed`,
+  `signed_out`, or `deferred` (not looked up yet; ask again after `retry_after_s`).
+  `complete` is `false` when anything timed out or was deferred.
+- A match is the same recording: the service's track with the same ISRC, else the first with
+  the same `song_key` whose length is within 10 s of `duration_ms` (when both are known), from
+  the service's best 10 tracks for "artist title". Nothing else counts, so a live version or a
+  cover is not taken for the song.
+- Each identity costs one track search per service, limited to that service, all at most 8
+  Music Assistant requests at once server-wide, and the request waits at most 8 s (the rest
+  `timed_out`). What a lookup found is kept in memory for 24 hours, and that it found nothing
+  for 6 hours, shared by every user (owned songs are still named per caller); a lookup that
+  timed out or failed is not kept.
+- Limits: each request counts as one of the 30 catalog searches a minute (21.7), and every
+  lookup not answered from memory spends one of 60 a minute per user; past that the rest are
+  `deferred`. `404` without `features.catalog`; `503 catalog_unavailable` while Music
+  Assistant is unreachable; `429 rate_limited` past the search limit.
 
 ---
 
@@ -2899,3 +3031,21 @@ capabilities `next_previous`, `pause`, `play`, `queue`, `repeat`, `seek`, `shuff
 `transfer`: no volume, mute, power or grouping (the phone's own volume applies). It is in the
 owner's `GET /speakers` while the session lives; other users never see it, its events or its
 sessions (`404`).
+
+### 22.5 Handing over without a gap
+
+For a catalog song that follows one the app plays itself (its own file, say), the relay can be
+ready when the local song ends:
+
+1. About 15 s before the end (within Music Assistant's pause timeout, 30 s by default), open or
+   reuse the session and `play` with `"hold": true` (20.3). Music Assistant resolves the item
+   and opens the service's stream; the session is `paused`.
+2. `latency_ms` plus about a second before the end, send `{"action": "play"}` to the relay
+   speaker. Its `relay` event carries a new `generation` and `stream.hls`.
+3. Load that `stream.hls` and start playback at its first segment's
+   `#EXT-X-PROGRAM-DATE-TIME`, which is when Music Assistant means it to be heard (22.3), so
+   the local song can play to its end.
+
+The same works for a speaker (no HLS: the speaker starts as soon as it is told). With Spotify,
+add `"takeover": true` so a stream left on another player does not stop the start.
+
