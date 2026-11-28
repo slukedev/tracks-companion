@@ -789,7 +789,7 @@ guesser's music), so the risk is small; the numbers still keep it negligible:
              "urls": [{"url": "http://192.168.1.20:4747", "kind": "lan", "tls": false}]},
   "features": {"acquisition": {"instant_play": true, "external_play": true},
                "apple_music": {"developer_token": true},
-               "catalog": {"relay": true, "relay_cellular": true},
+               "catalog": {"recommendations": true, "relay": true, "relay_cellular": true},
                "speakers": {"control": true}}
 }
 ```
@@ -807,8 +807,10 @@ is left out for a session or an API key.
 `features.speakers` is present when Music Assistant is set up and enabled (section 16, Music
 Assistant), the user has `can_use_speakers` (admins always) and the credential has `library`;
 `control` is whether it also has `write`. `features.catalog` is present on the same terms with
-`can_play_services`; `relay` when the credential is a device key with `stream` and the server
-can relay to phones, `relay_cellular` when it can also encode for cellular. Both stay while
+`can_play_services`; `recommendations` (always `true`; left out by older servers) when the
+server has `GET /catalog/recommendations` (21.8); `relay` when the credential is a device key
+with `stream` and the server can relay to phones, `relay_cellular` when it can also encode for
+cellular. Both stay while
 Music Assistant is only unreachable, so apps show a calm empty state rather than a section that
 comes and goes. `can_use_speakers` and `can_play_services` default to on; older servers leave
 them out, which means on.
@@ -2587,8 +2589,8 @@ Assistant set up and enabled, the user's `can_play_services`, a credential with 
 **Nothing from a streaming service is written to disk**, except artwork thumbnails, which the
 artwork cache keeps decoded and re-encoded as JPEG (21.6). No audio is downloaded, recorded,
 cached or exported; items play on speakers inside Music Assistant (section 20) or on a phone
-through the relay. Search results, playlist track lists and the image addresses `m` ids come
-from live in memory only.
+through the relay. Search results, recommendations, playlist track lists and the image
+addresses `m` ids come from live in memory only.
 
 ### 21.1 Objects
 
@@ -2601,8 +2603,9 @@ Every enum and capability list is open; show a control only when its capability 
   Assistant keeps the instance. `name`: the instance's name in Music Assistant. `logo_key`:
   Music Assistant's provider domain (`spotify`, `tidal`, `qobuz`, `deezer`, `soundcloud`,
   `apple_music`, ...), for the app's own glyph; Trackside serves no logos.
-- `capabilities` (sorted): `library` (21.5 works), `playlists`, `radio`, `search`, `similar`,
-  `top_tracks`, from the provider's features in Music Assistant.
+- `capabilities` (sorted): `library` (21.5 works), `playlists`, `radio`, `recommendations`
+  (it has shelves in 21.8), `search`, `similar`, `top_tracks`, from the provider's features in
+  Music Assistant.
 - `account.state`: `ok`, `signed_out` (sign in again in Music Assistant), `error`,
   `unavailable`; `detail` is English for logs. Sign-in states come from Music Assistant's
   provider configs, which only an admin token may read; with another token a service is `ok`
@@ -2728,10 +2731,68 @@ last sync.
 - On a speaker: `POST /speakers/{id}/play` with `ref` items (20.3). On this device: through
   the relay. There is no direct audio URL for a catalog item.
 - Rate limits per user: 30 searches a minute (`/catalog/search` and `/search` with `catalog`
-  together), 120 item and saved-library reads a minute, 120 artwork cache misses a minute;
+  together), 120 item, saved-library and recommendation reads a minute (together), 120
+  artwork cache misses a minute;
   `429 rate_limited` with `Retry-After`.
 - Errors: `404` without `features.catalog`; `409 conflict` (`service_signed_out`); `422
-  unsupported`; `503 catalog_unavailable`.
+  unsupported`; `503 catalog_unavailable` (fixture `error-catalog-unavailable.json`).
+
+### 21.8 `GET /api/v1/catalog/recommendations?services&limit` (scope: library)
+
+The services' own recommendations as shelves: Music Assistant's recommendation rows of the
+listed services, each with its items (Apple Music's stations for you, Spotify's and Tidal's
+mixes, Deezer's and YouTube Music's picks, and whatever else a service offers through Music
+Assistant). `/me` `features.catalog.recommendations` says the server has this route; older
+servers leave it out, so apps hide their shelves there.
+
+- `services`: `b` ids, at most 50, default every listed service with `recommendations` and
+  `account.state: ok`; unknown ids are ignored, a signed-out one is reported `signed_out`, one
+  without the capability `failed`. `limit`: items per shelf, 1 to 50, default 20; outside that
+  is `400`, `details.field = "limit"`.
+- Left out: Music Assistant's own library rows (recently played or added, random picks,
+  favourites, in progress), rows of metadata and plugin providers, of hidden services and of
+  services not asked for, rows Music Assistant marks as off by default, and rows with nothing
+  the catalog shows. At most 30 shelves, in Music Assistant's order (one row of each service in
+  turn).
+- Each shelf's items are CatalogTrack, CatalogAlbum, CatalogArtist, CatalogPlaylist or
+  CatalogRadio by `kind` (21.1), with the same refs, `artwork_id`s, `song_key`, `song_id` and
+  `album_key` as everywhere else, each ref once per shelf. Folders, podcasts, audiobooks and
+  kinds a client would not know are left out. Items play and open as any catalog item does
+  (21.4, 21.7).
+- Stations: Music Assistant 2.11 lists a service's stations (Apple Music's, for one) as
+  CatalogRadio; 2.10 lists them as dynamic playlists, so they are CatalogPlaylist
+  (`editable: false`) and open with a batch of the station's tracks. Both play on a speaker or
+  the relay. A ref kept from one is not guaranteed to work after Music Assistant moves to the
+  other.
+- Shelf `id`: a `w` id, `BLAKE3("shelf" ‖ ma_server_id ‖ 0x1F ‖ provider_instance_id ‖ 0x1F ‖
+  row_id)`, stable while Music Assistant keeps the row (to remember a collapsed shelf, say).
+  `title` and `subtitle` are Music Assistant's (usually English) and data on the wire. `type`:
+  `timeline` for a row of what was played last; absent for a row of tiles; open.
+- Music Assistant is asked once for the rows, then once per row for its items, in parallel
+  under the catalog's limit of 8 requests at once server-wide. The whole answer waits at most
+  5 s: a row that has not answered is left out, its service is `timed_out` and `complete` is
+  `false`. `services[].state`: `ok` (also when a service has nothing to recommend now),
+  `timed_out`, `failed`, `signed_out`.
+- Answers are kept in memory per user, services and limit for 20 minutes (10 s when
+  `complete` is `false`), at most 128 answers and 20,000 items in all, and forgotten whenever
+  SSE `catalog_services` is sent. Each request counts as one of the 120 item and saved-library
+  reads a minute (21.7), answered from memory or not.
+- `503 catalog_unavailable` (`Retry-After: 10`) while Music Assistant is unreachable; `404`
+  without `features.catalog`; `400` with `details.field` `services` or `limit`.
+
+Fixture `catalog-recommendations.json`:
+
+```json
+{"complete": false,
+ "services": [{"id": "bm1zt0k6dk6mzz0n3vw5d", "state": "ok"},
+              {"id": "bqtyy4kcexcsg6wa0y4w5", "state": "ok"},
+              {"id": "bnr6z9ds6zzv5xjpv0j1s", "state": "timed_out"}],
+ "shelves": [{"id": "w1dgyc462epk20x8myctx", "service_id": "bm1zt0k6dk6mzz0n3vw5d",
+              "title": "Stations for You", "items": [CatalogRadio]},
+             {"id": "wam5fh3nsm9dmaszr0x34", "service_id": "bqtyy4kcexcsg6wa0y4w5",
+              "title": "Jump back in", "subtitle": "Your recent rotation", "type": "timeline",
+              "items": [CatalogTrack, CatalogAlbum, CatalogPlaylist, CatalogArtist]}]}
+```
 
 ---
 

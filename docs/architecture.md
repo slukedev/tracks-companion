@@ -181,7 +181,7 @@ Rules:
 | api | `/api/v1/*` handlers, wire types (serde), admin endpoints, SSE, fixtures for Tracks | domain logic beyond mapping |
 | cloud | the apps' synced records: merge rules, the per-user change seq, chunked writes, pruning, quotas, the device registry | HTTP, anything outside the `cloud_*` tables |
 | mass | the Music Assistant WebSocket API: connect, schema check, auth, reconnect, requests and chunked answers, events and snapshots, tolerant models | anything Trackside-specific |
-| assistant | speakers from players and queues, revisions, coalescing, commands and their outcomes, the connection settings (sealed token), registration as an OpenSubsonic source, the streaming catalog (services, search fan-out and cache, items, ref resolution, fetching catalog images) | HTTP, the relay, the catalog routes, storing images |
+| assistant | speakers from players and queues, revisions, coalescing, commands and their outcomes, the connection settings (sealed token), registration as an OpenSubsonic source, the streaming catalog (services, search fan-out and cache, items, recommendations, ref resolution, fetching catalog images) | HTTP, the relay, the catalog routes, storing images |
 | sendspin | the Sendspin wire as a player: proxy auth, init exchange, Noise handshake and transport, framing, time filter, hello and activation, stream events, reconnects | anything after an audio chunk is handed on, keys at rest (an `IdentityStore` the server provides) |
 | relay | FLAC frame splitting, the fMP4 muxer (`fLaC`/`dfLa`, `mp4a`/`esds`), live playlists, epochs, the publication rule, byte caps, the cellular ffmpeg child, idle teardown, session limits | routes and auth (the API calls its fetch methods), Music Assistant's API (a `PlayerControl` the server provides) |
 | server | CLI, wiring, listeners, TLS, mDNS, scheduler, backups, health endpoints, dashboard asset serving, metrics text | domain logic |
@@ -1665,6 +1665,20 @@ owned songs; the artwork cache in `trackside-media` keeps images.
   and 100 albums; a playlist's full track list is kept 5 minutes (32 lists, 50,000 tracks) so
   paging with offset cursors (`{"o": n}`) reads Music Assistant once. Saved libraries page
   Music Assistant's `library_items` for the instance, newest first.
+- **Recommendations** (`catalog/recommend.rs`) read `music/recommendations` once and keep
+  the rows of asked services only, matched by instance id or, for a row naming its domain, the
+  first asked instance of it: Music Assistant's library provider (`recommendations`),
+  metadata and plugin providers and hidden services fall away, as do rows off by default, at
+  most 30 kept. Each row's items come from `music/recommendations/items` (2.10.14 and 2.11
+  list rows without items; older servers' inline items are used as sent), in parallel under
+  the same semaphore and one 5 s deadline for rows and items together. Items are converted
+  with the search converter, so refs, `m` ids and keys match; folders and unknown kinds are
+  skipped. A station keeps Music Assistant's media type, because that is what plays: a 2.10
+  `ra.` dynamic playlist plays only as `playlist/ra.…` and a 2.11 station only as
+  `radio/ra.…`. Answers are kept per user, services and limit for 20 minutes (10 s when a row
+  timed out), 128 entries and 20,000 items, and cleared with every `catalog_services` event
+  and every reconnect. Shelf ids are `w` ids, `BLAKE3("shelf" ‖ ma_server_id ‖ 0x1F ‖
+  instance_id ‖ 0x1F ‖ row_id)`.
 - **Artwork.** Converting an item records the image address Music Assistant gave (its image
   proxy or a public URL) under its `m` id, in a two-generation map of 20,000 entries each. A
   cache miss on `/art/m...` fetches that address only: Music Assistant's own host may be
