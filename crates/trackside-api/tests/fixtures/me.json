@@ -12,12 +12,18 @@
       "developer_token": true
     },
     "catalog": {
+      "match": true,
+      "radio": true,
       "recommendations": true,
       "relay": true,
-      "relay_cellular": true
+      "relay_cellular": true,
+      "save": true
     },
     "speakers": {
-      "control": true
+      "control": true,
+      "hold": true,
+      "queue_remove": true,
+      "takeover": true
     }
   },
   "libraries": [

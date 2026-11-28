@@ -12,6 +12,7 @@
     "kind": "album",
     "name": "I Am... Sasha Fierce",
     "ref": "mc1.YWxidW0fc3BvdGlmeR8zOVA3VkQ3cWxnM1owbHRxNjBlSHA3",
+    "saved": true,
     "service_id": "bqtyy4kcexcsg6wa0y4w5",
     "track_count": 2,
     "year": 2008
@@ -33,6 +34,7 @@
       "explicit": "clean",
       "kind": "track",
       "ref": "mc1.dHJhY2sfc3BvdGlmeR8wV3FkMHpBNXdOcFFuUUJHRVVIMGY0",
+      "saved": true,
       "service_id": "bqtyy4kcexcsg6wa0y4w5",
       "song_id": "sdjcz08vf67h7cx28snq6",
       "song_key": "halo\u001fbeyonce",
@@ -55,6 +57,7 @@
       "explicit": "clean",
       "kind": "track",
       "ref": "mc1.dHJhY2sfc3BvdGlmeR83aFFKQTUwWHJDV0FCQXU1djZRWjRp",
+      "saved": false,
       "service_id": "bqtyy4kcexcsg6wa0y4w5",
       "song_key": "single ladies (put a ring on it)\u001fbeyonce",
       "title": "Single Ladies (Put a Ring on It)",

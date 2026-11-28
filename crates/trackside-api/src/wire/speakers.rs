@@ -172,17 +172,26 @@ pub struct PlayItem {
 pub struct PlayRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<PlayContext>,
+    /// Load and stay paused at the start, for a later `play`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hold: bool,
     pub items: Vec<PlayItem>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position_ms: Option<u64>,
+    /// Start the service's radio from the one `ref` in `items`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub radio: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repeat: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shuffle: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_index: Option<usize>,
+    /// Take the service's only stream over from another player.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub takeover: bool,
 }
 
 /// `POST /speakers/{id}/transfer`.
@@ -260,7 +269,18 @@ pub struct SpeakerQueueEvent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandError {
     pub code: String,
+    /// With `reason: "service_busy"`: the speaker holding the service's stream, when the
+    /// caller may see it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder_name: Option<String>,
     pub message: String,
+    /// `service_busy`, `service_signed_out`, `not_playable`, `radio_unavailable`, ...: open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_id: Option<String>,
 }
 
 /// SSE `speaker_command`.

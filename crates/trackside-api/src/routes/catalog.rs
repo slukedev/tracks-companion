@@ -19,9 +19,10 @@ use trackside_core::assistant::SpeakersState;
 use trackside_core::catalog::{
     ArtistCredit, CatalogAlbum, CatalogArtist, CatalogControl, CatalogDetail, CatalogEntry,
     CatalogKind, CatalogKinds, CatalogPage, CatalogPlaylist, CatalogRadio, CatalogResults,
-    CatalogSearch, CatalogTrack, LibraryPage, MAX_QUERY_LEN, MAX_SERVICES, PAGE_LIMIT,
-    PAGE_LIMIT_MAX, RECOMMENDATIONS_LIMIT, RECOMMENDATIONS_LIMIT_MAX, Recommendations,
-    RecommendationsQuery, SEARCH_LIMIT, SEARCH_LIMIT_MAX, ServiceList, ShelfKind,
+    CatalogSearch, CatalogTrack, LibraryPage, MATCH_ITEMS_MAX, MAX_QUERY_LEN, MAX_SERVICES,
+    MatchIdentity, MatchQuery, Matches, PAGE_LIMIT, PAGE_LIMIT_MAX, RECOMMENDATIONS_LIMIT,
+    RECOMMENDATIONS_LIMIT_MAX, Recommendations, RecommendationsQuery, SEARCH_LIMIT,
+    SEARCH_LIMIT_MAX, SavedState, ServiceList, ShelfKind,
 };
 use trackside_core::{Access, ServiceId, SongId};
 
@@ -33,14 +34,20 @@ use crate::wire::Time;
 use crate::wire::catalog as wire;
 
 const LIBRARY: u8 = Scopes::LIBRARY.bits();
+const WRITE: u8 = Scopes::WRITE.bits();
 
 pub(super) fn routes() -> Router<ApiState> {
     Router::new()
         .route("/catalog/services", get(services))
         .route("/catalog/search", get(search))
         .route("/catalog/items/{reference}", get(item))
+        .route(
+            "/catalog/items/{reference}/saved",
+            axum::routing::put(save).delete(unsave),
+        )
         .route("/catalog/services/{id}/library", get(library))
         .route("/catalog/recommendations", get(recommendations))
+        .route("/catalog/match", axum::routing::post(match_tracks))
 }
 
 /// The catalog for a caller with `features.catalog`; the routes do not exist otherwise.
@@ -106,6 +113,7 @@ pub fn track_body(track: &CatalogTrack, owned: &Owned) -> wire::CatalogTrack {
         playable: (!track.playable).then_some(false),
         quality: track.quality.map(|q| q.as_str().to_owned()),
         reference: track.reference.clone(),
+        saved: track.saved,
         service_id: track.service.to_string(),
         song_id: track
             .song_key
@@ -127,6 +135,7 @@ pub fn album_body(album: &CatalogAlbum) -> wire::CatalogAlbum {
         kind: String::from("album"),
         name: album.name.clone(),
         reference: album.reference.clone(),
+        saved: album.saved,
         service_id: album.service.to_string(),
         track_count: album.track_count,
         year: album.year,
@@ -140,6 +149,7 @@ pub fn artist_body(artist: &CatalogArtist) -> wire::CatalogArtist {
         kind: String::from("artist"),
         name: artist.name.clone(),
         reference: artist.reference.clone(),
+        saved: artist.saved,
         service_id: artist.service.to_string(),
     }
 }
@@ -152,6 +162,7 @@ pub fn playlist_body(playlist: &CatalogPlaylist) -> wire::CatalogPlaylist {
         name: playlist.name.clone(),
         owner: playlist.owner.clone(),
         reference: playlist.reference.clone(),
+        saved: playlist.saved,
         service_id: playlist.service.to_string(),
         track_count: playlist.track_count,
     }
@@ -183,6 +194,11 @@ pub fn services_body(list: &ServiceList) -> wire::CatalogServices {
                     .map(|c| c.as_str().to_owned())
                     .collect(),
                 id: s.id.to_string(),
+                library_edit_kinds: s
+                    .library_edit_kinds
+                    .iter()
+                    .map(|k| k.as_str().to_owned())
+                    .collect(),
                 logo_key: s.logo_key.clone(),
                 name: s.name.clone(),
                 quality: s.quality.map(|q| q.as_str().to_owned()),
@@ -543,6 +559,140 @@ async fn library(
     Ok(json_with(StatusCode::OK, &library_body(&found, &owned)))
 }
 
+pub fn matches_body(found: &Matches, owned: &Owned) -> wire::CatalogMatches {
+    wire::CatalogMatches {
+        complete: found.complete,
+        results: found
+            .results
+            .iter()
+            .map(|r| wire::MatchResult {
+                id: r.id.clone(),
+                matches: r
+                    .matches
+                    .iter()
+                    .map(|m| wire::ServiceMatch {
+                        service_id: m.service.to_string(),
+                        state: m.state.as_str().to_owned(),
+                        track: m.track.as_ref().map(|t| track_body(t, owned)),
+                    })
+                    .collect(),
+            })
+            .collect(),
+        retry_after_s: found
+            .retry_after
+            .map(|d| d.as_secs() + u64::from(d.subsec_nanos() > 0)),
+    }
+}
+
+/// A match request, checked: 1 to [`MATCH_ITEMS_MAX`] identities with unique ids, each with
+/// a title and an artist.
+pub(crate) fn match_query(request: wire::MatchRequest) -> ApiResult<MatchQuery> {
+    if request.items.is_empty() || request.items.len() > MATCH_ITEMS_MAX {
+        return Err(ApiError::bad_field(
+            "items",
+            format!("items holds 1 to {MATCH_ITEMS_MAX} songs."),
+        ));
+    }
+    let services = match request.services {
+        None => None,
+        Some(list) if list.len() > MAX_SERVICES => {
+            return Err(ApiError::bad_field(
+                "services",
+                format!("services holds at most {MAX_SERVICES}."),
+            ));
+        }
+        Some(list) => Some(
+            list.iter()
+                .map(|s| body_id::<ServiceId>(s, "services"))
+                .collect::<ApiResult<Vec<_>>>()?,
+        )
+        .filter(|ids| !ids.is_empty()),
+    };
+    let mut seen = std::collections::HashSet::new();
+    let text = |value: &str, most: usize| {
+        let value = value.trim();
+        (!value.is_empty() && value.chars().count() <= most).then(|| value.to_owned())
+    };
+    let items = request
+        .items
+        .into_iter()
+        .enumerate()
+        .map(|(i, item)| {
+            let bad = |what: &str| ApiError::bad_field("items", format!("items[{i}]: {what}"));
+            if item.id.is_empty() || item.id.chars().count() > 64 || !seen.insert(item.id.clone()) {
+                return Err(bad("id is 1 to 64 characters and unique."));
+            }
+            Ok(MatchIdentity {
+                id: item.id,
+                title: text(&item.title, 500)
+                    .ok_or_else(|| bad("title is 1 to 500 characters."))?,
+                artist: text(&item.artist, 500)
+                    .ok_or_else(|| bad("artist is 1 to 500 characters."))?,
+                album: item.album.as_deref().and_then(|a| text(a, 500)),
+                duration_ms: item.duration_ms.filter(|d| *d > 0),
+                isrc: item.isrc.as_deref().and_then(|i| text(i, 32)),
+            })
+        })
+        .collect::<ApiResult<Vec<_>>>()?;
+    Ok(MatchQuery { items, services })
+}
+
+async fn match_tracks(
+    Authed(principal): Authed<LIBRARY>,
+    State(state): State<ApiState>,
+    body: axum::body::Bytes,
+) -> ApiResult<Response> {
+    let catalog = allowed(&state, &principal)?;
+    let query = match_query(crate::extract::parse_json(&body)?)?;
+    state.auth.catalog_search(&principal)?;
+    let user = principal.access.user;
+    let auth = std::sync::Arc::clone(&state.auth);
+    let budget = move || auth.catalog_match_lookup(user);
+    let found = catalog
+        .match_tracks(&principal.access, query, &budget)
+        .await?;
+    let owned = owned(&state, &principal.access, found.tracks()).await?;
+    Ok(json_with(StatusCode::OK, &matches_body(&found, &owned)))
+}
+
+pub fn saved_body(saved: &SavedState) -> wire::CatalogSaved {
+    wire::CatalogSaved {
+        reference: saved.reference.clone(),
+        saved: saved.saved,
+        service_id: saved.service.to_string(),
+    }
+}
+
+async fn set_saved(
+    state: &ApiState,
+    principal: &Principal,
+    reference: &str,
+    saved: bool,
+) -> ApiResult<Response> {
+    let catalog = allowed(state, principal)?;
+    state.auth.catalog_read(principal)?;
+    let done = catalog
+        .set_saved(&principal.access, reference, saved)
+        .await?;
+    Ok(json_with(StatusCode::OK, &saved_body(&done)))
+}
+
+async fn save(
+    Authed(principal): Authed<WRITE>,
+    State(state): State<ApiState>,
+    Path(reference): Path<String>,
+) -> ApiResult<Response> {
+    set_saved(&state, &principal, &reference, true).await
+}
+
+async fn unsave(
+    Authed(principal): Authed<WRITE>,
+    State(state): State<ApiState>,
+    Path(reference): Path<String>,
+) -> ApiResult<Response> {
+    set_saved(&state, &principal, &reference, false).await
+}
+
 #[derive(Debug, Deserialize)]
 struct RecommendationParams {
     services: Option<String>,
@@ -582,6 +732,35 @@ mod tests {
         assert!(recommendations_query(Some(&many), None).is_err());
         let one = recommendations_query(Some("bqtyy4kcexcsg6wa0y4w5"), Some(5))?;
         assert_eq!(one.services.map(|s| s.len()), Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn match_requests_are_checked() -> ApiResult<()> {
+        let item = |id: &str, title: &str| wire::MatchItem {
+            album: None,
+            artist: String::from("Beyoncé"),
+            duration_ms: Some(0),
+            id: id.to_owned(),
+            isrc: Some(String::from("  ")),
+            title: title.to_owned(),
+        };
+        let request = |items| wire::MatchRequest {
+            items,
+            services: Some(Vec::new()),
+        };
+        let query = match_query(request(vec![item("a", " Halo ")]))?;
+        assert_eq!(query.items[0].title, "Halo");
+        assert_eq!(query.items[0].duration_ms, None);
+        assert_eq!(query.items[0].isrc, None);
+        assert_eq!(query.services, None);
+        assert!(match_query(request(Vec::new())).is_err());
+        assert!(match_query(request(vec![item("a", "Halo"), item("a", "Halo")])).is_err());
+        assert!(match_query(request(vec![item("a", " ")])).is_err());
+        let many = (0..=MATCH_ITEMS_MAX)
+            .map(|n| item(&n.to_string(), "Halo"))
+            .collect();
+        assert!(match_query(request(many)).is_err());
         Ok(())
     }
 

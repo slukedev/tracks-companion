@@ -392,7 +392,14 @@ pub struct MeFeatures {
 
 /// `features.catalog` in `/me`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(clippy::struct_excessive_bools, reason = "one wire flag per feature")]
 pub struct CatalogFeature {
+    /// The server has `POST /catalog/match`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub r#match: bool,
+    /// `play` bodies take `"radio": true`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub radio: bool,
     /// The server has `GET /catalog/recommendations`. Always true here; older servers leave it
     /// out, so apps hide their recommendation shelves there.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -403,13 +410,26 @@ pub struct CatalogFeature {
     /// The relay's cellular tier too, which needs ffmpeg.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub relay_cellular: bool,
+    /// `PUT` and `DELETE /catalog/items/{ref}/saved` exist and the credential has `write`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub save: bool,
 }
 
 /// `features.speakers` in `/me`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(clippy::struct_excessive_bools, reason = "one wire flag per feature")]
 pub struct SpeakersFeature {
     /// The credential may send commands (it has `write`).
     pub control: bool,
+    /// `play` bodies take `"hold": true`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hold: bool,
+    /// `DELETE /speakers/{id}/queue/{item_id}` exists.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub queue_remove: bool,
+    /// `play` bodies take `"takeover": true`, and failed commands carry `error.reason`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub takeover: bool,
 }
 
 /// `features.apple_music` in `/me`.

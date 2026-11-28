@@ -8,9 +8,10 @@ use trackside_api::{ApiError, build, wire};
 use trackside_core::assistant::SpeakersState;
 use trackside_core::catalog::{
     AccountState, ArtistCredit, CatalogAlbum, CatalogArtist, CatalogDetail, CatalogEntry,
-    CatalogError, CatalogKinds, CatalogPlaylist, CatalogRadio, CatalogResults, CatalogService,
-    CatalogTrack, LibraryPage, Quality, Recommendations, ServiceCapability, ServiceList,
-    ServiceOutcome, ServiceSearchState, Shelf, ShelfKind,
+    CatalogError, CatalogKind, CatalogKinds, CatalogPlaylist, CatalogRadio, CatalogResults,
+    CatalogService, CatalogTrack, LibraryPage, MatchResult, MatchState, Matches, Quality,
+    Recommendations, SavedState, ServiceCapability, ServiceList, ServiceMatch, ServiceOutcome,
+    ServiceSearchState, Shelf, ShelfKind,
 };
 use trackside_core::{PublicId, ServiceId, ShelfId, SongId};
 
@@ -51,6 +52,16 @@ fn service(
         account: AccountState::Ok,
         account_detail: None,
         quality: Some(quality),
+        library_edit_kinds: if capabilities.contains(&ServiceCapability::LibraryEdit) {
+            vec![
+                CatalogKind::Album,
+                CatalogKind::Artist,
+                CatalogKind::Playlist,
+                CatalogKind::Track,
+            ]
+        } else {
+            Vec::new()
+        },
     }
 }
 
@@ -79,6 +90,7 @@ fn track(title: &str, reference: &str, duration_ms: u64) -> CatalogTrack {
         quality: None,
         song_key: Some(tracks_model::song_key(title, "Beyoncé")),
         playable: true,
+        saved: None,
     }
 }
 
@@ -109,6 +121,7 @@ fn album() -> CatalogAlbum {
         artwork: Some(pid(ALBUM_ART)),
         track_count: Some(11),
         album_key: tracks_model::album_key("I Am... Sasha Fierce", "beyonce"),
+        saved: None,
     }
 }
 
@@ -119,6 +132,7 @@ fn artist() -> CatalogArtist {
         name: String::from("Beyoncé"),
         identity: Some(String::from("beyonce")),
         artwork: Some(pid("m70csqp0tb9g09j0fg8qt")),
+        saved: None,
     }
 }
 
@@ -131,6 +145,7 @@ fn playlist() -> CatalogPlaylist {
         track_count: Some(50),
         artwork: Some(pid("m78a6d72awx3fd6jkzaht")),
         editable: None,
+        saved: None,
     }
 }
 
@@ -225,7 +240,7 @@ pub fn fixtures(songs: wire::Section<wire::Song>) -> Result<Out, serde_json::Err
         ..halo()
     };
     let with_catalog = CatalogResults {
-        kinds: CatalogKinds::NONE.with(trackside_core::catalog::CatalogKind::Track),
+        kinds: CatalogKinds::NONE.with(CatalogKind::Track),
         tracks: vec![tidal_halo],
         albums: Vec::new(),
         artists: Vec::new(),
@@ -254,9 +269,14 @@ pub fn fixtures(songs: wire::Section<wire::Song>) -> Result<Out, serde_json::Err
     let mut full_album = album();
     full_album.artists = beyonce();
     full_album.track_count = Some(2);
+    full_album.saved = Some(true);
+    let mut saved_halo = on_album(halo(), 3);
+    saved_halo.saved = Some(true);
+    let mut unsaved_ladies = on_album(single_ladies(), 9);
+    unsaved_ladies.saved = Some(false);
     let album_detail = CatalogDetail::Album {
         album: full_album,
-        tracks: vec![on_album(halo(), 3), on_album(single_ladies(), 9)],
+        tracks: vec![saved_halo, unsaved_ladies],
     };
     out.push((
         "catalog-album.json",
@@ -275,6 +295,7 @@ pub fn fixtures(songs: wire::Section<wire::Song>) -> Result<Out, serde_json::Err
 
     let mut listed = playlist();
     listed.editable = Some(false);
+    listed.saved = Some(true);
     let playlist_detail = CatalogDetail::Playlist {
         playlist: listed.clone(),
         tracks: vec![halo()],
@@ -341,6 +362,69 @@ pub fn fixtures(songs: wire::Section<wire::Song>) -> Result<Out, serde_json::Err
             &recommendations,
             &owned,
         ))?,
+    ));
+
+    out.push((
+        "catalog-saved.json",
+        json(&build::catalog_saved_body(&SavedState {
+            reference: halo().reference,
+            service: pid(SPOTIFY),
+            saved: true,
+        }))?,
+    ));
+
+    out.push((
+        "catalog-match-request.json",
+        json(&wire::catalog::MatchRequest {
+            items: vec![
+                wire::catalog::MatchItem {
+                    album: Some(String::from("I Am... Sasha Fierce")),
+                    artist: String::from("Beyoncé"),
+                    duration_ms: Some(261_640),
+                    id: String::from("sdjcz08vf67h7cx28snq6"),
+                    isrc: Some(String::from("USSM10804555")),
+                    title: String::from("Halo"),
+                },
+                wire::catalog::MatchItem {
+                    album: None,
+                    artist: String::from("Beyoncé"),
+                    duration_ms: Some(193_213),
+                    id: String::from("local-2"),
+                    isrc: None,
+                    title: String::from("Single Ladies (Put a Ring on It)"),
+                },
+            ],
+            services: Some(vec![String::from(SPOTIFY), String::from(TIDAL)]),
+        })?,
+    ));
+    let found = |service: &str, state: MatchState, track: Option<CatalogTrack>| ServiceMatch {
+        service: pid(service),
+        state,
+        track,
+    };
+    let matches = Matches {
+        results: vec![
+            MatchResult {
+                id: String::from("sdjcz08vf67h7cx28snq6"),
+                matches: vec![
+                    found(SPOTIFY, MatchState::Found, Some(halo())),
+                    found(TIDAL, MatchState::TimedOut, None),
+                ],
+            },
+            MatchResult {
+                id: String::from("local-2"),
+                matches: vec![
+                    found(SPOTIFY, MatchState::Deferred, None),
+                    found(TIDAL, MatchState::None, None),
+                ],
+            },
+        ],
+        complete: false,
+        retry_after: Some(std::time::Duration::from_secs(12)),
+    };
+    out.push((
+        "catalog-match.json",
+        json(&build::catalog_matches_body(&matches, &owned))?,
     ));
 
     let mut unavailable = ApiError::from(CatalogError::Unavailable).envelope();

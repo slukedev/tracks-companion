@@ -45,10 +45,12 @@ pub mod build {
     pub use crate::routes::catalog::{
         album_body as catalog_album_body, artist_body as catalog_artist_body,
         detail_body as catalog_detail_body, item_body as catalog_item_body,
-        library_body as catalog_library_body, playlist_body as catalog_playlist_body,
-        recommendations_body as catalog_recommendations_body, search_body as catalog_search_body,
-        search_state_body as catalog_search_state_body, services_body as catalog_services_body,
-        services_event_body as catalog_services_event_body, track_body as catalog_track_body,
+        library_body as catalog_library_body, matches_body as catalog_matches_body,
+        playlist_body as catalog_playlist_body,
+        recommendations_body as catalog_recommendations_body, saved_body as catalog_saved_body,
+        search_body as catalog_search_body, search_state_body as catalog_search_state_body,
+        services_body as catalog_services_body, services_event_body as catalog_services_event_body,
+        track_body as catalog_track_body,
     };
     pub use crate::routes::cloud::{
         cloud_info, device_body, devices_body, page_body as cloud_page_body, push_body,

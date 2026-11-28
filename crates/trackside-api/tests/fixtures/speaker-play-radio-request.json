@@ -1,0 +1,13 @@
+{
+  "context": {
+    "kind": "station",
+    "name": "Halo Radio"
+  },
+  "items": [
+    {
+      "ref": "mc1.dHJhY2sfc3BvdGlmeR8wV3FkMHpBNXdOcFFuUUJHRVVIMGY0"
+    }
+  ],
+  "radio": true,
+  "takeover": true
+}

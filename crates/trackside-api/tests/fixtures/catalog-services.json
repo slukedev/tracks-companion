@@ -6,6 +6,7 @@
       },
       "capabilities": [
         "library",
+        "library_edit",
         "playlists",
         "radio",
         "recommendations",
@@ -14,6 +15,12 @@
         "top_tracks"
       ],
       "id": "bqtyy4kcexcsg6wa0y4w5",
+      "library_edit_kinds": [
+        "album",
+        "artist",
+        "playlist",
+        "track"
+      ],
       "logo_key": "spotify",
       "name": "Spotify",
       "quality": "high"

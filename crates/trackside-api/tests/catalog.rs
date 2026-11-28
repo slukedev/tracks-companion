@@ -1534,3 +1534,271 @@ async fn recommendations_need_the_catalog_count_as_reads_and_need_music_assistan
     server.assistant.shutdown().await;
     Ok(())
 }
+
+/// A Spotify track in Music Assistant's library, as `music/item_by_uri` answers for one the
+/// user saved: the library entry, mapped to the service and marked in its library.
+fn library_track(instance: &str, title: &str, mappings: &Value) -> Value {
+    json!({
+        "item_id": "12", "provider": "library", "name": title, "media_type": "track",
+        "artists": [artist_of(instance, "a1", "Beyoncé")],
+        "provider_mappings": mappings,
+    })
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one save, one removal and the refusals"
+)]
+async fn items_save_to_and_leave_the_service_library() -> TestResult {
+    let mut saving = model();
+    saving.providers[1] = streaming(
+        SPOTIFY,
+        "spotify",
+        "Spotify",
+        &[
+            "search",
+            "library_tracks",
+            "library_tracks_edit",
+            "library_albums_edit",
+        ],
+    );
+    let uri = format!("{SPOTIFY}://track/0Wqd");
+    let ours = json!({"item_id": "0Wqd", "provider_domain": "spotify",
+                      "provider_instance": SPOTIFY, "in_library": true});
+    saving
+        .items
+        .insert(uri.clone(), library_track(SPOTIFY, "Halo", &json!([ours])));
+    let (server, fake, _cookie) = connected_with(saving).await?;
+    let key = server.device_key("luke", "phone").await?;
+    let services = server.services(&key, 2).await?;
+    let spotify = &services["services"][0];
+    assert_eq!(spotify["logo_key"], "spotify");
+    assert!(
+        spotify["capabilities"]
+            .as_array()
+            .is_some_and(|c| c.contains(&json!("library_edit")))
+    );
+    assert_eq!(spotify["library_edit_kinds"], json!(["album", "track"]));
+    let tidal = &services["services"][1];
+    assert!(tidal.get("library_edit_kinds").is_none());
+
+    let reference = trackside_core::catalog_ref::CatalogRef::new(
+        trackside_core::catalog_ref::RefKind::Track,
+        "spotify",
+        "0Wqd",
+        Some(SPOTIFY),
+    )
+    .encode()
+    .ok_or("ref")?;
+    let (status, detail) = server
+        .call(
+            &key,
+            reqwest::Method::GET,
+            &format!("/catalog/items/{reference}"),
+            None,
+        )
+        .await?;
+    assert_eq!(status, 200, "{detail}");
+    assert_eq!(detail["track"]["saved"], true);
+
+    let path = format!("/catalog/items/{reference}/saved");
+    let (status, body) = server.call(&key, reqwest::Method::PUT, &path, None).await?;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        body,
+        json!({"ref": reference, "saved": true, "service_id": service_id(SPOTIFY)})
+    );
+    let added = fake.wait_for("music/library/add_item", 1).await;
+    assert_eq!(added[0].args["item"], uri.as_str());
+
+    let (status, body) = server
+        .call(&key, reqwest::Method::DELETE, &path, None)
+        .await?;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["saved"], false);
+    let removed = fake.wait_for("music/library/remove_item", 1).await;
+    assert_eq!(removed[0].args["library_item_id"], "12");
+    assert_eq!(removed[0].args["media_type"], "track");
+    assert_eq!(removed[0].args["recursive"], true);
+
+    // The same entry also holds the song for another source: nothing is removed.
+    let shared = json!({"item_id": "s1", "provider_domain": "opensubsonic",
+                        "provider_instance": "opensubsonic--Q", "in_library": true});
+    fake.with(|m| {
+        m.items.insert(
+            uri.clone(),
+            library_track(SPOTIFY, "Halo", &json!([ours, shared])),
+        );
+    });
+    let (status, error) = server
+        .call(&key, reqwest::Method::DELETE, &path, None)
+        .await?;
+    assert_eq!(status, 409, "{error}");
+    assert_eq!(error["error"]["details"]["reason"], "not_removable");
+    assert_eq!(fake.received_named("music/library/remove_item").len(), 1);
+
+    // Tidal cannot save.
+    let tidal_ref = trackside_core::catalog_ref::CatalogRef::new(
+        trackside_core::catalog_ref::RefKind::Track,
+        "tidal",
+        "1781887",
+        Some(TIDAL),
+    )
+    .encode()
+    .ok_or("ref")?;
+    let (status, error) = server
+        .call(
+            &key,
+            reqwest::Method::PUT,
+            &format!("/catalog/items/{tidal_ref}/saved"),
+            None,
+        )
+        .await?;
+    assert_eq!(status, 422, "{error}");
+    assert_eq!(error["error"]["details"]["capability"], "library_edit");
+
+    // A device key has `write`, so `/me` offers saving.
+    let (status, me) = server.call(&key, reqwest::Method::GET, "/me", None).await?;
+    assert_eq!(status, 200);
+    assert_eq!(me["features"]["catalog"]["save"], true);
+    server.assistant.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn song_identities_match_in_one_request_and_are_kept() -> TestResult {
+    let (server, fake, _cookie) = connected().await?;
+    let key = server.device_key("luke", "phone").await?;
+    server.services(&key, 2).await?;
+    let body = json!({"items": [
+        {"id": "a", "title": "Halo", "artist": "Beyoncé"},
+        {"id": "b", "title": "Not There", "artist": "Nobody"},
+    ], "services": [service_id(SPOTIFY)]});
+    let (status, found) = server
+        .call(
+            &key,
+            reqwest::Method::POST,
+            "/catalog/match",
+            Some(body.clone()),
+        )
+        .await?;
+    assert_eq!(status, 200, "{found}");
+    assert_eq!(found["complete"], true);
+    let halo = &found["results"][0]["matches"][0];
+    assert_eq!(halo["state"], "found");
+    assert_eq!(halo["track"]["title"], "Halo");
+    assert_eq!(
+        halo["track"]["song_id"],
+        server.song.to_string(),
+        "the owned copy is named"
+    );
+    assert_eq!(found["results"][1]["matches"][0]["state"], "none");
+    let searches = fake.received_named("music/search");
+    assert_eq!(searches.len(), 2, "one search per song and service");
+    assert_eq!(searches[0].args["providers"], json!([SPOTIFY]));
+
+    // Asked again, both answers come from memory.
+    let (status, again) = server
+        .call(&key, reqwest::Method::POST, "/catalog/match", Some(body))
+        .await?;
+    assert_eq!(status, 200);
+    assert_eq!(again["results"], found["results"]);
+    assert_eq!(fake.received_named("music/search").len(), 2);
+
+    // Past the per-user budget of lookups, the rest wait.
+    let many: Vec<Value> = (0..50)
+        .map(|n| json!({"id": format!("m{n}"), "title": format!("Song {n}"), "artist": "X"}))
+        .collect();
+    let (status, first) = server
+        .call(
+            &key,
+            reqwest::Method::POST,
+            "/catalog/match",
+            Some(json!({"items": many, "services": [service_id(SPOTIFY)]})),
+        )
+        .await?;
+    assert_eq!(status, 200, "{first}");
+    let more: Vec<Value> = (50..70)
+        .map(|n| json!({"id": format!("m{n}"), "title": format!("Song {n}"), "artist": "X"}))
+        .collect();
+    let (status, later) = server
+        .call(
+            &key,
+            reqwest::Method::POST,
+            "/catalog/match",
+            Some(json!({"items": more, "services": [service_id(SPOTIFY)]})),
+        )
+        .await?;
+    assert_eq!(status, 200, "{later}");
+    assert_eq!(later["complete"], false);
+    assert!(later["retry_after_s"].as_u64().is_some_and(|s| s >= 1));
+    let deferred = later["results"].as_array().map(|r| {
+        r.iter()
+            .filter(|r| r["matches"][0]["state"] == "deferred")
+            .count()
+    });
+    assert_eq!(deferred, Some(12), "60 lookups a minute, 58 spent before");
+
+    let (status, error) = server
+        .call(
+            &key,
+            reqwest::Method::POST,
+            "/catalog/match",
+            Some(json!({"items": []})),
+        )
+        .await?;
+    assert_eq!(
+        (status, &error["error"]["details"]["field"]),
+        (400, &json!("items"))
+    );
+    server.assistant.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn spotifys_mixes_from_the_saved_playlists_shelve_first() -> TestResult {
+    let mut model = recommending("radio");
+    model.listings.insert(
+        format!("music/playlists/library_items:{SPOTIFY}"),
+        vec![
+            ma_item(SPOTIFY, "playlist", "rr", "Release Radar"),
+            ma_item(SPOTIFY, "playlist", "dw", "Discover Weekly"),
+            ma_item(SPOTIFY, "playlist", "this", "This Is Beyoncé"),
+        ],
+    );
+    let (server, fake, _cookie) = connected_with(model).await?;
+    let key = server.device_key("luke", "phone").await?;
+    server.services(&key, 3).await?;
+    let (status, body) = server
+        .recommendations(&key, &format!("?services={}", service_id(SPOTIFY)))
+        .await?;
+    assert_eq!(status, 200, "{body}");
+    let shelves = body["shelves"].as_array().ok_or("shelves")?;
+    assert_eq!(shelves[0]["title"], "Made for You");
+    assert_eq!(shelves[0]["service_id"], service_id(SPOTIFY));
+    let names: Vec<&str> = shelves[0]["items"]
+        .as_array()
+        .map(|i| i.iter().filter_map(|p| p["name"].as_str()).collect())
+        .unwrap_or_default();
+    assert_eq!(names, ["Discover Weekly", "Release Radar"]);
+    assert_eq!(
+        shelves[1]["title"], "Made For Luke",
+        "Music Assistant's own row follows"
+    );
+    let listed = fake.received_named("music/playlists/library_items");
+    assert_eq!(listed.len(), 1, "one listing of the synced library");
+    assert_eq!(listed[0].args["provider"], SPOTIFY);
+    assert_eq!(listed[0].args["limit"], 500);
+    let (_, again) = server
+        .recommendations(&key, &format!("?services={}", service_id(SPOTIFY)))
+        .await?;
+    assert_eq!(again["shelves"], body["shelves"]);
+    assert_eq!(
+        fake.received_named("music/playlists/library_items").len(),
+        1,
+        "kept"
+    );
+    server.assistant.shutdown().await;
+    Ok(())
+}

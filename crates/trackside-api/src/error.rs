@@ -488,6 +488,24 @@ impl From<SpeakerError> for ApiError {
                 )
                 .with_details(details)
             }
+            SpeakerError::ServiceUnsupported {
+                capability,
+                service,
+            } => {
+                let mut details = json!({ "capability": capability });
+                if let Some(service) = service {
+                    details["service_id"] = json!(service.to_string());
+                }
+                Self::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "unsupported",
+                    "The music service can't do that.",
+                )
+                .with_details(details)
+            }
+            SpeakerError::Conflict { reason } => {
+                Self::conflict(reason, "The speaker can't do that right now.")
+            }
             SpeakerError::Invalid { field, message } => Self::bad_field(field, message),
             SpeakerError::RelayEnded => Self::relay_ended(),
             other => Self::internal(&other),
@@ -549,6 +567,10 @@ impl From<CatalogError> for ApiError {
                 "The music service can't do that.",
             )
             .with_details(json!({ "capability": capability })),
+            CatalogError::Conflict { reason } => Self::conflict(
+                reason,
+                "Music Assistant can't remove this without removing more.",
+            ),
             CatalogError::Invalid { field, message } => Self::bad_field(field, message),
             CatalogError::Failed(message) => {
                 tracing::warn!(%message, "a catalog request failed");

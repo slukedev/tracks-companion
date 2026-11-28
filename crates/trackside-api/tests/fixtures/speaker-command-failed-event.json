@@ -1,0 +1,13 @@
+{
+  "command_id": "j3w5hd1t7x0gb8pkn2mqz",
+  "error": {
+    "code": "command_failed",
+    "holder_id": "o7sny3kfnvsjbbhx01f2j",
+    "holder_name": "Living Room",
+    "message": "The music service is playing somewhere else.",
+    "reason": "service_busy",
+    "service_id": "bqtyy4kcexcsg6wa0y4w5"
+  },
+  "outcome": "failed",
+  "speaker_id": "o4j8fccgajqsqxancbfcz"
+}

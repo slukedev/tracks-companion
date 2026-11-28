@@ -623,11 +623,19 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             server_summary(true),
             feature,
             true,
-            Some(wire::auth::SpeakersFeature { control: true }),
+            Some(wire::auth::SpeakersFeature {
+                control: true,
+                hold: true,
+                queue_remove: true,
+                takeover: true,
+            }),
             Some(wire::auth::CatalogFeature {
+                r#match: true,
+                radio: true,
                 recommendations: true,
                 relay: true,
                 relay_cellular: true,
+                save: true,
             }),
         ),
     )?;
@@ -2262,6 +2270,24 @@ fn fixtures_deserialize_into_their_wire_types() -> TestResult {
             "catalog-recommendations.json",
             back::<wire::catalog::CatalogRecommendations>,
         ),
+        (
+            "speaker-command-failed-event.json",
+            back::<wire::speakers::SpeakerCommandEvent>,
+        ),
+        (
+            "speaker-play-radio-request.json",
+            back::<wire::speakers::PlayRequest>,
+        ),
+        (
+            "speaker-play-held-request.json",
+            back::<wire::speakers::PlayRequest>,
+        ),
+        (
+            "catalog-match-request.json",
+            back::<wire::catalog::MatchRequest>,
+        ),
+        ("catalog-match.json", back::<wire::catalog::CatalogMatches>),
+        ("catalog-saved.json", back::<wire::catalog::CatalogSaved>),
         (
             "error-catalog-unavailable.json",
             back::<wire::ErrorEnvelope>,

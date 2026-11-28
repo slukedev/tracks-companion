@@ -316,6 +316,51 @@ pub fn fixtures(access: &Access, library: LibraryKey) -> Result<Out, serde_json:
             repeat: Some(String::from("off")),
             shuffle: Some(false),
             start_index: Some(0),
+            hold: false,
+            radio: false,
+            takeover: false,
+        })?,
+    ));
+    let one_ref = || {
+        vec![w::PlayItem {
+            reference: Some(String::from(
+                "mc1.dHJhY2sfc3BvdGlmeR8wV3FkMHpBNXdOcFFuUUJHRVVIMGY0",
+            )),
+            song_id: None,
+        }]
+    };
+    out.push((
+        "speaker-play-radio-request.json",
+        json(&w::PlayRequest {
+            context: Some(w::PlayContext {
+                id: None,
+                kind: String::from("station"),
+                name: Some(String::from("Halo Radio")),
+            }),
+            items: one_ref(),
+            mode: None,
+            position_ms: None,
+            repeat: None,
+            shuffle: None,
+            start_index: None,
+            hold: false,
+            radio: true,
+            takeover: true,
+        })?,
+    ));
+    out.push((
+        "speaker-play-held-request.json",
+        json(&w::PlayRequest {
+            context: None,
+            items: one_ref(),
+            mode: Some(String::from("replace")),
+            position_ms: None,
+            repeat: None,
+            shuffle: None,
+            start_index: None,
+            hold: true,
+            radio: false,
+            takeover: true,
         })?,
     ));
     let queue = SpeakerQueue {
@@ -377,9 +422,30 @@ pub fn fixtures(access: &Access, library: LibraryKey) -> Result<Out, serde_json:
                 user: access.user,
                 command: pid("j8r94fwwwtm0mgm02w6gx"),
                 speaker: pid(BEDROOM),
+                outcome: Err(CommandFailure::new(
+                    "command_failed",
+                    "The speaker did not accept the command.",
+                )),
+            },
+            access,
+        )?,
+    ));
+    out.push((
+        "speaker-command-failed-event.json",
+        event(
+            &SpeakerEvent::Command {
+                user: access.user,
+                command: pid("j3w5hd1t7x0gb8pkn2mqz"),
+                speaker: pid(KITCHEN),
                 outcome: Err(CommandFailure {
-                    code: "command_failed",
-                    message: String::from("The speaker did not accept the command."),
+                    reason: Some("service_busy"),
+                    service: Some(pid("bqtyy4kcexcsg6wa0y4w5")),
+                    holder: Some(pid(LIVING_ROOM)),
+                    holder_name: Some(String::from("Living Room")),
+                    ..CommandFailure::new(
+                        "command_failed",
+                        "The music service is playing somewhere else.",
+                    )
                 }),
             },
             access,

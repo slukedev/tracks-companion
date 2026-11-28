@@ -562,7 +562,8 @@ async fn a_phone_plays_through_its_relay_under_its_own_media_token() -> TestResu
     let (_, me) = server.call(&key, reqwest::Method::GET, "/me", None).await?;
     assert_eq!(
         me["features"]["catalog"],
-        json!({"recommendations": true, "relay": true}),
+        json!({"match": true, "radio": true, "recommendations": true, "relay": true,
+               "save": true}),
         "lossless only without ffmpeg"
     );
     let mut events = server.events(&key).await?;
@@ -828,7 +829,7 @@ async fn a_server_without_sendspin_cannot_relay() -> TestResult {
     let (_, me) = server.call(&key, reqwest::Method::GET, "/me", None).await?;
     assert_eq!(
         me["features"]["catalog"],
-        json!({"recommendations": true}),
+        json!({"match": true, "radio": true, "recommendations": true, "save": true}),
         "{me}"
     );
     let (status, body) = server
@@ -1284,7 +1285,8 @@ async fn a_tier_change_while_playing_starts_a_new_generation() -> TestResult {
         .await?;
     assert_eq!(
         me["features"]["catalog"],
-        json!({"recommendations": true, "relay": true, "relay_cellular": true})
+        json!({"match": true, "radio": true, "recommendations": true, "relay": true,
+               "relay_cellular": true, "save": true})
     );
     let session = open(&rig.server, &key).await?;
     let id = session["id"].as_str().ok_or("id")?.to_owned();

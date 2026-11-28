@@ -395,6 +395,9 @@ pub(crate) fn speakers_feature(
         && principal.scopes.contains(Scopes::LIBRARY))
     .then(|| crate::wire::auth::SpeakersFeature {
         control: principal.scopes.contains(Scopes::WRITE),
+        hold: true,
+        queue_remove: true,
+        takeover: true,
     })
 }
 
@@ -411,7 +414,10 @@ pub(crate) fn catalog_feature(
             && principal.scopes.contains(Scopes::STREAM)
             && state.assistant.relay_supported();
         crate::wire::auth::CatalogFeature {
+            r#match: true,
+            radio: true,
             recommendations: true,
+            save: principal.scopes.contains(Scopes::WRITE),
             relay,
             relay_cellular: relay
                 && state

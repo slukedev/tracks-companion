@@ -34,6 +34,10 @@ pub(super) fn routes() -> Router<ApiState> {
         .route("/speakers", get(list))
         .route("/speakers/{id}", get(one).patch(patch))
         .route("/speakers/{id}/queue", get(queue))
+        .route(
+            "/speakers/{id}/queue/{item_id}",
+            axum::routing::delete(remove_item),
+        )
         .route("/speakers/{id}/playback", post(playback))
         .route("/speakers/{id}/members", put(members))
         .route("/speakers/{id}/group", axum::routing::delete(leave_group))
@@ -317,7 +321,11 @@ pub fn command_event_body(
         command_id: command.to_string(),
         error: failure.map(|f| wire::CommandError {
             code: f.code.to_owned(),
+            holder_id: f.holder.as_ref().map(ToString::to_string),
+            holder_name: f.holder_name.clone(),
             message: f.message.clone(),
+            reason: f.reason.map(str::to_owned),
+            service_id: f.service.as_ref().map(ToString::to_string),
         }),
         outcome: if failure.is_some() { "failed" } else { "done" }.to_owned(),
         speaker_id: speaker.to_string(),
@@ -610,6 +618,27 @@ async fn leave_group(
     .await
 }
 
+async fn remove_item(
+    Authed(principal): Authed<WRITE>,
+    State(state): State<ApiState>,
+    Path((id, item_id)): Path<(String, String)>,
+    method: Method,
+    uri: http::Uri,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
+    run(
+        &state,
+        &principal,
+        &headers,
+        &method,
+        &uri,
+        &[],
+        &id,
+        || Ok(SpeakerCommand::RemoveItem { item_id }),
+    )
+    .await
+}
+
 fn play_request(body: &[u8], allow_catalog: bool) -> ApiResult<PlayRequest> {
     play_from_wire(parse_json(body)?, allow_catalog)
 }
@@ -650,6 +679,15 @@ pub(crate) fn play_from_wire(
             "start_index is past the last item.",
         ));
     }
+    if request.radio {
+        radio_checked(&request, &items, mode)?;
+    }
+    if request.hold && mode != PlayMode::Replace {
+        return Err(ApiError::bad_field(
+            "hold",
+            "hold is only for mode replace.",
+        ));
+    }
     if let Some(context) = &request.context
         && (context.kind.is_empty()
             || context.kind.len() > 32
@@ -675,7 +713,39 @@ pub(crate) fn play_from_wire(
             name: c.name,
         }),
         allow_catalog,
+        radio: request.radio,
+        hold: request.hold,
+        takeover: request.takeover,
     })
+}
+
+/// A radio starts from one catalog item that can seed one, replacing the queue from its
+/// start.
+fn radio_checked(request: &wire::PlayRequest, items: &[PlayItem], mode: PlayMode) -> ApiResult<()> {
+    let [PlayItem::Ref(reference)] = items else {
+        return Err(ApiError::bad_field(
+            "items",
+            "A radio starts from exactly one ref.",
+        ));
+    };
+    if mode != PlayMode::Replace {
+        return Err(ApiError::bad_field("mode", "A radio replaces the queue."));
+    }
+    if request.shuffle.is_some() || request.position_ms.is_some_and(|p| p > 0) {
+        return Err(ApiError::bad_field(
+            "radio",
+            "A radio starts at its beginning, without shuffle.",
+        ));
+    }
+    let seeds = trackside_core::catalog_ref::CatalogRef::decode(reference)
+        .is_ok_and(|r| r.kind != trackside_core::catalog_ref::RefKind::Radio);
+    if !seeds {
+        return Err(ApiError::bad_field(
+            "items",
+            "A radio starts from a track, artist, album or playlist ref.",
+        ));
+    }
+    Ok(())
 }
 
 async fn play(

@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "album": "I Am... Sasha Fierce",
+      "artist": "Beyoncé",
+      "duration_ms": 261640,
+      "id": "sdjcz08vf67h7cx28snq6",
+      "isrc": "USSM10804555",
+      "title": "Halo"
+    },
+    {
+      "artist": "Beyoncé",
+      "duration_ms": 193213,
+      "id": "local-2",
+      "title": "Single Ladies (Put a Ring on It)"
+    }
+  ],
+  "services": [
+    "bqtyy4kcexcsg6wa0y4w5",
+    "bnr6z9ds6zzv5xjpv0j1s"
+  ]
+}

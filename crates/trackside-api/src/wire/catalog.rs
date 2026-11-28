@@ -20,6 +20,9 @@ pub struct CatalogService {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
     pub id: String,
+    /// With `library_edit`: the kinds that can be saved to the service's library, sorted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub library_edit_kinds: Vec<String>,
     pub logo_key: String,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -78,6 +81,9 @@ pub struct CatalogTrack {
     pub quality: Option<String>,
     #[serde(rename = "ref")]
     pub reference: String,
+    /// In the service's library, when Music Assistant knows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved: Option<bool>,
     pub service_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub song_id: Option<String>,
@@ -103,6 +109,9 @@ pub struct CatalogAlbum {
     pub name: String,
     #[serde(rename = "ref")]
     pub reference: String,
+    /// In the service's library, when Music Assistant knows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved: Option<bool>,
     pub service_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track_count: Option<u32>,
@@ -121,6 +130,9 @@ pub struct CatalogArtist {
     pub name: String,
     #[serde(rename = "ref")]
     pub reference: String,
+    /// In the service's library, when Music Assistant knows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved: Option<bool>,
     pub service_id: String,
 }
 
@@ -137,6 +149,9 @@ pub struct CatalogPlaylist {
     pub owner: Option<String>,
     #[serde(rename = "ref")]
     pub reference: String,
+    /// In the service's library, when Music Assistant knows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved: Option<bool>,
     pub service_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track_count: Option<u32>,
@@ -249,6 +264,64 @@ pub struct CatalogLibrary {
     pub next_cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub synced_at: Option<Time>,
+}
+
+/// `PUT` and `DELETE /catalog/items/{ref}/saved`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogSaved {
+    #[serde(rename = "ref")]
+    pub reference: String,
+    pub saved: bool,
+    pub service_id: String,
+}
+
+/// One song identity of `POST /catalog/match`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MatchItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album: Option<String>,
+    pub artist: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// The client's own id, echoed in the answer.
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub isrc: Option<String>,
+    pub title: String,
+}
+
+/// `POST /catalog/match`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MatchRequest {
+    pub items: Vec<MatchItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub services: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServiceMatch {
+    pub service_id: String,
+    /// `found`, `none`, `timed_out`, `failed`, `signed_out` or `deferred`.
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track: Option<CatalogTrack>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MatchResult {
+    pub id: String,
+    pub matches: Vec<ServiceMatch>,
+}
+
+/// The answer to `POST /catalog/match`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogMatches {
+    pub complete: bool,
+    pub results: Vec<MatchResult>,
+    /// With `deferred` lookups: seconds until the next is allowed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_s: Option<u64>,
 }
 
 /// A shelf of `GET /catalog/recommendations`: one recommendation row of one service.

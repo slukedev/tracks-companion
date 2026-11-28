@@ -824,7 +824,10 @@ async fn commands_answer_with_the_expected_state_and_their_outcome_follows() -> 
     );
     let (status, me) = server.call(&key, reqwest::Method::GET, "/me", None).await?;
     assert_eq!(status, 200);
-    assert_eq!(me["features"]["speakers"], json!({"control": true}));
+    assert_eq!(
+        me["features"]["speakers"],
+        json!({"control": true, "hold": true, "queue_remove": true, "takeover": true})
+    );
 
     let mut events = Events::open(&server, &key).await?;
 
@@ -1094,7 +1097,10 @@ async fn members_without_can_use_speakers_see_no_speakers() -> TestResult {
     let (_, me) = server
         .call(&issued.secret, reqwest::Method::GET, "/me", None)
         .await?;
-    assert_eq!(me["features"]["speakers"], json!({"control": false}));
+    assert_eq!(
+        me["features"]["speakers"],
+        json!({"control": false, "hold": true, "queue_remove": true, "takeover": true})
+    );
     let list = server
         .until(&issued.secret, "/speakers", |_, b| {
             b["speakers"].as_array().is_some_and(|s| s.len() == 2)
@@ -1327,4 +1333,287 @@ async fn a_service_accounts_role_and_permissions_are_fixed() -> TestResult {
     assert_eq!(status, 200, "{body}");
     server.assistant.shutdown().await;
     Ok(())
+}
+
+fn spotify_ref(id: &str) -> Result<String, Error> {
+    Ok(trackside_core::catalog_ref::CatalogRef::new(
+        trackside_core::catalog_ref::RefKind::Track,
+        "spotify",
+        id,
+        Some("spotify--Xb4LkP2q"),
+    )
+    .encode()
+    .ok_or("ref")?)
+}
+
+#[tokio::test]
+async fn a_held_service_stream_is_named_and_can_be_taken_over() -> TestResult {
+    let (server, fake, _cookie) = connected().await?;
+    let key = server.device_key("luke", "phone").await?;
+    let list = server
+        .until(&key, "/speakers", |_, b| {
+            b["speakers"].as_array().is_some_and(|s| s.len() == 2)
+        })
+        .await?;
+    let kitchen = speaker_id(&list, "Kitchen");
+    let living = speaker_id(&list, "Living Room");
+    let mut events = Events::open(&server, &key).await?;
+    let held = |m: &mut Model, times: u32| {
+        m.failures.insert(
+            String::from("player_queues/play_media"),
+            (
+                29,
+                String::from("Spotify is already playing on Living Room"),
+            ),
+        );
+        m.failure_data.insert(
+            String::from("player_queues/play_media"),
+            json!({"queue_id": "sonos-living", "player_name": "Living Room",
+                   "provider_instance": "spotify--Xb4LkP2q"}),
+        );
+        m.failures_left
+            .insert(String::from("player_queues/play_media"), times);
+    };
+    fake.with(|m| held(m, 1));
+    let halo = spotify_ref("0Wqd")?;
+    let (status, accepted) = server
+        .call(
+            &key,
+            reqwest::Method::POST,
+            &format!("/speakers/{kitchen}/play"),
+            Some(json!({"items": [{"ref": halo}]})),
+        )
+        .await?;
+    assert_eq!(status, 202, "{accepted}");
+    let outcome = events
+        .outcome_of(accepted["command_id"].as_str().unwrap_or_default())
+        .await?;
+    let spotify =
+        trackside_core::ServiceId::derive(&Model::default().server_id, "spotify--Xb4LkP2q")
+            .to_string();
+    assert_eq!(
+        outcome["error"],
+        json!({"code": "command_failed", "reason": "service_busy", "service_id": spotify,
+               "holder_id": living, "holder_name": "Living Room",
+               "message": "The music service is playing somewhere else."})
+    );
+    assert_eq!(fake.received_named("player_queues/stop").len(), 0);
+
+    // With takeover the other player is stopped and the play is sent again.
+    fake.with(|m| held(m, 1));
+    let (status, accepted) = server
+        .call(
+            &key,
+            reqwest::Method::POST,
+            &format!("/speakers/{kitchen}/play"),
+            Some(json!({"items": [{"ref": halo}], "takeover": true})),
+        )
+        .await?;
+    assert_eq!(status, 202, "{accepted}");
+    let outcome = events
+        .outcome_of(accepted["command_id"].as_str().unwrap_or_default())
+        .await?;
+    assert_eq!(outcome["outcome"], "done", "{outcome}");
+    let stopped = fake.wait_for("player_queues/stop", 1).await;
+    assert_eq!(stopped[0].args, json!({"queue_id": "sonos-living"}));
+    assert_eq!(fake.received_named("player_queues/play_media").len(), 3);
+
+    // Signed out and unplayable items say so; a failure Music Assistant gives no cause for
+    // has no reason.
+    for (code, reason) in [
+        (6, Some("service_signed_out")),
+        (13, Some("not_playable")),
+        (0, None),
+    ] {
+        fake.with(|m| {
+            m.failures.insert(
+                String::from("player_queues/play_media"),
+                (code, String::from("no")),
+            );
+            m.failures_left
+                .insert(String::from("player_queues/play_media"), 1);
+            m.failure_data.clear();
+        });
+        let (_, accepted) = server
+            .call(
+                &key,
+                reqwest::Method::POST,
+                &format!("/speakers/{kitchen}/play"),
+                Some(json!({"items": [{"ref": halo}]})),
+            )
+            .await?;
+        let outcome = events
+            .outcome_of(accepted["command_id"].as_str().unwrap_or_default())
+            .await?;
+        assert_eq!(outcome["error"]["code"], "command_failed");
+        assert_eq!(
+            outcome["error"].get("reason").and_then(Value::as_str),
+            reason
+        );
+    }
+    server.assistant.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "radio, hold and removal, one after another"
+)]
+async fn radio_hold_and_queue_removal() -> TestResult {
+    let (server, fake, _cookie) = connected().await?;
+    let key = server.device_key("luke", "phone").await?;
+    let list = server
+        .until(&key, "/speakers", |_, b| {
+            b["speakers"].as_array().is_some_and(|s| s.len() == 2)
+        })
+        .await?;
+    let kitchen = speaker_id(&list, "Kitchen");
+    let play = format!("/speakers/{kitchen}/play");
+    let halo = spotify_ref("0Wqd")?;
+    let mut events = Events::open(&server, &key).await?;
+
+    // Spotify here lists no similar tracks: no radio.
+    let (status, body) = server
+        .call(
+            &key,
+            reqwest::Method::POST,
+            &play,
+            Some(json!({"items": [{"ref": halo}], "radio": true})),
+        )
+        .await?;
+    assert_eq!(status, 422, "{body}");
+    assert_eq!(body["error"]["details"]["capability"], "similar");
+    fake.with(|m| {
+        m.providers[1]["supported_features"] = json!(["search", "similar_tracks"]);
+    });
+    let providers = fake.with(|m| Value::Array(m.providers.clone()));
+    fake.emit("providers_updated", None, providers);
+    let (status, body) = server
+        .call(
+            &key,
+            reqwest::Method::POST,
+            &play,
+            Some(json!({"items": [{"ref": halo}, {"ref": halo}], "radio": true})),
+        )
+        .await?;
+    assert_eq!(
+        (status, &body["error"]["details"]["field"]),
+        (400, &json!("items"))
+    );
+    let (status, body) = server
+        .call(
+            &key,
+            reqwest::Method::POST,
+            &play,
+            Some(json!({"items": [{"ref": halo}], "radio": true, "mode": "add"})),
+        )
+        .await?;
+    assert_eq!(
+        (status, &body["error"]["details"]["field"]),
+        (400, &json!("mode"))
+    );
+    let accepted = server
+        .until_ok(
+            &key,
+            &play,
+            json!({"items": [{"ref": halo}], "radio": true}),
+        )
+        .await?;
+    let outcome = events
+        .outcome_of(accepted["command_id"].as_str().unwrap_or_default())
+        .await?;
+    assert_eq!(outcome["outcome"], "done");
+    let media = fake.received_named("player_queues/play_media");
+    assert_eq!(
+        media.last().map(|m| m.args["radio_mode"].clone()),
+        Some(json!(true))
+    );
+
+    // A radio Music Assistant cannot make says so.
+    fake.with(|m| {
+        m.failures.insert(
+            String::from("player_queues/play_media"),
+            (
+                9,
+                String::from("No base tracks available for the given seeds"),
+            ),
+        );
+        m.failures_left
+            .insert(String::from("player_queues/play_media"), 1);
+    });
+    let accepted = server
+        .until_ok(
+            &key,
+            &play,
+            json!({"items": [{"ref": halo}], "radio": true}),
+        )
+        .await?;
+    let outcome = events
+        .outcome_of(accepted["command_id"].as_str().unwrap_or_default())
+        .await?;
+    assert_eq!(outcome["error"]["reason"], "radio_unavailable");
+
+    // A held start plays and pauses at once.
+    let accepted = server
+        .until_ok(&key, &play, json!({"items": [{"ref": halo}], "hold": true}))
+        .await?;
+    assert_eq!(accepted["speaker"]["playback"]["state"], "paused");
+    let outcome = events
+        .outcome_of(accepted["command_id"].as_str().unwrap_or_default())
+        .await?;
+    assert_eq!(outcome["outcome"], "done");
+    let paused = fake.wait_for("player_queues/pause", 1).await;
+    assert_eq!(paused[0].args, json!({"queue_id": "sonos-kitchen"}));
+    let (status, body) = server
+        .call(
+            &key,
+            reqwest::Method::POST,
+            &play,
+            Some(json!({"items": [{"ref": halo}], "hold": true, "mode": "add"})),
+        )
+        .await?;
+    assert_eq!(
+        (status, &body["error"]["details"]["field"]),
+        (400, &json!("hold"))
+    );
+
+    // A queued item goes.
+    let (status, accepted) = server
+        .call(
+            &key,
+            reqwest::Method::DELETE,
+            &format!("/speakers/{kitchen}/queue/item-7"),
+            None,
+        )
+        .await?;
+    assert_eq!(status, 202, "{accepted}");
+    assert_eq!(accepted["action"], "remove");
+    let removed = fake.wait_for("player_queues/delete_item", 1).await;
+    assert_eq!(
+        removed[0].args,
+        json!({"queue_id": "sonos-kitchen", "item_id_or_index": "item-7"})
+    );
+    server.assistant.shutdown().await;
+    Ok(())
+}
+
+impl Server {
+    /// A `POST` answered `202`, asking again while a change Music Assistant announced has
+    /// not arrived yet (`422`).
+    async fn until_ok(&self, key: &str, path: &str, body: Value) -> Result<Value, Error> {
+        let deadline = tokio::time::Instant::now() + PATIENCE;
+        loop {
+            let (status, answer) = self
+                .call(key, reqwest::Method::POST, path, Some(body.clone()))
+                .await?;
+            if status == 202 {
+                return Ok(answer);
+            }
+            if status != 422 || tokio::time::Instant::now() > deadline {
+                return Err(format!("{path}: {status} {answer}").into());
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
 }
