@@ -6,7 +6,7 @@ use trackside_core::catalog::{
 };
 use trackside_core::catalog_ref::{CatalogRef, RefKind};
 use trackside_core::{CatalogArtId, ServiceId};
-use trackside_mass::models::{AudioFormat, MediaItem, MediaType};
+use trackside_mass::models::{AudioFormat, MediaItem, MediaType, ProviderConfig};
 use trackside_mass::{Endpoint, ImageSize, image_url};
 
 use crate::convert::ArtSeen;
@@ -82,6 +82,36 @@ fn quality_of(format: &AudioFormat) -> Option<Quality> {
     }
 }
 
+/// The best a service delivers: from the instance's own quality setting where Music
+/// Assistant reports one (an admin token reads it), else by its domain.
+pub(crate) fn instance_quality(domain: &str, config: Option<&ProviderConfig>) -> Option<Quality> {
+    configured_quality(domain, config).or_else(|| service_quality(domain))
+}
+
+/// The quality an instance is set to stream at, where Music Assistant has such a setting for
+/// its domain: Spotify's `audio_quality`, which only the Soloist backend offers (Music
+/// Assistant hides it for librespot, whose Ogg stream is high quality). Lossless only when
+/// it says so.
+fn configured_quality(domain: &str, config: Option<&ProviderConfig>) -> Option<Quality> {
+    if domain != "spotify" {
+        return None;
+    }
+    let entry = config?.values.get("audio_quality")?;
+    if entry.get("hidden").and_then(serde_json::Value::as_bool) == Some(true) {
+        return Some(Quality::High);
+    }
+    let value = entry
+        .get("value")
+        .filter(|v| !v.is_null())
+        .or_else(|| entry.get("default_value"))
+        .and_then(serde_json::Value::as_str)?;
+    Some(match value {
+        "lossless" => Quality::Lossless,
+        "normal" => Quality::Standard,
+        _ => Quality::High,
+    })
+}
+
 /// The best a service delivers, by its domain, where that is known.
 pub(crate) fn service_quality(domain: &str) -> Option<Quality> {
     Some(match domain {
@@ -146,6 +176,18 @@ impl Converter<'_> {
         Some(id)
     }
 
+    /// Whether the item is in this service's library, as Music Assistant's synced copy says:
+    /// its mapping to the service is marked in the library (a liked item counts). Unknown for
+    /// an item Music Assistant gave without that mark, such as most search results.
+    fn saved(&self, item: &MediaItem) -> Option<bool> {
+        let in_library = item
+            .provider_mappings
+            .iter()
+            .find(|m| m.provider_instance == self.source.instance_id)
+            .and_then(|m| m.in_library)?;
+        Some(in_library || item.favorite)
+    }
+
     fn credits(&self, item: &MediaItem) -> Vec<ArtistCredit> {
         item.artists
             .iter()
@@ -196,6 +238,7 @@ impl Converter<'_> {
             disc_number: item.disc_number.filter(|n| *n > 0),
             quality: mapping.and_then(|m| m.audio_format.as_ref().and_then(quality_of)),
             playable: item.is_playable && mapping.is_none_or(|m| m.available),
+            saved: self.saved(item),
         })
     }
 
@@ -219,6 +262,7 @@ impl Converter<'_> {
             year: item.year.filter(|y| *y > 0),
             artwork: self.artwork(item),
             track_count: None,
+            saved: self.saved(item),
         })
     }
 
@@ -229,6 +273,7 @@ impl Converter<'_> {
             identity: identity(&item.name),
             name: item.name.clone(),
             artwork: self.artwork(item),
+            saved: self.saved(item),
         })
     }
 
@@ -241,6 +286,7 @@ impl Converter<'_> {
             track_count: None,
             artwork: self.artwork(item),
             editable: Some(item.is_editable),
+            saved: self.saved(item),
         })
     }
 
@@ -272,6 +318,40 @@ impl Converter<'_> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn spotify_is_lossless_only_when_its_soloist_setting_says_so() {
+        let config = |entry: serde_json::Value| -> ProviderConfig {
+            serde_json::from_value(json!({"type": "music", "domain": "spotify",
+                "instance_id": "spotify--a", "values": {"audio_quality": entry}}))
+            .unwrap_or_else(|e| panic!("{e}"))
+        };
+        let quality = |c: Option<&ProviderConfig>| instance_quality("spotify", c);
+        assert_eq!(
+            quality(None),
+            Some(Quality::High),
+            "no config: the domain's"
+        );
+        let lossless = config(json!({"key": "audio_quality", "value": "lossless"}));
+        assert_eq!(quality(Some(&lossless)), Some(Quality::Lossless));
+        let default = config(json!({"key": "audio_quality", "value": null,
+                                    "default_value": "lossless"}));
+        assert_eq!(quality(Some(&default)), Some(Quality::Lossless));
+        let librespot = config(json!({"key": "audio_quality", "value": "lossless",
+                                      "hidden": true}));
+        assert_eq!(
+            quality(Some(&librespot)),
+            Some(Quality::High),
+            "librespot hides it"
+        );
+        let very_high = config(json!({"key": "audio_quality", "value": "very_high"}));
+        assert_eq!(quality(Some(&very_high)), Some(Quality::High));
+        assert_eq!(
+            instance_quality("tidal", Some(&lossless)),
+            Some(Quality::Lossless),
+            "other services by their domain"
+        );
+    }
 
     fn item(value: serde_json::Value) -> MediaItem {
         serde_json::from_value(value).unwrap_or_default()

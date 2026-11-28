@@ -36,6 +36,10 @@ pub const RECOMMENDATIONS_LIMIT_MAX: u32 = 50;
 pub const MAX_SHELVES: usize = 30;
 /// The most services a request may name.
 pub const MAX_SERVICES: usize = 50;
+/// The most song identities one match request may carry.
+pub const MATCH_ITEMS_MAX: usize = 50;
+/// How long a match request waits for the services.
+pub const MATCH_WAIT: Duration = Duration::from_secs(8);
 
 macro_rules! wire_enum {
     ($(#[$meta:meta])* $name:ident { $($variant:ident => $text:literal),+ $(,)? }) => {
@@ -61,6 +65,7 @@ wire_enum!(
     /// What a service offers (contract 2.1). Sorted by name, as on the wire.
     ServiceCapability {
         Library => "library",
+        LibraryEdit => "library_edit",
         Playlists => "playlists",
         Radio => "radio",
         Recommendations => "recommendations",
@@ -131,6 +136,9 @@ pub struct CatalogService {
     /// English, for logs.
     pub account_detail: Option<String>,
     pub quality: Option<Quality>,
+    /// The kinds Music Assistant can save to and remove from the service's library, sorted;
+    /// empty without [`ServiceCapability::LibraryEdit`].
+    pub library_edit_kinds: Vec<CatalogKind>,
 }
 
 impl CatalogService {
@@ -176,6 +184,8 @@ pub struct CatalogTrack {
     pub song_key: Option<String>,
     /// False only when Music Assistant says the item cannot play.
     pub playable: bool,
+    /// Whether the item is in the service's library, when Music Assistant knows.
+    pub saved: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -189,6 +199,7 @@ pub struct CatalogAlbum {
     pub artwork: Option<CatalogArtId>,
     pub track_count: Option<u32>,
     pub album_key: Option<String>,
+    pub saved: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -199,6 +210,7 @@ pub struct CatalogArtist {
     /// `tracks_model`'s identity of the name.
     pub identity: Option<String>,
     pub artwork: Option<CatalogArtId>,
+    pub saved: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -210,6 +222,7 @@ pub struct CatalogPlaylist {
     pub track_count: Option<u32>,
     pub artwork: Option<CatalogArtId>,
     pub editable: Option<bool>,
+    pub saved: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -402,6 +415,74 @@ impl Recommendations {
     }
 }
 
+wire_enum!(
+    /// How one song identity fared at one service.
+    MatchState {
+        Found => "found",
+        None => "none",
+        TimedOut => "timed_out",
+        Failed => "failed",
+        SignedOut => "signed_out",
+        Deferred => "deferred",
+    }
+);
+
+/// A song the client wants found at the services, as it knows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MatchIdentity {
+    /// The client's own id for it, echoed back.
+    pub id: String,
+    pub title: String,
+    pub artist: String,
+    pub album: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub isrc: Option<String>,
+}
+
+/// `POST /catalog/match`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MatchQuery {
+    pub items: Vec<MatchIdentity>,
+    /// `None`: every signed-in service that searches.
+    pub services: Option<Vec<ServiceId>>,
+}
+
+/// One identity at one service.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServiceMatch {
+    pub service: ServiceId,
+    pub state: MatchState,
+    pub track: Option<CatalogTrack>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MatchResult {
+    pub id: String,
+    pub matches: Vec<ServiceMatch>,
+}
+
+/// The answer to a match request, in the order of its items.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Matches {
+    pub results: Vec<MatchResult>,
+    /// False when a lookup timed out or was deferred.
+    pub complete: bool,
+    /// With deferred lookups: when to ask again.
+    pub retry_after: Option<Duration>,
+}
+
+impl Matches {
+    pub fn tracks(&self) -> impl Iterator<Item = &CatalogTrack> {
+        self.results
+            .iter()
+            .flat_map(|r| r.matches.iter())
+            .filter_map(|m| m.track.as_ref())
+    }
+}
+
+/// Spends one of the caller's lookups at the services; `Err` says when the next is allowed.
+pub type LookupBudget = dyn Fn() -> Result<(), Duration> + Send + Sync;
+
 /// A cursor page.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CatalogPage {
@@ -439,6 +520,14 @@ pub struct LibraryPage {
     pub synced_at: Option<Millis>,
 }
 
+/// `PUT` and `DELETE /catalog/items/{ref}/saved`: where the item stands afterwards.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SavedState {
+    pub reference: String,
+    pub service: ServiceId,
+    pub saved: bool,
+}
+
 /// Why a catalog request was refused or failed.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -451,6 +540,9 @@ pub enum CatalogError {
     SignedOut { service: Option<ServiceId> },
     #[error("the service has no {capability}")]
     Unsupported { capability: &'static str },
+    /// `409 conflict` with this `details.reason`.
+    #[error("refused: {reason}")]
+    Conflict { reason: &'static str },
     #[error("{message}")]
     Invalid {
         field: &'static str,
@@ -494,6 +586,24 @@ pub trait CatalogControl: Send + Sync + 'static {
         caller: &'a Access,
         query: RecommendationsQuery,
     ) -> BoxFuture<'a, Result<Recommendations, CatalogError>>;
+
+    /// Saves the item a ref names to its service's library, or removes it from there.
+    fn set_saved<'a>(
+        &'a self,
+        caller: &'a Access,
+        reference: &'a str,
+        saved: bool,
+    ) -> BoxFuture<'a, Result<SavedState, CatalogError>>;
+
+    /// Finds each song identity's track at the services, from memory where it was looked up
+    /// recently, else with one search per identity and service while `budget` allows,
+    /// waiting at most [`MATCH_WAIT`].
+    fn match_tracks<'a>(
+        &'a self,
+        caller: &'a Access,
+        query: MatchQuery,
+        budget: &'a LookupBudget,
+    ) -> BoxFuture<'a, Result<Matches, CatalogError>>;
 
     /// The image address an `m` id was derived from, while it is known.
     fn art_source(&self, id: &CatalogArtId) -> Option<String>;

@@ -681,6 +681,7 @@ pub struct Auth {
     catalog_searches: limit::RequestLimiter<UserKey>,
     catalog_reads: limit::RequestLimiter<UserKey>,
     catalog_art: limit::RequestLimiter<UserKey>,
+    catalog_match_lookups: limit::RequestLimiter<UserKey>,
     cache: Arc<cache::CredentialCache>,
     /// Media epochs of devices seen authenticating, so a media token can be minted without
     /// a database read. The epoch is checked against the database when the token is used.
@@ -726,6 +727,8 @@ pub const CATALOG_SEARCHES_PER_MINUTE: u32 = 30;
 pub const CATALOG_READS_PER_MINUTE: u32 = 120;
 /// Catalog images a user may make Trackside fetch a minute (cache misses only).
 pub const CATALOG_ART_FETCHES_PER_MINUTE: u32 = 120;
+/// Catalog matches a user may look up a minute that are not in memory (`POST /catalog/match`).
+pub const CATALOG_MATCH_LOOKUPS_PER_MINUTE: u32 = 60;
 
 /// Wrong pairing-request codes a signed-in user may enter in 10 minutes.
 const APPROVAL_ATTEMPTS: u32 = 5;
@@ -829,6 +832,11 @@ impl Auth {
             catalog_art: limit::RequestLimiter::per_minute(
                 CATALOG_ART_FETCHES_PER_MINUTE,
                 CATALOG_ART_FETCHES_PER_MINUTE,
+                Arc::clone(&clock),
+            ),
+            catalog_match_lookups: limit::RequestLimiter::per_minute(
+                CATALOG_MATCH_LOOKUPS_PER_MINUTE,
+                CATALOG_MATCH_LOOKUPS_PER_MINUTE,
                 Arc::clone(&clock),
             ),
             cache,
@@ -1092,6 +1100,12 @@ impl Auth {
         self.catalog_reads
             .check(&principal.access.user, &self.clock)
             .map_err(AuthError::rate_limited)
+    }
+
+    /// Counts one catalog match looked up at the services, not answered from memory; the
+    /// error says when the next one is allowed.
+    pub fn catalog_match_lookup(&self, user: UserKey) -> Result<(), Duration> {
+        self.catalog_match_lookups.check(&user, &self.clock)
     }
 
     /// Counts one catalog image the cache does not hold.

@@ -22,8 +22,10 @@ use trackside_core::catalog::{
     ServiceSearchState, Shelf, ShelfKind,
 };
 use trackside_core::{Access, ServiceId, ShelfId, UserKey};
-use trackside_mass::models::{RecommendationFolder, RecommendationFolderType, RecommendationItem};
-use trackside_mass::{Client, RequestError};
+use trackside_mass::models::{
+    MediaItem, MediaType, RecommendationFolder, RecommendationFolderType, RecommendationItem,
+};
+use trackside_mass::{Client, LibraryQuery, RequestError};
 
 use super::convert::Converter;
 use super::{Service, request_error};
@@ -41,6 +43,65 @@ pub(super) struct Key {
     user: UserKey,
     services: Vec<ServiceId>,
     limit: u32,
+}
+
+/// The row id of the shelf of a service's own mixes, which Music Assistant has no row for.
+pub(super) const MADE_FOR_YOU: &str = "trackside:made_for_you";
+/// The saved playlists read for it: one listing, at most this many.
+const MIXES_LISTED: u32 = 500;
+
+/// Whether the service's own mixes are among the user's saved playlists: Spotify keeps
+/// Discover Weekly, Release Radar and the Daily Mixes there, made by the user "Spotify".
+fn makes_mixes(service: &Service) -> bool {
+    service.domain == "spotify" && service.public.has(ServiceCapability::Library)
+}
+
+fn made_for_you_row(service: &Service) -> RecommendationFolder {
+    serde_json::from_value(serde_json::json!({
+        "item_id": MADE_FOR_YOU,
+        "provider": service.instance_id,
+        "name": "Made for You",
+    }))
+    .unwrap_or_else(|_| unreachable!("a fixed row decodes"))
+}
+
+/// Where a mix of Spotify's goes on the shelf, `None` for any other playlist. By name, as
+/// Spotify names them for every account in English.
+fn mix_rank(name: &str) -> Option<(u8, u32)> {
+    let folded = name.trim().to_lowercase();
+    if folded == "discover weekly" {
+        return Some((0, 0));
+    }
+    if folded == "release radar" {
+        return Some((1, 0));
+    }
+    if let Some(n) = folded.strip_prefix("daily mix ") {
+        return n.trim().parse().ok().map(|n| (2, n));
+    }
+    if folded.starts_with("daylist") {
+        return Some((3, 0));
+    }
+    match folded.as_str() {
+        "on repeat" => Some((4, 0)),
+        "repeat rewind" => Some((5, 0)),
+        "your time capsule" => Some((6, 0)),
+        _ => None,
+    }
+}
+
+/// The service's mixes among saved playlists, in Spotify's order.
+fn mixes_of(playlists: Vec<MediaItem>) -> Vec<MediaItem> {
+    let mut mixes: Vec<((u8, u32), MediaItem)> = playlists
+        .into_iter()
+        .filter(|p| {
+            p.owner
+                .as_deref()
+                .is_some_and(|o| o.trim().eq_ignore_ascii_case("spotify"))
+        })
+        .filter_map(|p| mix_rank(&p.name).map(|rank| (rank, p)))
+        .collect();
+    mixes.sort_by_key(|(rank, _)| *rank);
+    mixes.into_iter().map(|(_, p)| p).collect()
 }
 
 /// The services recommendations are read from, and those reported without asking: signed
@@ -218,6 +279,10 @@ fn finish(
 }
 
 impl Inner {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the rows, the mixes and the answer, in order"
+    )]
     pub(crate) async fn catalog_recommendations(
         &self,
         caller: &Access,
@@ -280,12 +345,34 @@ impl Inner {
             }
             Ok(Some(Ok(all))) => all,
         };
-        let rows = rows(all, &asked);
-        let answers = join_all(
-            rows.iter()
-                .map(|(index, row)| self.read_row(&client, &asked[*index], row, deadline)),
-        )
-        .await;
+        let mut rows = rows(all, &asked);
+        let mix_services: Vec<usize> = (0..asked.len())
+            .filter(|i| makes_mixes(&asked[*i]))
+            .collect();
+        let (mut answers, mix_answers) = tokio::join!(
+            join_all(rows.iter().map(|(index, row)| self.read_row(
+                &client,
+                &asked[*index],
+                row,
+                deadline
+            )),),
+            join_all(mix_services.iter().map(|index| self.read_mixes(
+                &client,
+                &asked[*index],
+                deadline
+            )),),
+        );
+        // Each service's own mixes go before its rows.
+        for (index, answer) in mix_services.into_iter().zip(mix_answers).rev() {
+            let at = rows
+                .iter()
+                .position(|(i, _)| *i == index)
+                .unwrap_or(rows.len());
+            rows.insert(at, (index, made_for_you_row(&asked[index])));
+            answers.insert(at, answer);
+        }
+        rows.truncate(MAX_SHELVES);
+        answers.truncate(MAX_SHELVES);
         for (index, service) in asked.iter().enumerate() {
             let state = state_of(
                 rows.iter()
@@ -347,6 +434,33 @@ impl Inner {
         }
     }
 
+    /// The service's own mixes among the user's saved playlists, from one listing of Music
+    /// Assistant's synced library (no call to the service), within `deadline`.
+    async fn read_mixes(&self, client: &Client, service: &Service, deadline: Instant) -> RowAnswer {
+        let mut query = LibraryQuery::page(MIXES_LISTED, 0);
+        query.provider = Some(service.instance_id.clone());
+        let answer = tokio::time::timeout_at(deadline, async {
+            let _permit = self.catalog.calls.acquire().await.ok()?;
+            Some(client.library_items(&MediaType::Playlist, &query).await)
+        })
+        .await;
+        match answer {
+            Err(_) | Ok(Some(Err(RequestError::Timeout(_)))) => RowAnswer::TimedOut,
+            Ok(None) => RowAnswer::Failed(ServiceSearchState::Failed),
+            Ok(Some(Err(e))) => {
+                tracing::debug!(service = %service.public.id, error = %e,
+                    "the saved playlists could not be read for the mixes");
+                RowAnswer::Failed(failure_state(&e))
+            }
+            Ok(Some(Ok(playlists))) => RowAnswer::Items(
+                mixes_of(playlists)
+                    .into_iter()
+                    .map(|p| RecommendationItem::Media(Box::new(p)))
+                    .collect(),
+            ),
+        }
+    }
+
     /// Keeps an answer, unless the services changed since it was started.
     fn keep(&self, key: Key, answer: &Recommendations, generation: u64) {
         let weight = answer.shelves.iter().map(|s| s.items.len()).sum::<usize>() + 1;
@@ -389,6 +503,7 @@ mod tests {
                 account,
                 account_detail: None,
                 quality: Some(Quality::High),
+                library_edit_kinds: Vec::new(),
             },
         }
     }
@@ -584,6 +699,52 @@ mod tests {
             json!([{"item_id": "f", "provider": SPOTIFY, "name": "F", "media_type": "folder"}]),
         );
         assert!(convert(SPOTIFY, |c| super::shelf(c, "s", &timeline, &nothing, 3)).is_none());
+    }
+
+    #[test]
+    fn spotifys_own_mixes_are_picked_from_the_saved_playlists_in_order() {
+        let playlist = |name: &str, owner: &str| -> MediaItem {
+            serde_json::from_value(json!({"item_id": name, "provider": SPOTIFY, "name": name,
+                "media_type": "playlist", "owner": owner}))
+            .unwrap_or_else(|e| panic!("{e}"))
+        };
+        let saved = vec![
+            playlist("Daily Mix 2", "Spotify"),
+            playlist("Road trip", "luke"),
+            playlist("Release Radar", "Spotify"),
+            playlist("Discover Weekly", "someone else"),
+            playlist("daylist • chill tuesday evening", "Spotify"),
+            playlist("Daily Mix 1", "spotify"),
+            playlist("Discover Weekly", "Spotify"),
+            playlist("This Is Beyoncé", "Spotify"),
+        ];
+        let names: Vec<String> = mixes_of(saved).into_iter().map(|p| p.name).collect();
+        assert_eq!(
+            names,
+            [
+                "Discover Weekly",
+                "Release Radar",
+                "Daily Mix 1",
+                "Daily Mix 2",
+                "daylist • chill tuesday evening"
+            ],
+            "only Spotify's own mixes, not every playlist Spotify made"
+        );
+        let spotify = service(SPOTIFY, AccountState::Ok, true);
+        assert!(!makes_mixes(&spotify), "without its library");
+        let mut with_library = spotify;
+        with_library.public.capabilities = vec![
+            ServiceCapability::Library,
+            ServiceCapability::Recommendations,
+            ServiceCapability::Search,
+        ];
+        assert!(makes_mixes(&with_library));
+        assert!(!makes_mixes(&service(APPLE, AccountState::Ok, true)));
+        let row = made_for_you_row(&with_library);
+        assert_eq!(
+            (row.item_id.as_str(), row.name.as_str()),
+            (MADE_FOR_YOU, "Made for You")
+        );
     }
 
     #[test]

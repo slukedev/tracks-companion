@@ -45,7 +45,8 @@ use trackside_core::assistant::{
 };
 use trackside_core::catalog::{
     CatalogDetail, CatalogError, CatalogKind, CatalogPage, CatalogResults, CatalogSearch,
-    LibraryPage, Recommendations, RecommendationsQuery, ServiceList,
+    LibraryPage, LookupBudget, MatchQuery, Matches, Recommendations, RecommendationsQuery,
+    SavedState, ServiceList,
 };
 use trackside_core::config::Secret;
 use trackside_core::relay::{
@@ -677,10 +678,9 @@ impl Inner {
                 user: pending.user,
                 command,
                 speaker: pending.speaker,
-                outcome: Err(trackside_core::assistant::CommandFailure {
-                    code,
-                    message: message.to_owned(),
-                }),
+                outcome: Err(trackside_core::assistant::CommandFailure::new(
+                    code, message,
+                )),
             })
             .collect();
         self.publish(events);
@@ -1234,6 +1234,24 @@ impl CatalogControl for Inner {
         query: RecommendationsQuery,
     ) -> BoxFuture<'a, Result<Recommendations, CatalogError>> {
         Box::pin(self.catalog_recommendations(caller, query))
+    }
+
+    fn set_saved<'a>(
+        &'a self,
+        _caller: &'a Access,
+        reference: &'a str,
+        saved: bool,
+    ) -> BoxFuture<'a, Result<SavedState, CatalogError>> {
+        Box::pin(self.catalog_set_saved(reference, saved))
+    }
+
+    fn match_tracks<'a>(
+        &'a self,
+        _caller: &'a Access,
+        query: MatchQuery,
+        budget: &'a LookupBudget,
+    ) -> BoxFuture<'a, Result<Matches, CatalogError>> {
+        Box::pin(self.catalog_match(query, budget))
     }
 
     fn art_source(&self, id: &CatalogArtId) -> Option<String> {

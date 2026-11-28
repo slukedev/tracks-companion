@@ -14,6 +14,7 @@
 pub(crate) mod art;
 mod cache;
 pub(crate) mod convert;
+mod matching;
 mod recommend;
 
 use std::collections::{HashMap, HashSet};
@@ -31,7 +32,7 @@ use trackside_core::catalog::{
     ARTIST_ALBUMS, ARTIST_TOP_TRACKS, AccountState, CatalogDetail, CatalogEntry, CatalogError,
     CatalogKind, CatalogKinds, CatalogPage, CatalogResults, CatalogSearch, CatalogService,
     CatalogTrack, LibraryPage, PAGE_LIMIT_MAX, Recommendations, SEARCH_LIMIT_MAX, SEARCH_WAIT,
-    ServiceCapability, ServiceList, ServiceOutcome, ServiceSearchState,
+    SavedState, ServiceCapability, ServiceList, ServiceOutcome, ServiceSearchState,
 };
 use trackside_core::catalog_ref::CatalogRef;
 use trackside_core::{Access, CatalogArtId, ServiceId, UserKey};
@@ -88,6 +89,7 @@ pub(crate) struct State {
     searches: Mutex<TtlCache<SearchKey, Arc<CatalogResults>>>,
     lists: Mutex<TtlCache<String, Arc<Vec<MediaItem>>>>,
     recommendations: Mutex<TtlCache<recommend::Key, Arc<Recommendations>>>,
+    matches: Mutex<TtlCache<matching::Key, Arc<Option<CatalogTrack>>>>,
     /// Counts [`State::services_changed`], so an answer read before a change is not kept.
     services_generation: AtomicU64,
     art: Mutex<ArtBook>,
@@ -103,6 +105,7 @@ impl Default for State {
             searches: Mutex::new(TtlCache::new(SEARCHES_KEPT, SEARCH_ITEMS_KEPT)),
             lists: Mutex::new(TtlCache::new(LISTS_KEPT, LIST_ITEMS_KEPT)),
             recommendations: Mutex::new(TtlCache::new(recommend::KEPT, recommend::ITEMS_KEPT)),
+            matches: Mutex::new(TtlCache::new(matching::KEPT, matching::KEPT)),
             services_generation: AtomicU64::new(0),
             art: Mutex::new(ArtBook::new(ART_REMEMBERED)),
             configs: tokio::sync::Mutex::new(None),
@@ -118,6 +121,7 @@ impl State {
     pub(crate) fn reset(&self) {
         lock(&self.searches).clear();
         lock(&self.lists).clear();
+        lock(&self.matches).clear();
         self.services_changed();
     }
 
@@ -171,7 +175,7 @@ pub(crate) fn resolve<'p>(
         })
 }
 
-fn capabilities(p: &ProviderInstance) -> Vec<ServiceCapability> {
+pub(crate) fn capabilities(p: &ProviderInstance) -> Vec<ServiceCapability> {
     let has = |name: &str| p.supported_features.iter().any(|f| f == name);
     let mut out = Vec::new();
     if [
@@ -184,6 +188,9 @@ fn capabilities(p: &ProviderInstance) -> Vec<ServiceCapability> {
     .any(|f| has(f))
     {
         out.push(ServiceCapability::Library);
+    }
+    if !library_edit_kinds(p).is_empty() {
+        out.push(ServiceCapability::LibraryEdit);
     }
     if has("library_playlists") || has("playlist_tracks_edit") {
         out.push(ServiceCapability::Playlists);
@@ -204,6 +211,20 @@ fn capabilities(p: &ProviderInstance) -> Vec<ServiceCapability> {
         out.push(ServiceCapability::TopTracks);
     }
     out
+}
+
+/// The kinds Music Assistant can add to and remove from the provider's own library, sorted.
+fn library_edit_kinds(p: &ProviderInstance) -> Vec<CatalogKind> {
+    let has = |name: &str| p.supported_features.iter().any(|f| f == name);
+    [
+        ("library_albums_edit", CatalogKind::Album),
+        ("library_artists_edit", CatalogKind::Artist),
+        ("library_playlists_edit", CatalogKind::Playlist),
+        ("library_tracks_edit", CatalogKind::Track),
+    ]
+    .into_iter()
+    .filter_map(|(feature, kind)| has(feature).then_some(kind))
+    .collect()
 }
 
 fn account(
@@ -253,6 +274,31 @@ fn request_error(error: &RequestError) -> CatalogError {
         _ if error.is_transient() => CatalogError::Unavailable,
         _ => CatalogError::Failed(String::from("The music service could not answer.")),
     }
+}
+
+/// The library entry to remove so `item` leaves the library of `instance`: `None` when it is
+/// not there (nothing to do), refused when the entry also holds the item for another source.
+fn removable<'i>(item: &'i MediaItem, instance: &str) -> Result<Option<&'i str>, CatalogError> {
+    if item.provider != "library" || item.item_id.is_empty() {
+        return Ok(None);
+    }
+    let ours = item
+        .provider_mappings
+        .iter()
+        .find(|m| m.provider_instance == instance);
+    if ours.is_none_or(|m| m.in_library == Some(false)) {
+        return Ok(None);
+    }
+    let shared = item
+        .provider_mappings
+        .iter()
+        .any(|m| m.provider_instance != instance && m.in_library != Some(false));
+    if shared {
+        return Err(CatalogError::Conflict {
+            reason: "not_removable",
+        });
+    }
+    Ok(Some(&item.item_id))
 }
 
 /// Interleaves the services' lists, best of each first, without repeating a ref.
@@ -396,7 +442,8 @@ impl Inner {
                         capabilities: capabilities(p),
                         account: state,
                         account_detail: detail,
-                        quality: convert::service_quality(&p.domain),
+                        quality: convert::instance_quality(&p.domain, configs.get(&p.instance_id)),
+                        library_edit_kinds: library_edit_kinds(p),
                     },
                 }
             })
@@ -814,6 +861,54 @@ impl Inner {
         })
     }
 
+    /// Saves an item to its service's library through Music Assistant, or removes it. A
+    /// removal is refused when Music Assistant's library entry also holds the item for another
+    /// source (removing the entry would remove it there too) or still holds what depends on
+    /// it (an album's saved tracks).
+    pub(crate) async fn catalog_set_saved(
+        &self,
+        reference: &str,
+        saved: bool,
+    ) -> Result<SavedState, CatalogError> {
+        let client = self.connected().map_err(|_| CatalogError::Unavailable)?;
+        let (decoded, service) = self.service_of(&client, reference).await?;
+        let kind = convert::catalog_kind(decoded.kind);
+        if !service.public.library_edit_kinds.contains(&kind) {
+            return Err(CatalogError::Unsupported {
+                capability: "library_edit",
+            });
+        }
+        let uri = decoded.uri_on(&service.instance_id);
+        if saved {
+            self.call(client.library_add(&uri)).await?;
+        } else {
+            let item = self.call(client.item_by_uri(&uri)).await?;
+            if let Some(library_id) = removable(&item, &service.instance_id)? {
+                let recursive = matches!(kind, CatalogKind::Track | CatalogKind::Playlist);
+                let _permit = self
+                    .catalog
+                    .calls
+                    .acquire()
+                    .await
+                    .map_err(|_| CatalogError::Unavailable)?;
+                client
+                    .library_remove(&convert::media_type(kind), library_id, recursive)
+                    .await
+                    .map_err(|e| match request_error(&e) {
+                        CatalogError::Failed(_) => CatalogError::Conflict {
+                            reason: "not_removable",
+                        },
+                        other => other,
+                    })?;
+            }
+        }
+        Ok(SavedState {
+            reference: reference.to_owned(),
+            service: service.public.id,
+            saved,
+        })
+    }
+
     pub(crate) fn catalog_art_source(&self, id: &CatalogArtId) -> Option<String> {
         lock(&self.hub)
             .art
@@ -954,6 +1049,47 @@ mod tests {
     }
 
     #[test]
+    fn only_an_entry_of_this_service_alone_is_removed() {
+        let entry = |mappings: serde_json::Value| -> MediaItem {
+            serde_json::from_value(
+                json!({"item_id": "12", "provider": "library", "name": "Halo",
+                "media_type": "track", "provider_mappings": mappings}),
+            )
+            .unwrap_or_else(|e| panic!("{e}"))
+        };
+        let spotify = json!({"item_id": "x", "provider_domain": "spotify",
+                             "provider_instance": "spotify--a", "in_library": true});
+        let found =
+            |item: &MediaItem| removable(item, "spotify--a").map(|id| id.map(str::to_owned));
+        assert_eq!(
+            found(&entry(json!([spotify]))),
+            Ok(Some(String::from("12")))
+        );
+        let not_saved = json!({"item_id": "x", "provider_domain": "spotify",
+                               "provider_instance": "spotify--a", "in_library": false});
+        assert_eq!(found(&entry(json!([not_saved]))), Ok(None));
+        let ours = json!({"item_id": "s1", "provider_domain": "opensubsonic",
+                          "provider_instance": "opensubsonic--t", "in_library": true});
+        assert_eq!(
+            found(&entry(json!([spotify, ours]))),
+            Err(CatalogError::Conflict {
+                reason: "not_removable"
+            }),
+            "the entry also holds the song for another source"
+        );
+        let elsewhere = json!({"item_id": "t", "provider_domain": "tidal",
+                               "provider_instance": "tidal--x", "in_library": false});
+        assert_eq!(
+            found(&entry(json!([spotify, elsewhere]))),
+            Ok(Some(String::from("12")))
+        );
+        let direct: MediaItem = serde_json::from_value(json!({"item_id": "x",
+            "provider": "spotify--a", "name": "Halo", "media_type": "track"}))
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(found(&direct), Ok(None), "not in Music Assistant's library");
+    }
+
+    #[test]
     fn results_interleave_best_first_without_repeats() {
         let lists = vec![vec!["a1", "a2", "a3"], vec!["b1"], vec!["c1", "a2", "c3"]];
         assert_eq!(
@@ -982,12 +1118,17 @@ mod tests {
     fn capabilities_come_from_the_provider_features() {
         let p = provider(
             json!({"type": "music", "domain": "spotify", "instance_id": "s",
-            "supported_features": ["search", "library_tracks", "library_playlists", "artist_toptracks", "similar_tracks", "recommendations"]}),
+            "supported_features": ["search", "library_tracks", "library_playlists", "artist_toptracks", "similar_tracks", "recommendations", "library_tracks_edit", "library_albums_edit"]}),
+        );
+        assert_eq!(
+            library_edit_kinds(&p),
+            [CatalogKind::Album, CatalogKind::Track]
         );
         assert_eq!(
             capabilities(&p),
             [
                 ServiceCapability::Library,
+                ServiceCapability::LibraryEdit,
                 ServiceCapability::Playlists,
                 ServiceCapability::Recommendations,
                 ServiceCapability::Search,

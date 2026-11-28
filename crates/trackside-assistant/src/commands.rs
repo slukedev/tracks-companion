@@ -20,7 +20,7 @@ use trackside_core::assistant::{
 };
 use trackside_core::catalog_ref::CatalogRef;
 use trackside_core::{
-    Access, Millis, PublicId, ServiceId, SongId, SpeakerCommandId, SpeakerId, random_id,
+    Access, Millis, PublicId, ServiceId, SongId, SpeakerCommandId, SpeakerId, UserKey, random_id,
 };
 use trackside_mass::{Client, ErrorCode, RequestError};
 
@@ -48,11 +48,32 @@ pub(crate) struct SlotState {
 pub(crate) struct Call {
     command: &'static str,
     args: Value,
+    /// Set on the `play_media` of a `play`: how its failure is told, and whether it may take
+    /// the service's stream over.
+    play: Option<PlayCall>,
+}
+
+/// What a `play_media` call was for.
+#[derive(Clone, Debug, Default)]
+struct PlayCall {
+    radio: bool,
+    takeover: bool,
+    /// The service of the first catalog item.
+    service: Option<ServiceId>,
 }
 
 fn call(command: &'static str, args: Value) -> Call {
-    Call { command, args }
+    Call {
+        command,
+        args,
+        play: None,
+    }
 }
+
+/// How long a takeover waits for the stopped player to let go of the service's stream, and
+/// how often it asks again meanwhile.
+const TAKEOVER_TRIES: u32 = 4;
+const TAKEOVER_PAUSE: Duration = Duration::from_millis(400);
 
 /// What Music Assistant knows the speaker by.
 #[derive(Clone, Debug)]
@@ -116,24 +137,44 @@ fn with_playback(speaker: &mut Speaker, now: Millis, change: impl FnOnce(&mut Pl
 fn failure(error: &RequestError) -> CommandFailure {
     match error {
         RequestError::NotConnected | RequestError::ConnectionLost | RequestError::ShutDown => {
-            CommandFailure {
-                code: "speakers_unavailable",
-                message: String::from("Speakers aren't reachable right now."),
-            }
+            CommandFailure::new(
+                "speakers_unavailable",
+                "Speakers aren't reachable right now.",
+            )
         }
-        RequestError::Timeout(_) => CommandFailure {
-            code: "timed_out",
-            message: String::from("The speaker did not answer in time."),
-        },
-        RequestError::Server(e) if e.code == ErrorCode::PlayerUnavailable => CommandFailure {
-            code: "conflict",
-            message: String::from("The speaker is unavailable."),
-        },
-        _ => CommandFailure {
-            code: "command_failed",
-            message: String::from("The speaker did not accept the command."),
-        },
+        RequestError::Timeout(_) => {
+            CommandFailure::new("timed_out", "The speaker did not answer in time.")
+        }
+        RequestError::Server(e) if e.code == ErrorCode::PlayerUnavailable => {
+            CommandFailure::new("conflict", "The speaker is unavailable.")
+        }
+        _ => CommandFailure::new("command_failed", "The speaker did not accept the command."),
     }
+}
+
+/// Why a `play_media` failed, from Music Assistant's error code, where it says: only what it
+/// reports is named, never guessed (there is no code for a region, a subscription or DRM).
+fn play_reason(error: &RequestError, play: &PlayCall) -> Option<&'static str> {
+    let code = error.code()?;
+    Some(match code {
+        ErrorCode::ProviderStreamHeld => "service_busy",
+        ErrorCode::LoginFailed | ErrorCode::ProviderPermissionDenied => "service_signed_out",
+        _ if error.is_transient() => return None,
+        _ if play.radio => "radio_unavailable",
+        ErrorCode::MediaNotFound
+        | ErrorCode::UnplayableMedia
+        | ErrorCode::InvalidProviderUri
+        | ErrorCode::InvalidProviderId => "not_playable",
+        _ => return None,
+    })
+}
+
+/// The queue that holds a service's only stream, from a `ProviderStreamHeld` answer.
+fn holder_queue(error: &RequestError) -> Option<&str> {
+    (error.code() == Some(ErrorCode::ProviderStreamHeld))
+        .then(|| error.data()?.get("queue_id")?.as_str())
+        .flatten()
+        .filter(|q| !q.is_empty())
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -438,6 +479,33 @@ impl Inner {
                 }
                 (calls, None, Arc::new(moved))
             }
+            SpeakerCommand::RemoveItem { item_id } => {
+                need(speaker, Capability::Queue)?;
+                if item_id.is_empty() || item_id.len() > 200 {
+                    return Err(SpeakerError::Invalid {
+                        field: "item_id",
+                        message: String::from("item_id is not a queue item."),
+                    });
+                }
+                if speaker
+                    .now_playing
+                    .as_ref()
+                    .and_then(|n| n.item_id.as_deref())
+                    == Some(item_id.as_str())
+                {
+                    return Err(SpeakerError::Conflict {
+                        reason: "now_playing",
+                    });
+                }
+                (
+                    vec![call(
+                        "player_queues/delete_item",
+                        json!({"queue_id": target.queue, "item_id_or_index": item_id}),
+                    )],
+                    None,
+                    Arc::new(expected),
+                )
+            }
         };
         let command_id: SpeakerCommandId = random_id();
         lock(&self.pending).insert(
@@ -456,21 +524,22 @@ impl Inner {
                 let command = command_id.clone();
                 let timeout = settle.min(self.tuning.command_timeout.max(Duration::from_secs(1)));
                 let player_wait = self.relay.tuning().player_wait;
+                let user = caller.user;
                 self.tasks.spawn(async move {
                     let deadline = tokio::time::Instant::now() + player_wait;
                     for player in &joining {
                         if !me.wait_for_player(player, deadline).await {
                             me.finish(
                                 &command,
-                                Err(CommandFailure {
-                                    code: "timed_out",
-                                    message: String::from("The phone did not join in time."),
-                                }),
+                                Err(CommandFailure::new(
+                                    "timed_out",
+                                    "The phone did not join in time.",
+                                )),
                             );
                             return;
                         }
                     }
-                    let outcome = run(&client, &calls, timeout).await;
+                    let outcome = me.run_calls(&client, &calls, timeout, user).await;
                     me.finish(&command, outcome);
                 });
             }
@@ -640,6 +709,7 @@ impl Inner {
         let mut originals = Vec::new();
         let mut first_failure = None;
         let mut signed_out = None;
+        let mut first_service = None;
         for (index, item) in request.items.iter().enumerate() {
             match item {
                 PlayItem::Song(id) => {
@@ -666,6 +736,17 @@ impl Inner {
                         crate::catalog::resolve(&decoded, &providers, ours_instance, &hidden);
                     match instance {
                         Some(provider) => {
+                            let service = ServiceId::derive(&server_id, &provider.instance_id);
+                            if request.radio
+                                && !crate::catalog::capabilities(provider)
+                                    .contains(&trackside_core::catalog::ServiceCapability::Similar)
+                            {
+                                return Err(SpeakerError::ServiceUnsupported {
+                                    capability: "similar",
+                                    service: Some(service),
+                                });
+                            }
+                            first_service.get_or_insert(service);
                             uris.push(decoded.uri_on(&provider.instance_id));
                             kinds.push(decoded.kind == trackside_core::catalog_ref::RefKind::Track);
                             originals.push(index);
@@ -709,10 +790,18 @@ impl Inner {
                 ));
             }
         }
-        calls.push(call(
-            "player_queues/play_media",
-            json!({"queue_id": target.queue, "media": uris, "option": option, "radio_mode": false}),
-        ));
+        calls.push(Call {
+            play: Some(PlayCall {
+                radio: request.radio,
+                takeover: request.takeover,
+                service: first_service,
+            }),
+            ..call(
+                "player_queues/play_media",
+                json!({"queue_id": target.queue, "media": uris, "option": option,
+                       "radio_mode": request.radio}),
+            )
+        });
         if request.mode == PlayMode::Replace {
             // Albums and playlists expand in place, so an index past one is not known before
             // Music Assistant expands it; a start after one starts at the first item.
@@ -760,8 +849,20 @@ impl Inner {
             if expected.capabilities.contains(&Capability::Power) {
                 expected.powered = Some(true);
             }
+            if request.hold {
+                // Music Assistant has resolved the item and opened its stream once
+                // `play_media` answers; pausing right away keeps that ready for a `play`.
+                calls.push(call(
+                    "player_queues/pause",
+                    json!({"queue_id": target.queue}),
+                ));
+            }
             expected.playback = Some(Playback {
-                state: PlayState::Playing,
+                state: if request.hold {
+                    PlayState::Paused
+                } else {
+                    PlayState::Playing
+                },
                 position_ms: request.position_ms,
                 position_at: now,
                 shuffle: request
@@ -787,6 +888,89 @@ impl Inner {
             }
         }
         Ok(calls)
+    }
+
+    /// Sends a command's calls in order; the first failure ends it. A `play_media` refused
+    /// because another player holds the service's only stream stops that player and asks again
+    /// when the play allows a takeover, a few times while the other player lets go.
+    async fn run_calls(
+        &self,
+        client: &Client,
+        calls: &[Call],
+        timeout: Duration,
+        user: UserKey,
+    ) -> Result<(), CommandFailure> {
+        for call in calls {
+            let mut answer = client
+                .call_raw(call.command, Some(call.args.clone()), timeout)
+                .await;
+            if let (Err(error), Some(play)) = (&answer, &call.play)
+                && play.takeover
+                && let Some(holder) = holder_queue(error).map(str::to_owned)
+                && call.args["queue_id"].as_str() != Some(holder.as_str())
+            {
+                tracing::info!("taking the service's stream over from another player");
+                client
+                    .call_raw(
+                        "player_queues/stop",
+                        Some(json!({"queue_id": holder})),
+                        timeout,
+                    )
+                    .await
+                    .map_err(|e| failure(&e))?;
+                for _ in 0..TAKEOVER_TRIES {
+                    answer = client
+                        .call_raw(call.command, Some(call.args.clone()), timeout)
+                        .await;
+                    match &answer {
+                        Err(e) if holder_queue(e) == Some(holder.as_str()) => {
+                            tokio::time::sleep(TAKEOVER_PAUSE).await;
+                        }
+                        _ => break,
+                    }
+                }
+            }
+            if let Err(error) = answer {
+                tracing::debug!(command = call.command, error = %error, "Music Assistant refused a command");
+                return Err(match &call.play {
+                    Some(play) => self.play_failure(&error, play, user),
+                    None => failure(&error),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// A failed `play_media` as its event tells it: with a reason where Music Assistant gives
+    /// one, the service, and for a held stream the speaker holding it when `user` may see it.
+    fn play_failure(&self, error: &RequestError, play: &PlayCall, user: UserKey) -> CommandFailure {
+        let mut out = failure(error);
+        out.reason = play_reason(error, play);
+        if out.reason.is_none() {
+            return out;
+        }
+        out.service.clone_from(&play.service);
+        if out.reason == Some("service_busy") {
+            out.message = String::from("The music service is playing somewhere else.");
+            let hub = lock(&self.hub);
+            let server_id = hub.server_id.clone().unwrap_or_default();
+            if let Some(instance) = error
+                .data()
+                .and_then(|d| d.get("provider_instance"))
+                .and_then(Value::as_str)
+            {
+                out.service = Some(ServiceId::derive(&server_id, instance));
+            }
+            if let Some(queue) = holder_queue(error) {
+                let id = crate::convert::speaker_id(&server_id, queue);
+                let visible = self.relay.owner_of(&id).is_none_or(|owner| owner == user);
+                if let Some(speaker) = hub.speaker(&id).filter(|_| visible) {
+                    out.holder = Some(id);
+                    out.holder_name = Some(speaker.name.clone());
+                }
+            }
+        }
+        out
     }
 
     fn coalesce(

@@ -322,6 +322,10 @@ pub enum PlayItem {
 
 /// `POST /speakers/{id}/play` (contract 1.6).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent options of one play"
+)]
 pub struct PlayRequest {
     pub items: Vec<PlayItem>,
     pub mode: PlayMode,
@@ -333,6 +337,12 @@ pub struct PlayRequest {
     /// The caller may play streaming-service items (`can_play_services`); without it, refs
     /// are skipped like any item the caller cannot play.
     pub allow_catalog: bool,
+    /// Start the service's radio from the one ref in `items` (Music Assistant's radio mode).
+    pub radio: bool,
+    /// Load the queue and leave it paused at the start, for a later `play`.
+    pub hold: bool,
+    /// When another player holds the service's only stream, stop it and play here.
+    pub takeover: bool,
 }
 
 /// The most items one `play` may carry.
@@ -356,6 +366,10 @@ pub enum SpeakerCommand {
         to: SpeakerId,
         keep_playing_here: bool,
     },
+    /// Removes one item from the queue.
+    RemoveItem {
+        item_id: String,
+    },
 }
 
 impl SpeakerCommand {
@@ -370,6 +384,7 @@ impl SpeakerCommand {
             Self::LeaveGroup => "ungroup",
             Self::Play(_) => "play",
             Self::Transfer { .. } => "transfer",
+            Self::RemoveItem { .. } => "remove",
         }
     }
 
@@ -444,6 +459,15 @@ pub enum SpeakerError {
     },
     #[error("the service is signed out in Music Assistant")]
     ServiceSignedOut { service: Option<ServiceId> },
+    /// The service of an item cannot do what the request needs (`similar` for a radio).
+    #[error("the service cannot {capability}")]
+    ServiceUnsupported {
+        capability: &'static str,
+        service: Option<ServiceId>,
+    },
+    /// `409 conflict` with this `details.reason`.
+    #[error("refused: {reason}")]
+    Conflict { reason: &'static str },
     #[error("{message}")]
     Invalid {
         field: &'static str,
@@ -462,6 +486,29 @@ pub struct CommandFailure {
     /// One of contract 0.4's codes, `command_failed` or `timed_out`.
     pub code: &'static str,
     pub message: String,
+    /// Why, where Music Assistant says: `service_busy`, `service_signed_out`, `not_playable`
+    /// or `radio_unavailable` (api.md 20.3).
+    pub reason: Option<&'static str>,
+    /// The service the reason is about.
+    pub service: Option<ServiceId>,
+    /// With `service_busy`: the speaker that holds the service's stream, when the sender may
+    /// see it, and its name.
+    pub holder: Option<SpeakerId>,
+    pub holder_name: Option<String>,
+}
+
+impl CommandFailure {
+    /// A failure without a reason.
+    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            reason: None,
+            service: None,
+            holder: None,
+            holder_name: None,
+        }
+    }
 }
 
 /// What speakers publish on the event bus (contract 1.8).
