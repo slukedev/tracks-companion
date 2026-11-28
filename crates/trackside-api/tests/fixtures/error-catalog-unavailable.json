@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "catalog_unavailable",
+    "message": "Music services aren't reachable right now.",
+    "request_id": "4e6a8c0b2d4f6a8c0e2b4d6f8a0c2e4b"
+  }
+}

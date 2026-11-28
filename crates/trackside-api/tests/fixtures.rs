@@ -625,6 +625,7 @@ fn fixtures() -> Result<BTreeMap<&'static str, serde_json::Value>, serde_json::E
             true,
             Some(wire::auth::SpeakersFeature { control: true }),
             Some(wire::auth::CatalogFeature {
+                recommendations: true,
                 relay: true,
                 relay_cellular: true,
             }),
@@ -2256,6 +2257,14 @@ fn fixtures_deserialize_into_their_wire_types() -> TestResult {
         (
             "catalog-library.json",
             back::<wire::catalog::CatalogLibrary>,
+        ),
+        (
+            "catalog-recommendations.json",
+            back::<wire::catalog::CatalogRecommendations>,
+        ),
+        (
+            "error-catalog-unavailable.json",
+            back::<wire::ErrorEnvelope>,
         ),
     ];
     for (name, check) in checks {

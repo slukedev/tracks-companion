@@ -1,0 +1,89 @@
+{
+  "complete": false,
+  "services": [
+    {
+      "id": "bm1zt0k6dk6mzz0n3vw5d",
+      "state": "ok"
+    },
+    {
+      "id": "bqtyy4kcexcsg6wa0y4w5",
+      "state": "ok"
+    },
+    {
+      "id": "bnr6z9ds6zzv5xjpv0j1s",
+      "state": "timed_out"
+    }
+  ],
+  "shelves": [
+    {
+      "id": "w1dgyc462epk20x8myctx",
+      "items": [
+        {
+          "artwork_id": "mf3w0g2x8kq1v7r5nd9ce",
+          "kind": "radio",
+          "name": "Beyoncé & Similar Artists Station",
+          "ref": "mc1.cmFkaW8fYXBwbGVfbXVzaWMfcmEucS1HQUk2SURFMk1qZ3dOall3TlRFH2FwcGxlX211c2ljLS1IcTdjVDI",
+          "service_id": "bm1zt0k6dk6mzz0n3vw5d"
+        }
+      ],
+      "service_id": "bm1zt0k6dk6mzz0n3vw5d",
+      "title": "Stations for You"
+    },
+    {
+      "id": "wam5fh3nsm9dmaszr0x34",
+      "items": [
+        {
+          "album": "I Am... Sasha Fierce",
+          "album_ref": "mc1.YWxidW0fc3BvdGlmeR8zOVA3VkQ3cWxnM1owbHRxNjBlSHA3",
+          "artist": "Beyoncé",
+          "artists": [
+            {
+              "name": "Beyoncé",
+              "ref": "mc1.YXJ0aXN0H3Nwb3RpZnkfNnZXRE85NjlQdk5xTllISU9XNXYwbQ"
+            }
+          ],
+          "artwork_id": "myweqhq0j9dpzb5wt5pmr",
+          "duration_ms": 261640,
+          "kind": "track",
+          "ref": "mc1.dHJhY2sfc3BvdGlmeR8wV3FkMHpBNXdOcFFuUUJHRVVIMGY0",
+          "service_id": "bqtyy4kcexcsg6wa0y4w5",
+          "song_id": "sdjcz08vf67h7cx28snq6",
+          "song_key": "halo\u001fbeyonce",
+          "title": "Halo"
+        },
+        {
+          "album_key": "i am... sasha fierce\u001fbeyonce",
+          "artist": "Beyoncé",
+          "artwork_id": "myweqhq0j9dpzb5wt5pmr",
+          "kind": "album",
+          "name": "I Am... Sasha Fierce",
+          "ref": "mc1.YWxidW0fc3BvdGlmeR8zOVA3VkQ3cWxnM1owbHRxNjBlSHA3",
+          "service_id": "bqtyy4kcexcsg6wa0y4w5",
+          "track_count": 11,
+          "year": 2008
+        },
+        {
+          "artwork_id": "m78a6d72awx3fd6jkzaht",
+          "kind": "playlist",
+          "name": "This Is Beyoncé",
+          "owner": "Spotify",
+          "ref": "mc1.cGxheWxpc3Qfc3BvdGlmeR8zN2k5ZFFaRjFEWDRzV1Nwd3EzTGlP",
+          "service_id": "bqtyy4kcexcsg6wa0y4w5",
+          "track_count": 50
+        },
+        {
+          "artwork_id": "m70csqp0tb9g09j0fg8qt",
+          "identity": "beyonce",
+          "kind": "artist",
+          "name": "Beyoncé",
+          "ref": "mc1.YXJ0aXN0H3Nwb3RpZnkfNnZXRE85NjlQdk5xTllISU9XNXYwbQ",
+          "service_id": "bqtyy4kcexcsg6wa0y4w5"
+        }
+      ],
+      "service_id": "bqtyy4kcexcsg6wa0y4w5",
+      "subtitle": "Your recent rotation",
+      "title": "Jump back in",
+      "type": "timeline"
+    }
+  ]
+}

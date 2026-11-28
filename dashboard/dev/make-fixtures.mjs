@@ -104,7 +104,7 @@ w('me', {
   user: sessionUser,
   libraries: [LIB.music, LIB.nas, LIB.acquired],
   server: { server_id: SERVER_ID, name: 'Home', version: '1.0.0', urls },
-  features: { acquisition: { instant_play: true }, apple_music: { developer_token: true }, catalog: { relay: true, relay_cellular: true }, speakers: { control: true } },
+  features: { acquisition: { instant_play: true }, apple_music: { developer_token: true }, catalog: { recommendations: true, relay: true, relay_cellular: true }, speakers: { control: true } },
 });
 
 w('admin-users', { users });

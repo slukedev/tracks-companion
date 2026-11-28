@@ -1,5 +1,6 @@
 //! The streaming catalog (api.md section 21, contract section 2): the services connected in
-//! Music Assistant, search across them, item detail and each service's saved library. The
+//! Music Assistant, search across them, item detail, each service's saved library and their
+//! recommendations. The
 //! routes answer only callers whose `/me` has `features.catalog` (`404` otherwise). Library
 //! songs are never mixed in: a catalog track that matches a song the caller can see names
 //! it in `song_id`, and the client folds the two.
@@ -18,8 +19,9 @@ use trackside_core::assistant::SpeakersState;
 use trackside_core::catalog::{
     ArtistCredit, CatalogAlbum, CatalogArtist, CatalogControl, CatalogDetail, CatalogEntry,
     CatalogKind, CatalogKinds, CatalogPage, CatalogPlaylist, CatalogRadio, CatalogResults,
-    CatalogSearch, CatalogTrack, LibraryPage, MAX_QUERY_LEN, PAGE_LIMIT, PAGE_LIMIT_MAX,
-    SEARCH_LIMIT, SEARCH_LIMIT_MAX, ServiceList,
+    CatalogSearch, CatalogTrack, LibraryPage, MAX_QUERY_LEN, MAX_SERVICES, PAGE_LIMIT,
+    PAGE_LIMIT_MAX, RECOMMENDATIONS_LIMIT, RECOMMENDATIONS_LIMIT_MAX, Recommendations,
+    RecommendationsQuery, SEARCH_LIMIT, SEARCH_LIMIT_MAX, ServiceList, ShelfKind,
 };
 use trackside_core::{Access, ServiceId, SongId};
 
@@ -38,6 +40,7 @@ pub(super) fn routes() -> Router<ApiState> {
         .route("/catalog/search", get(search))
         .route("/catalog/items/{reference}", get(item))
         .route("/catalog/services/{id}/library", get(library))
+        .route("/catalog/recommendations", get(recommendations))
 }
 
 /// The catalog for a caller with `features.catalog`; the routes do not exist otherwise.
@@ -292,19 +295,49 @@ fn detail_tracks(detail: &CatalogDetail) -> Vec<&CatalogTrack> {
     }
 }
 
-pub fn library_body(page: &LibraryPage, owned: &Owned) -> wire::CatalogLibrary {
-    wire::CatalogLibrary {
-        items: page
-            .items
+pub fn item_body(entry: &CatalogEntry, owned: &Owned) -> wire::CatalogItem {
+    match entry {
+        CatalogEntry::Track(t) => wire::CatalogItem::Track(track_body(t, owned)),
+        CatalogEntry::Album(a) => wire::CatalogItem::Album(album_body(a)),
+        CatalogEntry::Artist(a) => wire::CatalogItem::Artist(artist_body(a)),
+        CatalogEntry::Playlist(p) => wire::CatalogItem::Playlist(playlist_body(p)),
+        CatalogEntry::Radio(r) => wire::CatalogItem::Radio(radio_body(r)),
+    }
+}
+
+/// The shelves in Music Assistant's order, and how each service answered.
+pub fn recommendations_body(
+    found: &Recommendations,
+    owned: &Owned,
+) -> wire::CatalogRecommendations {
+    wire::CatalogRecommendations {
+        complete: found.complete,
+        services: found
+            .services
             .iter()
-            .map(|entry| match entry {
-                CatalogEntry::Track(t) => wire::CatalogItem::Track(track_body(t, owned)),
-                CatalogEntry::Album(a) => wire::CatalogItem::Album(album_body(a)),
-                CatalogEntry::Artist(a) => wire::CatalogItem::Artist(artist_body(a)),
-                CatalogEntry::Playlist(p) => wire::CatalogItem::Playlist(playlist_body(p)),
-                CatalogEntry::Radio(r) => wire::CatalogItem::Radio(radio_body(r)),
+            .map(|s| wire::ServiceState {
+                id: s.service.to_string(),
+                state: s.state.as_str().to_owned(),
             })
             .collect(),
+        shelves: found
+            .shelves
+            .iter()
+            .map(|shelf| wire::CatalogShelf {
+                id: shelf.id.to_string(),
+                items: shelf.items.iter().map(|e| item_body(e, owned)).collect(),
+                service_id: shelf.service.to_string(),
+                subtitle: shelf.subtitle.clone(),
+                title: shelf.title.clone(),
+                kind: (shelf.kind != ShelfKind::Default).then(|| shelf.kind.as_str().to_owned()),
+            })
+            .collect(),
+    }
+}
+
+pub fn library_body(page: &LibraryPage, owned: &Owned) -> wire::CatalogLibrary {
+    wire::CatalogLibrary {
+        items: page.items.iter().map(|e| item_body(e, owned)).collect(),
         next_cursor: page.next_cursor.clone(),
         synced_at: page.synced_at.map(Time),
     }
@@ -342,29 +375,55 @@ pub(crate) fn search_query(
             format!("q is at most {MAX_QUERY_LEN} characters."),
         ));
     }
-    let services = services
-        .filter(|s| !s.trim().is_empty())
-        .map(|list| {
-            let ids = list
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(|s| body_id::<ServiceId>(s, "services"))
-                .collect::<ApiResult<Vec<_>>>()?;
-            if ids.len() > 50 {
-                return Err(ApiError::bad_field(
-                    "services",
-                    "services holds at most 50.",
-                ));
-            }
-            Ok(ids)
-        })
-        .transpose()?;
     Ok(CatalogSearch {
         text,
         kinds,
-        services,
+        services: services_of(services)?,
         limit: limit.unwrap_or(SEARCH_LIMIT).clamp(1, SEARCH_LIMIT_MAX),
+    })
+}
+
+/// `services`: comma-separated `b` ids, at most [`MAX_SERVICES`]; absent or empty means
+/// every service.
+fn services_of(services: Option<&str>) -> ApiResult<Option<Vec<ServiceId>>> {
+    services
+        .filter(|s| !s.trim().is_empty())
+        .map(|list| {
+            let names: Vec<&str> = list
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect();
+            if names.len() > MAX_SERVICES {
+                return Err(ApiError::bad_field(
+                    "services",
+                    format!("services holds at most {MAX_SERVICES}."),
+                ));
+            }
+            names
+                .into_iter()
+                .map(|s| body_id::<ServiceId>(s, "services"))
+                .collect::<ApiResult<Vec<_>>>()
+        })
+        .transpose()
+}
+
+/// The recommendations a request asks for, checked: `limit` 1 to
+/// [`RECOMMENDATIONS_LIMIT_MAX`] items per shelf.
+pub(crate) fn recommendations_query(
+    services: Option<&str>,
+    limit: Option<u32>,
+) -> ApiResult<RecommendationsQuery> {
+    let limit = limit.unwrap_or(RECOMMENDATIONS_LIMIT);
+    if !(1..=RECOMMENDATIONS_LIMIT_MAX).contains(&limit) {
+        return Err(ApiError::bad_field(
+            "limit",
+            format!("limit is 1 to {RECOMMENDATIONS_LIMIT_MAX}."),
+        ));
+    }
+    Ok(RecommendationsQuery {
+        services: services_of(services)?.filter(|ids| !ids.is_empty()),
+        limit,
     })
 }
 
@@ -484,9 +543,47 @@ async fn library(
     Ok(json_with(StatusCode::OK, &library_body(&found, &owned)))
 }
 
+#[derive(Debug, Deserialize)]
+struct RecommendationParams {
+    services: Option<String>,
+    limit: Option<u32>,
+}
+
+async fn recommendations(
+    Authed(principal): Authed<LIBRARY>,
+    State(state): State<ApiState>,
+    Query(params): Query<RecommendationParams>,
+) -> ApiResult<Response> {
+    let catalog = allowed(&state, &principal)?;
+    let query = recommendations_query(params.services.as_deref(), params.limit)?;
+    state.auth.catalog_read(&principal)?;
+    let found = catalog.recommendations(&principal.access, query).await?;
+    let owned = owned(&state, &principal.access, found.tracks()).await?;
+    Ok(json_with(
+        StatusCode::OK,
+        &recommendations_body(&found, &owned),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recommendation_queries_are_checked() -> ApiResult<()> {
+        let query = recommendations_query(None, None)?;
+        assert_eq!(query.limit, RECOMMENDATIONS_LIMIT);
+        assert_eq!(query.services, None);
+        assert_eq!(recommendations_query(Some(" , "), Some(50))?.services, None);
+        assert!(recommendations_query(None, Some(0)).is_err());
+        assert!(recommendations_query(None, Some(51)).is_err());
+        assert!(recommendations_query(Some("nope"), None).is_err());
+        let many = vec!["bqtyy4kcexcsg6wa0y4w5"; MAX_SERVICES + 1].join(",");
+        assert!(recommendations_query(Some(&many), None).is_err());
+        let one = recommendations_query(Some("bqtyy4kcexcsg6wa0y4w5"), Some(5))?;
+        assert_eq!(one.services.map(|s| s.len()), Some(1));
+        Ok(())
+    }
 
     #[test]
     fn types_parse_with_plurals_and_default_to_four() -> ApiResult<()> {

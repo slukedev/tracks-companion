@@ -393,6 +393,10 @@ pub struct MeFeatures {
 /// `features.catalog` in `/me`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogFeature {
+    /// The server has `GET /catalog/recommendations`. Always true here; older servers leave it
+    /// out, so apps hide their recommendation shelves there.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recommendations: bool,
     /// This device can play catalog items through the relay (the lossless tier).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub relay: bool,

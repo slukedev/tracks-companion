@@ -1,4 +1,5 @@
-//! The streaming catalog (api.md section 21): services, search, items, saved libraries.
+//! The streaming catalog (api.md section 21): services, search, items, saved libraries,
+//! recommendations.
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -248,6 +249,28 @@ pub struct CatalogLibrary {
     pub next_cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub synced_at: Option<Time>,
+}
+
+/// A shelf of `GET /catalog/recommendations`: one recommendation row of one service.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogShelf {
+    pub id: String,
+    pub items: Vec<CatalogItem>,
+    pub service_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    pub title: String,
+    /// `timeline` for a row of what was played last; absent for a row of tiles.
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+}
+
+/// `GET /catalog/recommendations`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogRecommendations {
+    pub complete: bool,
+    pub services: Vec<ServiceState>,
+    pub shelves: Vec<CatalogShelf>,
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@
       "developer_token": true
     },
     "catalog": {
+      "recommendations": true,
       "relay": true,
       "relay_cellular": true
     },

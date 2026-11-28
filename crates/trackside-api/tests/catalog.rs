@@ -1185,3 +1185,352 @@ async fn catalog_art_is_fetched_from_music_assistant_once_and_kept_as_jpeg() -> 
     server.assistant.shutdown().await;
     Ok(())
 }
+
+const APPLE: &str = "apple_music--Hq7cT2";
+const PROXY_ID_2: &str = "5e1f0a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7";
+
+/// An Apple Music station as Music Assistant lists it: a dynamic playlist on 2.10, a radio on
+/// 2.11.
+fn station(id: &str, name: &str, kind: &str) -> Value {
+    json!({
+        "item_id": id, "provider": APPLE, "name": name, "media_type": kind, "is_dynamic": true,
+        "uri": format!("{APPLE}://{kind}/{id}"), "is_editable": false,
+        "provider_mappings": [{"item_id": id, "provider_domain": "apple_music",
+                               "provider_instance": APPLE, "available": true}],
+        "metadata": {"images": [{"type": "thumb", "path": format!("{kind}/{id}"), "provider": APPLE,
+                                 "remotely_accessible": false, "proxy_id": PROXY_ID_2}]},
+    })
+}
+
+fn folder(provider: &str, id: &str, name: &str) -> Value {
+    json!({"item_id": id, "provider": provider, "name": name, "media_type": "folder",
+           "path": format!("{provider}://{id}"), "items": [], "type": "default",
+           "enabled_by_default": true})
+}
+
+/// The model with Apple Music and Spotify recommending, stations shaped as `station_kind`.
+fn recommending(station_kind: &str) -> Model {
+    let mut model = model();
+    if station_kind == "playlist" {
+        model.version = String::from("2.10.14");
+    } else {
+        model.version = String::from("2.11.0b11");
+        model.schema = 128;
+    }
+    model.providers.push(streaming(
+        APPLE,
+        "apple_music",
+        "Apple Music",
+        &["search", "library_tracks", "recommendations"],
+    ));
+    for p in &mut model.providers {
+        if p["instance_id"] == SPOTIFY {
+            p["supported_features"] = json!(["search", "library_playlists", "recommendations"]);
+        }
+    }
+    model.recommendations = vec![
+        folder("recommendations", "recently_played", "Recently played"),
+        folder(APPLE, "stations-for-you", "Stations for You"),
+        folder(SPOTIFY, "made-for-you", "Made For Luke"),
+        folder("lastfm_recommendations", "similar", "Similar artists"),
+        folder(TIDAL, "tidal-row", "Tidal does not recommend here"),
+    ];
+    model.listings.insert(
+        String::from("music/recommendations/items:recommendations/recently_played"),
+        vec![ma_track(SPOTIFY, "s2", "Run the World", "Beyoncé")],
+    );
+    model.listings.insert(
+        format!("music/recommendations/items:{APPLE}/stations-for-you"),
+        vec![
+            station("ra.q-GAI6IDE2MjgwNjYwNTE", "Beyoncé Station", station_kind),
+            json!({"item_id": "genres", "provider": APPLE, "name": "Genres", "media_type": "folder"}),
+            json!({"item_id": "p1", "provider": APPLE, "name": "A Podcast", "media_type": "podcast"}),
+        ],
+    );
+    model.listings.insert(
+        format!("music/recommendations/items:{SPOTIFY}/made-for-you"),
+        vec![
+            ma_track(SPOTIFY, "0Wqd0zA5wNpQnQBGEUH0f4", "Halo", "Beyoncé"),
+            ma_item(SPOTIFY, "playlist", "37i9", "Daily Mix 1"),
+        ],
+    );
+    model
+}
+
+impl Server {
+    async fn recommendations(&self, key: &str, query: &str) -> Result<(u16, Value), Error> {
+        self.call(
+            key,
+            reqwest::Method::GET,
+            &format!("/catalog/recommendations{query}"),
+            None,
+        )
+        .await
+    }
+}
+
+#[tokio::test]
+#[expect(clippy::too_many_lines, reason = "one walk through the route")]
+async fn recommendations_shelve_the_services_rows_and_name_owned_songs() -> TestResult {
+    let (server, fake, _cookie) = connected_with(recommending("radio")).await?;
+    let key = server.device_key("luke", "phone").await?;
+    let list = server.services(&key, 3).await?;
+    let apple = list["services"]
+        .as_array()
+        .and_then(|s| s.iter().find(|s| s["logo_key"] == "apple_music"))
+        .ok_or("apple music listed")?;
+    assert_eq!(
+        apple["capabilities"],
+        json!(["library", "recommendations", "search"])
+    );
+    let (_, me) = server.call(&key, reqwest::Method::GET, "/me", None).await?;
+    assert_eq!(me["features"]["catalog"]["recommendations"], true);
+
+    let (status, body) = server.recommendations(&key, "").await?;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["complete"], true);
+    let (spotify, apple_id) = (service_id(SPOTIFY), service_id(APPLE));
+    assert_eq!(
+        body["services"],
+        json!([{"id": spotify, "state": "ok"}, {"id": apple_id, "state": "ok"}])
+    );
+    let shelves = body["shelves"].as_array().ok_or("shelves")?;
+    let titles: Vec<&str> = shelves.iter().filter_map(|s| s["title"].as_str()).collect();
+    assert_eq!(
+        titles,
+        ["Stations for You", "Made For Luke"],
+        "in Music Assistant's order, without the library's or other providers' rows"
+    );
+    let stations = &shelves[0];
+    assert_eq!(stations["service_id"], apple_id);
+    assert!(
+        stations["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with('w'))
+    );
+    assert!(stations.get("type").is_none() && stations.get("subtitle").is_none());
+    let items = stations["items"].as_array().ok_or("items")?;
+    assert_eq!(items.len(), 1, "folders and podcasts are left out");
+    assert_eq!(items[0]["kind"], "radio");
+    assert_eq!(items[0]["name"], "Beyoncé Station");
+    assert!(
+        items[0]["artwork_id"]
+            .as_str()
+            .is_some_and(|a| a.starts_with('m'))
+    );
+    let station_ref = items[0]["ref"].as_str().ok_or("ref")?.to_owned();
+    let mixes = shelves[1]["items"].as_array().ok_or("items")?;
+    assert_eq!(mixes[0]["kind"], "track");
+    assert_eq!(
+        mixes[0]["song_id"],
+        server.song.to_string(),
+        "the owned copy"
+    );
+    assert_eq!(mixes[1]["kind"], "playlist");
+    let shown = body.to_string();
+    assert!(
+        !shown.contains(SPOTIFY) && !shown.contains(APPLE),
+        "{shown}"
+    );
+
+    let asked = fake.received_named("music/recommendations/items");
+    let mut rows: Vec<String> = asked
+        .iter()
+        .map(|r| {
+            format!(
+                "{}/{}",
+                r.args["provider"].as_str().unwrap_or_default(),
+                r.args["item_id"].as_str().unwrap_or_default()
+            )
+        })
+        .collect();
+    rows.sort();
+    assert_eq!(
+        rows,
+        [
+            format!("{APPLE}/stations-for-you"),
+            format!("{SPOTIFY}/made-for-you")
+        ],
+        "only the services' rows are read"
+    );
+    assert!(asked.iter().all(|r| r.args.get("hide_played").is_none()));
+
+    // Kept: asking again reads nothing from Music Assistant.
+    let (_, again) = server.recommendations(&key, "").await?;
+    assert_eq!(again, body);
+    assert_eq!(fake.received_named("music/recommendations").len(), 1);
+
+    // Narrowed to one service, with fewer items per shelf.
+    let (_, narrow) = server
+        .recommendations(&key, &format!("?services={spotify}&limit=1"))
+        .await?;
+    assert_eq!(narrow["services"], json!([{"id": spotify, "state": "ok"}]));
+    assert_eq!(narrow["shelves"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        narrow["shelves"][0]["items"].as_array().map(Vec::len),
+        Some(1)
+    );
+
+    // A change to the services forgets what was kept.
+    fake.emit("providers_updated", None, json!([]));
+    server
+        .until(&key, "/catalog/recommendations", |_, _| {
+            fake.received_named("music/recommendations").len() >= 3
+        })
+        .await?;
+
+    for (query, field) in [
+        ("?limit=0", "limit"),
+        ("?limit=51", "limit"),
+        ("?services=nope", "services"),
+    ] {
+        let (status, error) = server.recommendations(&key, query).await?;
+        assert_eq!(status, 400, "{query}");
+        assert_eq!(error["error"]["details"]["field"], field);
+    }
+
+    // A 2.11 station plays on a speaker as a radio.
+    let list = server
+        .until(&key, "/speakers", |_, b| {
+            b["speakers"].as_array().is_some_and(|s| s.len() == 1)
+        })
+        .await?;
+    let kitchen = list["speakers"][0]["id"].as_str().ok_or("kitchen")?;
+    let (status, played) = server
+        .call(
+            &key,
+            reqwest::Method::POST,
+            &format!("/speakers/{kitchen}/play"),
+            Some(json!({"items": [{"ref": station_ref}]})),
+        )
+        .await?;
+    assert_eq!(status, 202, "{played}");
+    let played = fake.wait_for("player_queues/play_media", 1).await;
+    assert_eq!(
+        played[0].args["media"],
+        json!([format!("{APPLE}://radio/ra.q-GAI6IDE2MjgwNjYwNTE")])
+    );
+    server.assistant.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn stations_of_music_assistant_2_10_are_playlists_that_play() -> TestResult {
+    let (server, fake, _cookie) = connected_with(recommending("playlist")).await?;
+    let key = server.device_key("luke", "phone").await?;
+    server.services(&key, 3).await?;
+    let (status, body) = server
+        .recommendations(&key, &format!("?services={}", service_id(APPLE)))
+        .await?;
+    assert_eq!(status, 200, "{body}");
+    let station = &body["shelves"][0]["items"][0];
+    assert_eq!(station["kind"], "playlist", "{body}");
+    assert_eq!(station["editable"], false);
+    let reference = station["ref"].as_str().ok_or("ref")?;
+    let list = server
+        .until(&key, "/speakers", |_, b| {
+            b["speakers"].as_array().is_some_and(|s| s.len() == 1)
+        })
+        .await?;
+    let kitchen = list["speakers"][0]["id"].as_str().ok_or("kitchen")?;
+    let (status, played) = server
+        .call(
+            &key,
+            reqwest::Method::POST,
+            &format!("/speakers/{kitchen}/play"),
+            Some(json!({"items": [{"ref": reference}]})),
+        )
+        .await?;
+    assert_eq!(status, 202, "{played}");
+    let played = fake.wait_for("player_queues/play_media", 1).await;
+    assert_eq!(
+        played[0].args["media"],
+        json!([format!("{APPLE}://playlist/ra.q-GAI6IDE2MjgwNjYwNTE")]),
+        "2.10 plays a station only as a playlist"
+    );
+    server.assistant.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_slow_row_is_left_out_while_the_others_answer() -> TestResult {
+    let mut slow = recommending("radio");
+    slow.delays.insert(
+        format!("music/recommendations/items:{APPLE}/stations-for-you"),
+        Duration::from_secs(8),
+    );
+    let (server, fake, _cookie) = connected_with(slow).await?;
+    let key = server.device_key("luke", "phone").await?;
+    server.services(&key, 3).await?;
+    let started = tokio::time::Instant::now();
+    let (status, body) = server.recommendations(&key, "").await?;
+    let waited = started.elapsed();
+    assert_eq!(status, 200, "{body}");
+    assert!(waited < Duration::from_secs(7), "{waited:?}");
+    assert_eq!(body["complete"], false);
+    assert_eq!(
+        body["services"],
+        json!([{"id": service_id(SPOTIFY), "state": "ok"},
+               {"id": service_id(APPLE), "state": "timed_out"}])
+    );
+    assert_eq!(body["shelves"].as_array().map(Vec::len), Some(1));
+    assert_eq!(body["shelves"][0]["title"], "Made For Luke");
+
+    // A partial answer is kept briefly: at once it is served from memory.
+    let (_, again) = server.recommendations(&key, "").await?;
+    assert_eq!(again, body);
+    assert_eq!(fake.received_named("music/recommendations").len(), 1);
+    server.assistant.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn recommendations_need_the_catalog_count_as_reads_and_need_music_assistant() -> TestResult {
+    let (server, fake, cookie) = connected_with(recommending("radio")).await?;
+    let response = server
+        .http
+        .post(server.url("/admin/users"))
+        .headers(server.session(&cookie))
+        .json(
+            &json!({"username": "mia", "password": PASSWORD, "library_ids": [],
+                      "permissions": {"can_play_services": false}}),
+        )
+        .send()
+        .await?;
+    assert_eq!(response.status(), 201);
+    let mia = server.device_key("mia", "mia-phone").await?;
+    assert_eq!(server.recommendations(&mia, "").await?.0, 404);
+
+    let key = server.device_key("luke", "phone").await?;
+    server.services(&key, 3).await?;
+    let mut statuses = Vec::new();
+    for _ in 0..122 {
+        statuses.push(server.recommendations(&key, "").await?.0);
+    }
+    assert!(statuses[..120].iter().all(|s| *s == 200), "{statuses:?}");
+    assert_eq!(
+        statuses[121], 429,
+        "item reads and recommendations share a limit"
+    );
+
+    let response = server
+        .http
+        .post(server.url("/admin/users"))
+        .headers(server.session(&cookie))
+        .json(&json!({"username": "ana", "password": PASSWORD, "library_ids": []}))
+        .send()
+        .await?;
+    assert_eq!(response.status(), 201);
+    let other = server.device_key("ana", "ana-phone").await?;
+    assert_eq!(server.recommendations(&other, "").await?.0, 200);
+    fake.with(|m| m.reachable = false);
+    fake.disconnect_all();
+    let error = server
+        .until(&other, "/catalog/recommendations", |status, _| {
+            status == 503
+        })
+        .await?;
+    assert_eq!(error["error"]["code"], "catalog_unavailable");
+    server.assistant.shutdown().await;
+    Ok(())
+}

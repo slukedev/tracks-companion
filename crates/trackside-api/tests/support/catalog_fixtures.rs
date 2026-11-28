@@ -4,14 +4,15 @@
 use std::collections::HashMap;
 
 use serde_json::Value;
-use trackside_api::{build, wire};
+use trackside_api::{ApiError, build, wire};
 use trackside_core::assistant::SpeakersState;
 use trackside_core::catalog::{
     AccountState, ArtistCredit, CatalogAlbum, CatalogArtist, CatalogDetail, CatalogEntry,
-    CatalogKinds, CatalogPlaylist, CatalogResults, CatalogService, CatalogTrack, LibraryPage,
-    Quality, ServiceCapability, ServiceList, ServiceOutcome, ServiceSearchState,
+    CatalogError, CatalogKinds, CatalogPlaylist, CatalogRadio, CatalogResults, CatalogService,
+    CatalogTrack, LibraryPage, Quality, Recommendations, ServiceCapability, ServiceList,
+    ServiceOutcome, ServiceSearchState, Shelf, ShelfKind,
 };
-use trackside_core::{PublicId, ServiceId, SongId};
+use trackside_core::{PublicId, ServiceId, ShelfId, SongId};
 
 use super::at;
 
@@ -24,6 +25,7 @@ fn pid<T: PublicId>(text: &str) -> T {
 const SPOTIFY: &str = "bqtyy4kcexcsg6wa0y4w5";
 const TIDAL: &str = "bnr6z9ds6zzv5xjpv0j1s";
 const QOBUZ: &str = "br5wm04d54mx0cw00fwzr";
+const APPLE_MUSIC: &str = "bm1zt0k6dk6mzz0n3vw5d";
 const HALO_SONG: &str = "sdjcz08vf67h7cx28snq6";
 
 const ALBUM_REF: &str = "mc1.YWxidW0fc3BvdGlmeR8zOVA3VkQ3cWxnM1owbHRxNjBlSHA3";
@@ -292,5 +294,57 @@ pub fn fixtures(songs: wire::Section<wire::Song>) -> Result<Out, serde_json::Err
         "catalog-library.json",
         json(&build::catalog_library_body(&library, &owned))?,
     ));
+
+    let server = "8f2e4b6a1c3d5e7f9a0b2c4d6e8f0a1b";
+    let station = CatalogRadio {
+        reference: String::from(
+            "mc1.cmFkaW8fYXBwbGVfbXVzaWMfcmEucS1HQUk2SURFMk1qZ3dOall3TlRFH2FwcGxlX211c2ljLS1IcTdjVDI",
+        ),
+        service: pid(APPLE_MUSIC),
+        name: String::from("Beyoncé & Similar Artists Station"),
+        artwork: Some(pid("mf3w0g2x8kq1v7r5nd9ce")),
+    };
+    let recommendations = Recommendations {
+        shelves: vec![
+            Shelf {
+                id: ShelfId::derive(server, "apple_music--Hq7cT2", "stations-for-you"),
+                service: pid(APPLE_MUSIC),
+                title: String::from("Stations for You"),
+                subtitle: None,
+                kind: ShelfKind::Default,
+                items: vec![CatalogEntry::Radio(station)],
+            },
+            Shelf {
+                id: ShelfId::derive(server, "spotify--Xb4LkP2q", "recently-played"),
+                service: pid(SPOTIFY),
+                title: String::from("Jump back in"),
+                subtitle: Some(String::from("Your recent rotation")),
+                kind: ShelfKind::Timeline,
+                items: vec![
+                    CatalogEntry::Track(halo()),
+                    CatalogEntry::Album(album()),
+                    CatalogEntry::Playlist(playlist()),
+                    CatalogEntry::Artist(artist()),
+                ],
+            },
+        ],
+        services: vec![
+            outcome(APPLE_MUSIC, ServiceSearchState::Ok),
+            outcome(SPOTIFY, ServiceSearchState::Ok),
+            outcome(TIDAL, ServiceSearchState::TimedOut),
+        ],
+        complete: false,
+    };
+    out.push((
+        "catalog-recommendations.json",
+        json(&build::catalog_recommendations_body(
+            &recommendations,
+            &owned,
+        ))?,
+    ));
+
+    let mut unavailable = ApiError::from(CatalogError::Unavailable).envelope();
+    unavailable.error.request_id = Some(String::from("4e6a8c0b2d4f6a8c0e2b4d6f8a0c2e4b"));
+    out.push(("error-catalog-unavailable.json", json(&unavailable)?));
     Ok(out)
 }

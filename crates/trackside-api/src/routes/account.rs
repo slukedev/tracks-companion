@@ -411,6 +411,7 @@ pub(crate) fn catalog_feature(
             && principal.scopes.contains(Scopes::STREAM)
             && state.assistant.relay_supported();
         crate::wire::auth::CatalogFeature {
+            recommendations: true,
             relay,
             relay_cellular: relay
                 && state
